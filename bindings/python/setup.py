@@ -21,7 +21,7 @@ class BinaryDistribution(Distribution):
 
 setup(
     name="posixlake",
-    version="0.1.0",
+    version="0.1.1",
     distclass=BinaryDistribution,
     description="High-performance Delta Lake database with POSIX interface and Python bindings",
     long_description=long_description,
