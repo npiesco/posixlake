@@ -53,7 +53,7 @@ def setup_passwordless_sudo():
     print(f"={'='*60}")
     
     username = os.environ.get('USER', 'root')
-    sudoers_file = f"/etc/sudoers.d/fsdb-nfs-{username.replace('.', '_')}"
+    sudoers_file = f"/etc/sudoers.d/posixlake-nfs-{username.replace('.', '_')}"
     
     # For Linux container, just configure directly (we're root)
     sudoers_content = f"{username} ALL=(ALL) NOPASSWD: /bin/mount, /bin/umount\n"
@@ -69,8 +69,8 @@ def setup_passwordless_sudo():
     print(f"          File: {sudoers_file}")
 
 
-def build_fsdb():
-    """Build FSDB in release mode"""
+def build_posixlake():
+    """Build posixlake in release mode"""
     # Configure git and cargo for container environment
     run_command(
         "git config --global http.sslVerify false",
@@ -82,7 +82,7 @@ def build_fsdb():
     
     run_command(
         "cargo build --release --workspace",
-        "Building FSDB (release mode with git CLI)"
+        "Building posixlake (release mode with git CLI)"
     )
 
 
@@ -100,7 +100,7 @@ def main():
     """Main test execution"""
     print("""
 ╔═══════════════════════════════════════════════════════════╗
-║  FSDB Linux NFS Testing (Docker/Podman Container)         ║
+║  posixlake Linux NFS Testing (Docker/Podman Container)         ║
 ╚═══════════════════════════════════════════════════════════╝
 """)
     
@@ -108,7 +108,7 @@ def main():
         check_linux()
         install_nfs_client()
         setup_passwordless_sudo()
-        build_fsdb()
+        build_posixlake()
         run_nfs_tests()
         
         print(f"\n{'='*60}")

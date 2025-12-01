@@ -5,7 +5,7 @@
 
 use arrow::array::{ArrayRef, Int32Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
-use fsdb::DatabaseOps;
+use posixlake::DatabaseOps;
 use std::sync::Arc;
 use tempfile::TempDir;
 

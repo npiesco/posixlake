@@ -2,7 +2,7 @@
 
 ## Critical Testing Patterns for NFS-Based Systems
 
-This document explains how to write reliable, non-flaky tests for FSDB's NFS server and filesystem mounts.
+This document explains how to write reliable, non-flaky tests for posixlake's NFS server and filesystem mounts.
 
 ---
 
@@ -84,7 +84,7 @@ async fn test_my_nfs_feature() {
     fs::create_dir(&mount_point).unwrap();
     
     // Start NFS server
-    let server = FsdbNfsServer::new(Arc::new(db), nfs_port).await.unwrap();
+    let server = PosixLakeNfsServer::new(Arc::new(db), nfs_port).await.unwrap();
     
     // Wait for server to be ready (event-based)
     server.wait_ready().await.unwrap();
@@ -121,7 +121,7 @@ let nfs_port = 2049; // Will cause "Address already in use" errors
 
 ```rust
 // WRONG - Hardcoded path shared across all tests
-let mount_point = PathBuf::from("/tmp/fsdb_mount");
+let mount_point = PathBuf::from("/tmp/posixlake_mount");
 ```
 
 **Problem**: Multiple tests will try to mount at the same location, causing system-level conflicts.

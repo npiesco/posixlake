@@ -1,10 +1,10 @@
 [package]
-name = "fsdb-integration-tests"
+name = "posixlake-integration-tests"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-fsdb = { path = "../fsdb" }
+posixlake = { path = "../posixlake" }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 arrow = "56.2.0"

@@ -4,11 +4,11 @@ from pathlib import Path
 
 # Determine the library file name based on platform
 if platform.system() == "Darwin":
-    lib_name = "libfsdb.dylib"
+    lib_name = "libposixlake.dylib"
 elif platform.system() == "Windows":
-    lib_name = "fsdb.dll"
+    lib_name = "posixlake.dll"
 else:
-    lib_name = "libfsdb.so"
+    lib_name = "libposixlake.so"
 
 # Read the README file for PyPI description
 this_directory = Path(__file__).parent
@@ -20,23 +20,23 @@ class BinaryDistribution(Distribution):
         return True
 
 setup(
-    name="fsdb-py",
-    version="0.2.17",
+    name="posixlake",
+    version="0.1.0",
     distclass=BinaryDistribution,
     description="High-performance Delta Lake database with POSIX interface and Python bindings",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    author="FSDB Contributors",
+    author="posixlake Contributors",
     author_email="",
     license="MIT",
-    url="https://github.com/npiesco/fsdb",
+    url="https://github.com/npiesco/posixlake",
     project_urls={
-        "Bug Tracker": "https://github.com/npiesco/fsdb/issues",
-        "Documentation": "https://github.com/npiesco/fsdb#readme",
-        "Source Code": "https://github.com/npiesco/fsdb",
+        "Bug Tracker": "https://github.com/npiesco/posixlake/issues",
+        "Documentation": "https://github.com/npiesco/posixlake#readme",
+        "Source Code": "https://github.com/npiesco/posixlake",
     },
-    packages=["fsdb"],
-    package_data={"fsdb": [lib_name]},
+    packages=["posixlake"],
+    package_data={"posixlake": [lib_name]},
     include_package_data=True,
     python_requires=">=3.8",
     keywords=[

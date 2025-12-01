@@ -9,12 +9,12 @@
 //! - Endpoint: http://localhost:9000
 //! - Access Key: minioadmin
 //! - Secret Key: minioadmin
-//! - Bucket: fsdb-test
+//! - Bucket: posixlake-test
 
 use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use fsdb::DatabaseOps;
+use posixlake::DatabaseOps;
 use std::env;
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ fn get_minio_config() -> (String, String, String, String) {
         env::var("MINIO_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
     let access_key = env::var("MINIO_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string());
     let secret_key = env::var("MINIO_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string());
-    let bucket = env::var("MINIO_BUCKET").unwrap_or_else(|_| "fsdb-test".to_string());
+    let bucket = env::var("MINIO_BUCKET").unwrap_or_else(|_| "posixlake-test".to_string());
 
     (endpoint, access_key, secret_key, bucket)
 }

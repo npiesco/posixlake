@@ -9,7 +9,7 @@
 use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use fsdb::database_ops::DatabaseOps;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 
 fn setup_logging() {

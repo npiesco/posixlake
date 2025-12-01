@@ -1,12 +1,12 @@
 use arrow::array::{Int32Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use fsdb::database_ops::DatabaseOps;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-/// Test 1: Create FSDB database in native Delta Lake mode
-/// This is the foundational test - FSDB should write directly to Delta Lake format
+/// Test 1: Create posixlake database in native Delta Lake mode
+/// This is the foundational test - posixlake should write directly to Delta Lake format
 #[tokio::test]
 async fn test_create_fsdb_with_delta_native_mode() {
     let temp_dir = TempDir::new().unwrap();
@@ -17,7 +17,7 @@ async fn test_create_fsdb_with_delta_native_mode() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    // Create FSDB database in Delta Lake native mode
+    // Create posixlake database in Delta Lake native mode
     let db = DatabaseOps::create_with_delta_native(db_path.clone(), schema.clone())
         .await
         .unwrap();
@@ -47,14 +47,14 @@ async fn test_create_fsdb_with_delta_native_mode() {
         "Delta Lake transaction log should have at least one file"
     );
 
-    // Query via FSDB API should work
+    // Query via posixlake API should work
     let results = db.query("SELECT * FROM data").await.unwrap();
     let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 3, "Should have 3 rows");
 }
 
-/// Test 2: Open existing Delta Lake table with FSDB
-/// FSDB should be able to open and work with tables created by other Delta Lake writers
+/// Test 2: Open existing Delta Lake table with posixlake
+/// posixlake should be able to open and work with tables created by other Delta Lake writers
 #[tokio::test]
 async fn test_open_existing_delta_table_with_fsdb() {
     let temp_dir = TempDir::new().unwrap();
@@ -99,22 +99,22 @@ async fn test_open_existing_delta_table_with_fsdb() {
 
     DeltaOps(table).write(vec![batch]).await.unwrap();
 
-    // Now open with FSDB in Delta native mode
+    // Now open with posixlake in Delta native mode
     let db = DatabaseOps::open_delta_native(db_path.clone())
         .await
         .unwrap();
 
-    // Query via FSDB API
+    // Query via posixlake API
     let results = db.query("SELECT * FROM data WHERE id > 1").await.unwrap();
     let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 2, "Should have 2 rows (World, Delta)");
 
-    // Insert more data via FSDB
+    // Insert more data via posixlake
     let new_batch = RecordBatch::try_new(
         arrow_schema.clone(),
         vec![
             Arc::new(Int32Array::from(vec![4, 5])),
-            Arc::new(StringArray::from(vec!["Lake", "FSDB"])),
+            Arc::new(StringArray::from(vec!["Lake", "posixlake"])),
         ],
     )
     .unwrap();
@@ -131,11 +131,11 @@ async fn test_open_existing_delta_table_with_fsdb() {
         .downcast_ref::<Int64Array>()
         .unwrap()
         .value(0);
-    assert_eq!(count, 5, "Should have 5 total rows after FSDB insert");
+    assert_eq!(count, 5, "Should have 5 total rows after posixlake insert");
 }
 
 /// Test 3: Transaction commit in Delta Lake native mode
-/// Each FSDB transaction should map to exactly one Delta Lake transaction
+/// Each posixlake transaction should map to exactly one Delta Lake transaction
 #[tokio::test]
 async fn test_delta_native_transaction_commit() {
     let temp_dir = TempDir::new().unwrap();

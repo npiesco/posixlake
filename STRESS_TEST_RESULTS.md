@@ -1,4 +1,4 @@
-# FSDB Stress Test Results
+# posixlake Stress Test Results
 
 **Test Date**: 2025-11-25  
 **Latest Test Run**: November 25, 2025 (with WriteBuffer implementation)  
@@ -6,7 +6,7 @@
 
 ## Overview
 
-FSDB includes 4 stress tests that validate performance on large-scale datasets. All stress tests are **ignored by default** due to longer runtimes (1-30 minutes) and are intended for performance validation and CI/CD benchmarking.
+posixlake includes 4 stress tests that validate performance on large-scale datasets. All stress tests are **ignored by default** due to longer runtimes (1-30 minutes) and are intended for performance validation and CI/CD benchmarking.
 
 **Latest Run**: All 4 stress tests passed in 57.51 seconds (non-ignored tests) with the new WriteBuffer batching implementation.
 
@@ -137,7 +137,7 @@ For future improvements if needed:
 
 ## Conclusion
 
-FSDB successfully handles extreme-scale datasets (30M rows, 1GB CSV) with correct data integrity and system stability. The stress test validates that the row-level deletion implementation is robust and production-ready for workloads of all sizes.
+posixlake successfully handles extreme-scale datasets (30M rows, 1GB CSV) with correct data integrity and system stability. The stress test validates that the row-level deletion implementation is robust and production-ready for workloads of all sizes.
 
 **Test Status**: PASSED ✓  
 **Production Ready**: YES  

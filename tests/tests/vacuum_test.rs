@@ -1,8 +1,8 @@
 use arrow::array::{ArrayRef, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use fsdb::Result;
-use fsdb::database_ops::DatabaseOps;
+use posixlake::Result;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 use tracing::info;
 
@@ -40,7 +40,7 @@ fn count_parquet_files(db_path: &str) -> Result<usize> {
 async fn test_vacuum_basic() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_vacuum_basic";
+    let db_path = "/tmp/posixlake_test_vacuum_basic";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake VACUUM Basic Test ===");
@@ -120,7 +120,7 @@ async fn test_vacuum_basic() -> Result<()> {
 async fn test_vacuum_with_retention() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_vacuum_retention";
+    let db_path = "/tmp/posixlake_test_vacuum_retention";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake VACUUM with Retention Test ===");
@@ -203,7 +203,7 @@ async fn test_vacuum_with_retention() -> Result<()> {
 async fn test_vacuum_dry_run() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_vacuum_dry_run";
+    let db_path = "/tmp/posixlake_test_vacuum_dry_run";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake VACUUM Dry Run Test ===");

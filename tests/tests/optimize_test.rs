@@ -1,8 +1,8 @@
 use arrow::array::{ArrayRef, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use fsdb::Result;
-use fsdb::database_ops::DatabaseOps;
+use posixlake::Result;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 use tracing::info;
 
@@ -30,7 +30,7 @@ fn setup_tracing() {
 async fn test_optimize_compaction() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_optimize";
+    let db_path = "/tmp/posixlake_test_optimize";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake OPTIMIZE Test ===");
@@ -202,7 +202,7 @@ async fn test_optimize_compaction() -> Result<()> {
 async fn test_optimize_with_filter() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_optimize_filter";
+    let db_path = "/tmp/posixlake_test_optimize_filter";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake OPTIMIZE with Filter Test ===");
@@ -294,7 +294,7 @@ async fn test_optimize_with_filter() -> Result<()> {
 async fn test_optimize_with_target_size() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_optimize_size";
+    let db_path = "/tmp/posixlake_test_optimize_size";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake OPTIMIZE with Target Size Test ===");

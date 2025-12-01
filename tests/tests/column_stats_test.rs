@@ -1,7 +1,7 @@
 use arrow::array::{ArrayRef, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use fsdb::database_ops::DatabaseOps;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 use tracing::info;
 
@@ -162,7 +162,7 @@ async fn test_column_stats_query_pruning() {
     // Note: Delta Lake performs file pruning automatically based on column statistics
     // stored in the transaction log (_delta_log). Pruning happens transparently when
     // queries are executed - only files containing relevant data ranges are scanned.
-    // Delta Lake doesn't expose pruning metrics in the same way as legacy FSDB.
+    // Delta Lake doesn't expose pruning metrics in the same way as legacy posixlake.
 
     info!(
         "[TEST] Query pruning test completed successfully - Delta Lake handles pruning automatically."

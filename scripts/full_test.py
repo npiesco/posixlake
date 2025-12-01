@@ -6,7 +6,7 @@ import subprocess
 import time
 import os
 import sys
-from fsdb import DatabaseOps, Schema, Field, NfsServer
+from posixlake import DatabaseOps, Schema, Field, NfsServer
 
 def run(cmd):
     """Run command and print output"""
@@ -23,7 +23,7 @@ def main():
     print("FULL POSIX COMMANDS TEST")
     print("="*70)
     
-    test_dir = "/tmp/fsdb_manual_test"
+    test_dir = "/tmp/posixlake_manual_test"
     
     # Cleanup
     print("\nCleaning up...")

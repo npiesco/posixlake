@@ -95,14 +95,14 @@ jobs:
         run: |
           docker run --rm --network=host --entrypoint /bin/sh \
             minio/mc:latest \
-            -c "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb myminio/fsdb-test || true"
+            -c "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb myminio/posixlake-test || true"
       
       - name: Run S3 integration tests
         env:
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ACCESS_KEY: minioadmin
           MINIO_SECRET_KEY: minioadmin
-          MINIO_BUCKET: fsdb-test
+          MINIO_BUCKET: posixlake-test
         run: cargo test --test s3_test --verbose
       
       - name: Stop MinIO
@@ -173,13 +173,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            lib: libfsdb.so
+            lib: libposixlake.so
           - os: macos-latest
             target: x86_64-apple-darwin
-            lib: libfsdb.dylib
+            lib: libposixlake.dylib
           - os: macos-latest
             target: aarch64-apple-darwin
-            lib: libfsdb.dylib
+            lib: libposixlake.dylib
     steps:
       - uses: actions/checkout@v4
         with:
@@ -202,8 +202,8 @@ jobs:
       - name: Build Rust library
         shell: bash
         run: |
-          cargo build --release --target ${{ matrix.target }} -p fsdb
-          ls -la target/${{ matrix.target }}/release/ | grep libfsdb || echo "Library not found!"
+          cargo build --release --target ${{ matrix.target }} -p posixlake
+          ls -la target/${{ matrix.target }}/release/ | grep libposixlake || echo "Library not found!"
       
       - name: Generate UniFFI bindings
         shell: bash
@@ -212,25 +212,25 @@ jobs:
             echo "Error: Library not found at target/${{ matrix.target }}/release/${{ matrix.lib }}"
             exit 1
           fi
-          cd fsdb
+          cd posixlake
           cargo run --bin uniffi-bindgen -- generate \
             --library ../target/${{ matrix.target }}/release/${{ matrix.lib }} \
             --language python \
-            --out-dir ../bindings/python/fsdb
+            --out-dir ../bindings/python/posixlake
       
       - name: Copy library to bindings
         shell: bash
         run: |
-          # Copy to fsdb package directory
-          cp target/${{ matrix.target }}/release/${{ matrix.lib }} bindings/python/fsdb/
-          echo "Contents of bindings/python/fsdb/:"
-          ls -lh bindings/python/fsdb/
+          # Copy to posixlake package directory
+          cp target/${{ matrix.target }}/release/${{ matrix.lib }} bindings/python/posixlake/
+          echo "Contents of bindings/python/posixlake/:"
+          ls -lh bindings/python/posixlake/
           # Verify library was copied
-          if [ ! -f "bindings/python/fsdb/${{ matrix.lib }}" ]; then
-            echo "Error: Library file not found in bindings/python/fsdb/"
+          if [ ! -f "bindings/python/posixlake/${{ matrix.lib }}" ]; then
+            echo "Error: Library file not found in bindings/python/posixlake/"
             exit 1
           fi
-          echo "✓ Library file copied to fsdb package directory"
+          echo "✓ Library file copied to posixlake package directory"
       
       - name: Build Python wheel
         shell: bash

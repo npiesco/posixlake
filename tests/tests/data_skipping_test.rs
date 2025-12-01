@@ -1,6 +1,6 @@
 use arrow::array::{Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
-use fsdb::DatabaseOps;
+use posixlake::DatabaseOps;
 use std::sync::Arc;
 use tempfile::TempDir;
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["fsdb", "tests"]
+members = ["posixlake", "tests"]
 resolver = "2"
 
 [workspace.dependencies]

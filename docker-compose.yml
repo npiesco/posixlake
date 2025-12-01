@@ -1,9 +1,9 @@
 services:
   # MinIO - S3-compatible object storage for local testing
-  # Note: FSDB tests run on host (not in containers) to support NFS mounting
+  # Note: posixlake tests run on host (not in containers) to support NFS mounting
   minio:
     image: minio/minio:latest
-    container_name: fsdb-minio
+    container_name: posixlake-minio
     ports:
       - "9000:9000"      # API
       - "9001:9001"      # Console
@@ -22,16 +22,16 @@ services:
   # Create default bucket for testing
   minio-init:
     image: minio/mc:latest
-    container_name: fsdb-minio-init
+    container_name: posixlake-minio-init
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
       mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      mc mb myminio/fsdb-test || true;
-      mc anonymous set download myminio/fsdb-test;
-      echo 'MinIO initialized with bucket: fsdb-test';
+      mc mb myminio/posixlake-test || true;
+      mc anonymous set download myminio/posixlake-test;
+      echo 'MinIO initialized with bucket: posixlake-test';
       "
 
 volumes:

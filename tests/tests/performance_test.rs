@@ -1,13 +1,13 @@
 use arrow::array::{ArrayRef, Int32Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use fsdb::DatabaseOps;
+use posixlake::DatabaseOps;
 use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
 
 fn setup_logging() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("fsdb=info")
+        .with_env_filter("posixlake=info")
         .try_init();
 }
 
@@ -382,7 +382,7 @@ async fn test_memory_overhead() {
     cleanup_test_db(db_path);
 }
 
-/// Test: Compare FSDB query performance with direct Parquet access
+/// Test: Compare posixlake query performance with direct Parquet access
 #[tokio::test]
 async fn test_fsdb_vs_direct_parquet_comparison() {
     setup_logging();
@@ -391,7 +391,7 @@ async fn test_fsdb_vs_direct_parquet_comparison() {
 
     let schema = create_test_schema();
 
-    println!("\n=== FSDB vs Direct Parquet Comparison ===");
+    println!("\n=== posixlake vs Direct Parquet Comparison ===");
 
     // Create database and insert test data
     let db = DatabaseOps::create(db_path, schema.clone())
@@ -412,7 +412,7 @@ async fn test_fsdb_vs_direct_parquet_comparison() {
         db.insert(batch).await.expect("Failed to insert");
     }
 
-    // Benchmark 1: FSDB query performance
+    // Benchmark 1: posixlake query performance
     let fsdb_queries = vec![
         ("SELECT COUNT(*) as count FROM data", "Full scan with COUNT"),
         (
@@ -425,10 +425,10 @@ async fn test_fsdb_vs_direct_parquet_comparison() {
         ),
     ];
 
-    println!("\n--- FSDB Query Performance ---");
+    println!("\n--- posixlake Query Performance ---");
     for (sql, description) in &fsdb_queries {
         let start = Instant::now();
-        let _results = db.query(sql).await.expect("FSDB query failed");
+        let _results = db.query(sql).await.expect("posixlake query failed");
         let fsdb_latency = start.elapsed();
         println!(
             "  {}: {:.2}ms",
@@ -532,7 +532,7 @@ async fn test_fsdb_vs_direct_parquet_comparison() {
 
     // Summary comparison
     println!("\n--- Performance Comparison Summary ---");
-    println!("FSDB provides:");
+    println!("posixlake provides:");
     println!("  - SQL query interface (DataFusion)");
     println!("  - ACID transactions with WAL");
     println!("  - MVCC concurrency control");
@@ -541,11 +541,11 @@ async fn test_fsdb_vs_direct_parquet_comparison() {
     println!("  - Raw file access");
     println!("  - No transaction overhead");
     println!("  - Manual iteration required");
-    println!("\nNote: FSDB latency includes SQL parsing, planning, and execution.");
+    println!("\nNote: posixlake latency includes SQL parsing, planning, and execution.");
     println!("      Direct Parquet latency is raw file I/O only.");
 
-    // Assertions: FSDB should be within reasonable range of direct Parquet
-    // We expect FSDB to be slower due to SQL layer, but not excessively
+    // Assertions: posixlake should be within reasonable range of direct Parquet
+    // We expect posixlake to be slower due to SQL layer, but not excessively
     assert_eq!(total_count, total_rows, "Row count mismatch");
 
     cleanup_test_db(db_path);

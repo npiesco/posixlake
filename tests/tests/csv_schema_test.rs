@@ -1,6 +1,6 @@
 use arrow::datatypes::{DataType, Field, Schema};
-use fsdb::database_ops::DatabaseOps;
-use fsdb::nfs::NfsServer;
+use posixlake::database_ops::DatabaseOps;
+use posixlake::nfs::NfsServer;
 use serial_test::serial;
 use std::sync::Arc;
 use std::thread;

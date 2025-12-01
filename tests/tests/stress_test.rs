@@ -1,13 +1,13 @@
 use arrow::array::{ArrayRef, Int32Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use fsdb::DatabaseOps;
+use posixlake::DatabaseOps;
 use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
 
 fn setup_logging() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("fsdb=info")
+        .with_env_filter("posixlake=info")
         .try_init();
 }
 

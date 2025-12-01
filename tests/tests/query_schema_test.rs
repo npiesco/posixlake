@@ -1,5 +1,5 @@
 use arrow::datatypes::{DataType, Field, Schema};
-use fsdb::database_ops::DatabaseOps;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 use tempfile::TempDir;
 

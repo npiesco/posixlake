@@ -22,20 +22,20 @@ The POSIX interface uses a **pure Rust NFS server** - NO external drivers requir
 
 ### How It Works
 
-FSDB runs a localhost NFS server in pure Rust. Your OS mounts it using its native NFS client:
+posixlake runs a localhost NFS server in pure Rust. Your OS mounts it using its native NFS client:
 
 ```bash
 # macOS/Linux
-sudo mount -t nfs -o nolocks,vers=3 localhost:/fsdb /mnt/fsdb
+sudo mount -t nfs -o nolocks,vers=3 localhost:/posixlake /mnt/posixlake
 
 # Windows (mount as network drive)
-mount -o anon \\localhost\fsdb Z:
+mount -o anon \\localhost\posixlake Z:
 ```
 
-The `fsdb` CLI handles all mounting automatically - you just run:
+The `posixlake` CLI handles all mounting automatically - you just run:
 
 ```bash
-fsdb mount /path/to/database /mnt/fsdb
+posixlake mount /path/to/database /mnt/posixlake
 ```
 
 ## Running the Tests
@@ -125,7 +125,7 @@ If you see mount errors:
 │  POSIX Commands (ls, cat, grep, sed)   │
 └──────────────┬──────────────────────────┘
                │ (Native OS mount)
-               │ mount -t nfs localhost:/fsdb
+               │ mount -t nfs localhost:/posixlake
                │
 ┌──────────────▼──────────────────────────┐
 │  OS Built-in NFS Client                 │
@@ -135,13 +135,13 @@ If you see mount errors:
                │ (NFSv3 protocol)
                │
 ┌──────────────▼──────────────────────────┐
-│  FSDB NFS Server (Pure Rust)            │
+│  posixlake NFS Server (Pure Rust)            │
 │  Port: localhost:2049                   │
 │  Implementation: nfs3_server crate      │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  FSDB Core (Delta Lake Native)         │
+│  posixlake Core (Delta Lake Native)         │
 │  Parquet, MVCC, Delta Lake, SQL         │
 └─────────────────────────────────────────┘
 ```
@@ -158,5 +158,5 @@ If you see mount errors:
 
 - NFS Protocol: RFC 1813 (NFSv3)
 - nfsserve crate: https://github.com/xetdata/nfsserve
-- FSDB Architecture: See PROGRESS_TREE_TRACKER.md
+- posixlake Architecture: See PROGRESS_TREE_TRACKER.md
 

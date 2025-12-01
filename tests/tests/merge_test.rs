@@ -6,7 +6,7 @@
 use arrow::array::{Int32Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 use arrow::record_batch::RecordBatch;
-use fsdb::database_ops::DatabaseOps;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 use tempfile::TempDir;
 

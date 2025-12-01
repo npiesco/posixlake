@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="fsdb-logo.png" alt="FSDB Logo" width="200"/>
-  <h1>FSDB</h1>
+  <img src="posixlake-logo.png" alt="posixlake Logo" width="200"/>
+  <h1>posixlake</h1>
   <p><strong>Posix and ACID compliant directory based database built with Rust</strong></p>
   
   <p><em>A columnar database engine where UNIX tools (cat, grep, awk, wc, head, tail, sort, cut, echo >>, sed -i, vim, mkdir, mv, cp, rmdir, rm) trigger Delta Lake operations including MERGE (UPSERT), ACID transactions, and native format storage. Works with local filesystem directories and object storage/S3. Built on Apache Arrow, Parquet, and DataFusion for high-performance analytics workloads.</em></p>
@@ -19,13 +19,13 @@
 
 ---
 
-## What is FSDB?
+## What is posixlake?
 
-FSDB is a **file-system database** where **POSIX commands trigger Delta Lake operations**. Works with **local filesystem directories** (`/path/to/database`) and **object storage/S3** (`s3://bucket/path`) - same unified API for both. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, and Athena.
+posixlake is a **file-system database** where **POSIX commands trigger Delta Lake operations**. Works with **local filesystem directories** (`/path/to/database`) and **object storage/S3** (`s3://bucket/path`) - same unified API for both. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, and Athena.
 
 ### Mount as Filesystem - Query with UNIX Tools
 
-When you mount a Delta Lake database via FSDB's NFS server, it exposes this filesystem structure:
+When you mount a Delta Lake database via posixlake's NFS server, it exposes this filesystem structure:
 
 ```
 /mnt/data/              (mount point)
@@ -50,7 +50,7 @@ When you mount a Delta Lake database via FSDB's NFS server, it exposes this file
 
 **Read Operations (cat, grep, awk, wc):**
 1. User runs `cat /mnt/data/data/data.csv` or `grep "pattern" /mnt/data/data/data.csv`
-2. OS NFS client sends READ request to FSDB NFS server (with offset + size)
+2. OS NFS client sends READ request to posixlake NFS server (with offset + size)
 3. Server checks **two-tier cache** (memory → disk)
 4. **Cache miss**: Query all Parquet files → Convert RecordBatch to CSV → Cache full content
 5. **Cache hit**: Return requested byte range (microsecond from memory, millisecond from disk)
@@ -132,7 +132,7 @@ cat temp.csv > data.csv
 
 ```bash
 # Mount database as filesystem
-fsdb mount /path/to/database /mnt/data
+posixlake mount /path/to/database /mnt/data
 
 # data.csv is a CSV view of the Parquet data
 cat /mnt/data/data/data.csv
@@ -174,7 +174,7 @@ wc -l /mnt/data/data/data.csv
 
 ```bash
 # Mount S3-backed Delta table
-fsdb mount s3://my-bucket/delta-table /mnt/s3-data
+posixlake mount s3://my-bucket/delta-table /mnt/s3-data
 
 # Now use UNIX tools on cloud data!
 grep "pattern" /mnt/s3-data/data/data.csv
@@ -186,11 +186,11 @@ echo "new,record,123" >> /mnt/s3-data/data/data.csv
 
 ### Delta Lake Native Format
 
-**Every FSDB database IS a Delta Lake table:**
+**Every posixlake database IS a Delta Lake table:**
 
 ```bash
-# Create database via FSDB
-fsdb create /path/to/database
+# Create database via posixlake
+posixlake create /path/to/database
 
 # Data is immediately readable by Spark/Databricks/Athena
 # -> Native _delta_log/ transaction log
@@ -198,9 +198,9 @@ fsdb create /path/to/database
 # -> No export or translation needed
 ```
 
-**FSDB vs Traditional Delta Lake:**
+**posixlake vs Traditional Delta Lake:**
 
-| Feature | FSDB | Traditional Delta Lake |
+| Feature | posixlake | Traditional Delta Lake |
 |---------|------|----------------------|
 | Format | Native Delta Lake | Delta Lake |
 | ACID Transactions | Delta Lake protocol | Delta Lake protocol |
@@ -208,12 +208,12 @@ fsdb create /path/to/database
 | Storage Abstraction | ✓ Unified Local/S3/NFS | ObjectStore only |
 | POSIX Interface | ✓ Pure Rust NFS server (works with S3!) | ✗ Not available |
 | SQL Queries | ✓ DataFusion (embedded) | Spark/Presto (separate) |
-| Mount as Filesystem | ✓ `mount /mnt/fsdb` (local or S3) | ✗ Not available |
+| Mount as Filesystem | ✓ `mount /mnt/posixlake` (local or S3) | ✗ Not available |
 | UNIX Tools | ✓ `cat`, `grep`, `awk` on local and S3 | ✗ Requires Spark/export |
 | Ecosystem | Full Delta Lake compatibility | Full ecosystem |
 | Deployment | ✓ Single binary | Requires Spark cluster |
 
-**Why FSDB:**
+**Why posixlake:**
 
 - **POSIX Commands Work**: Use `cat`, `grep`, `awk`, `sed`, `echo >>` directly on your database
 - **No Special Tools**: Mount via NFS, use standard UNIX commands - that's it
@@ -264,7 +264,7 @@ fsdb create /path/to/database
 └─────────────────────┬──────────────────────────────────┘
                       │
 ┌─────────────────────▼──────────────────────────────────┐
-│  FSDB Core (DatabaseOps)                               │
+│  posixlake Core (DatabaseOps)                               │
 │  • insert() / query() / delete_rows_where()            │
 │  • DataFusion SQL engine                               │
 │  • Storage abstraction (Local/S3)                      │
@@ -326,11 +326,11 @@ fsdb create /path/to/database
 
 ```bash
 # Build from source
-git clone https://github.com/npiesco/fsdb.git
-cd fsdb
+git clone https://github.com/npiesco/posixlake.git
+cd posixlake
 cargo build --release
 
-# Binary is at target/release/fsdb
+# Binary is at target/release/posixlake
 ```
 
 **Prerequisites:** Rust 1.70+, NFS client (built-in on macOS/Linux/Windows Pro)
@@ -339,16 +339,16 @@ cargo build --release
 
 ```bash
 # Install from PyPI (recommended - requires Python 3.11+)
-pip install fsdb-py
+pip install posixlake-py
 
 # Or build from source (supports Python 3.8+)
-cd fsdb
+cd posixlake
 cargo build --release
 cargo run --bin uniffi-bindgen -- generate \
-    --library target/release/libfsdb.dylib \
+    --library target/release/libposixlake.dylib \
     --language python \
-    --out-dir ../bindings/python/fsdb
-cp target/release/libfsdb.dylib ../bindings/python/fsdb/
+    --out-dir ../bindings/python/posixlake
+cp target/release/libposixlake.dylib ../bindings/python/posixlake/
 pip install -e ../bindings/python/
 ```
 
@@ -356,12 +356,12 @@ pip install -e ../bindings/python/
 - **Python 3.11+** for prebuilt wheels with native library
 - Python 3.8+ for building from source
 
-**PyPI Package:** https://pypi.org/project/fsdb-py/
+**PyPI Package:** https://pypi.org/project/posixlake-py/
 
 **Python Quick Start:**
 
 ```python
-from fsdb import DatabaseOps, Schema, Field, NfsServer
+from posixlake import DatabaseOps, Schema, Field, NfsServer
 
 # Create database
 schema = Schema(fields=[
@@ -384,19 +384,19 @@ print(results)
 
 # Mount as filesystem and use POSIX tools
 nfs = NfsServer(db, 12049)
-# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/fsdb
-# cat /mnt/fsdb/data/data.csv | grep "Alice" | awk -F',' '{print $2}'
+# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/posixlake
+# cat /mnt/posixlake/data/data.csv | grep "Alice" | awk -F',' '{print $2}'
 ```
 
 See [Python Bindings Documentation](bindings/python/README.md) for complete API reference.
 
 ### Usage - POSIX Interface
 
-The easiest way to use FSDB is to mount it as a filesystem:
+The easiest way to use posixlake is to mount it as a filesystem:
 
 ```bash
 # Create and mount a database
-./target/release/fsdb mount /path/to/database /mnt/data
+./target/release/posixlake mount /path/to/database /mnt/data
 
 # Now use regular UNIX commands!
 cat /mnt/data/data/data.csv        # Read all data
@@ -405,7 +405,7 @@ awk -F',' '{print $2}' /mnt/data/data/data.csv  # Process
 echo "id,name,value" >> /mnt/data/data/data.csv  # Append
 
 # Unmount when done
-./target/release/fsdb unmount /mnt/data
+./target/release/posixlake unmount /mnt/data
 ```
 
 All writes persist to Delta Lake with full ACID guarantees. No special tools needed - just standard UNIX commands.
@@ -425,7 +425,7 @@ open http://localhost:9001
 # Login: minioadmin / minioadmin
 
 # Test S3 backend
-./target/release/fsdb s3-test "s3://fsdb-test/test_db"
+./target/release/posixlake s3-test "s3://posixlake-test/test_db"
 ```
 
 **MinIO Configuration:**
@@ -437,7 +437,7 @@ The project includes `.cargo/config.toml` with default MinIO settings:
 MINIO_ENDPOINT = "http://localhost:9000"
 MINIO_ACCESS_KEY = "minioadmin"
 MINIO_SECRET_KEY = "minioadmin"
-MINIO_BUCKET = "fsdb-test"
+MINIO_BUCKET = "posixlake-test"
 ```
 
 **Custom S3 Configuration:**
@@ -452,7 +452,7 @@ export MINIO_SECRET_KEY="your-secret-key"
 export MINIO_BUCKET="your-bucket"
 
 # Or pass via CLI
-./target/release/fsdb s3-test "s3://your-bucket/your-db" \
+./target/release/posixlake s3-test "s3://your-bucket/your-db" \
   --endpoint "https://s3.amazonaws.com" \
   --access-key "your-access-key" \
   --secret-key "your-secret-key"
@@ -463,10 +463,10 @@ export MINIO_BUCKET="your-bucket"
 #### Rust API
 
 ```rust
-use fsdb::{Database, Record};
+use posixlake::{Database, Record};
 use std::collections::HashMap;
 
-fn main() -> fsdb::Result<()> {
+fn main() -> posixlake::Result<()> {
     // Create a new database
     let db = Database::create("/path/to/database")?;
     
@@ -490,14 +490,14 @@ fn main() -> fsdb::Result<()> {
 #### SQL Queries (DataFusion Integration)
 
 ```rust
-use fsdb::query::FsdbTableProvider;
+use posixlake::query::PosixLakeTableProvider;
 use datafusion::prelude::*;
 use arrow::array::{Int32Array, StringArray, RecordBatch};
 use arrow::datatypes::{DataType, Field, Schema};
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> fsdb::Result<()> {
+async fn main() -> posixlake::Result<()> {
     // Create schema
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -520,7 +520,7 @@ async fn main() -> fsdb::Result<()> {
     )?;
     
     // Register table provider
-    let provider = FsdbTableProvider::new(schema, vec![batch])?;
+    let provider = PosixLakeTableProvider::new(schema, vec![batch])?;
     let ctx = SessionContext::new();
     ctx.register_table("users", Arc::new(provider))?;
     
@@ -537,9 +537,9 @@ async fn main() -> fsdb::Result<()> {
 #### Transaction Example
 
 ```rust
-use fsdb::transaction::{TransactionManager, TransactionVisibility, FileVersion};
+use posixlake::transaction::{TransactionManager, TransactionVisibility, FileVersion};
 
-fn main() -> fsdb::Result<()> {
+fn main() -> posixlake::Result<()> {
     // Initialize transaction manager
     let txn_manager = TransactionManager::new();
     
@@ -573,7 +573,7 @@ fn main() -> fsdb::Result<()> {
 
 **How S3 Storage Works:**
 
-FSDB uses **Delta Lake native format** with full S3 support:
+posixlake uses **Delta Lake native format** with full S3 support:
 
 - **Delta Lake Format**: Native `_delta_log/` transaction log in S3
 - **S3-First Architecture**: All data and metadata stored in S3
@@ -596,19 +596,19 @@ After creating a database with S3 backend, you can verify files are in MinIO:
 
 ```bash
 # List databases
-docker compose exec minio sh -c "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc ls myminio/fsdb-test/"
+docker compose exec minio sh -c "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc ls myminio/posixlake-test/"
 
 # Inspect Delta Lake transaction log
-docker compose exec minio sh -c "mc ls myminio/fsdb-test/your_db/_delta_log/"
+docker compose exec minio sh -c "mc ls myminio/posixlake-test/your_db/_delta_log/"
 # → 00000000000000000000.json (Delta Lake transaction log)
 # → 00000000000000000001.json (subsequent transactions)
 
 # Inspect Parquet data files
-docker compose exec minio sh -c "mc ls myminio/fsdb-test/your_db/"
+docker compose exec minio sh -c "mc ls myminio/posixlake-test/your_db/"
 # → part-00000-*.snappy.parquet (Delta Lake Parquet files)
 
 # Read Delta transaction log
-docker compose exec minio sh -c "mc cat myminio/fsdb-test/your_db/_delta_log/00000000000000000000.json"
+docker compose exec minio sh -c "mc cat myminio/posixlake-test/your_db/_delta_log/00000000000000000000.json"
 # → Delta Lake metadata, protocol, and add actions
 ```
 
@@ -620,7 +620,7 @@ docker compose exec minio sh -c "mc cat myminio/fsdb-test/your_db/_delta_log/000
 MINIO_ENDPOINT = "http://localhost:9000"
 MINIO_ACCESS_KEY = "minioadmin"
 MINIO_SECRET_KEY = "minioadmin"
-MINIO_BUCKET = "fsdb-test"
+MINIO_BUCKET = "posixlake-test"
 ```
 
 
@@ -658,10 +658,10 @@ docker compose up -d
 cargo test s3_test
 
 # Python bindings test
-python3 fsdb/examples/python_example.py
+python3 posixlake/examples/python_example.py
 
 # Delta Lake interoperability test (requires PySpark)
-python3 fsdb/examples/interop_test_spark_fsdb.py
+python3 posixlake/examples/interop_test_spark_posixlake.py
 
 # Cleanup
 docker compose down
@@ -673,7 +673,7 @@ docker compose down
 - NFS server and POSIX interface tests
 - Security and RBAC tests
 - Python bindings (complete working example with NFS)
-- **Delta Lake Interoperability Test**: PySpark ↔ FSDB (100% compatible)
+- **Delta Lake Interoperability Test**: PySpark ↔ posixlake (100% compatible)
 
 For detailed testing documentation, see [tests/POSIX_TEST_SETUP.md](tests/POSIX_TEST_SETUP.md).
 
@@ -735,11 +735,11 @@ For detailed testing documentation, see [tests/POSIX_TEST_SETUP.md](tests/POSIX_
 - **Type Safety**: Complete type hints and error handling
 - **Zero-Copy Operations**: Efficient Rust-Python interop
 - **Robust**: Comprehensive error handling and async support
-- **PyPI Available**: `pip install fsdb-py` (Python 3.11+ for prebuilt wheels)
+- **PyPI Available**: `pip install posixlake-py` (Python 3.11+ for prebuilt wheels)
 
 Example MERGE (UPSERT) operation:
 ```python
-from fsdb import DatabaseOps
+from posixlake import DatabaseOps
 import json
 
 db = DatabaseOps.open("my_delta_table")
@@ -756,7 +756,7 @@ See [bindings/python/](bindings/python/) for documentation and [PYTHON_BINDINGS_
 
 ## Performance
 
-FSDB is designed for high-performance analytics workloads:
+posixlake is designed for high-performance analytics workloads:
 
 - **Write latency**: 5-50ms (Parquet encoding + Delta Lake commit)
 - **Read latency**: 1-10ms (Parquet decompression with column pruning)
@@ -784,7 +784,7 @@ See [STRESS_TEST_RESULTS.md](STRESS_TEST_RESULTS.md) for detailed performance be
 
 **Apache License 2.0**
 
-Copyright 2025 FSDB Contributors
+Copyright 2025 posixlake Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -798,7 +798,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-**Why Apache 2.0?** FSDB builds on Delta Lake (Apache 2.0) and follows Linux Foundation standards for open infrastructure software. This permissive license enables broad adoption while protecting contributors through patent grants.
+**Why Apache 2.0?** posixlake builds on Delta Lake (Apache 2.0) and follows Linux Foundation standards for open infrastructure software. This permissive license enables broad adoption while protecting contributors through patent grants.
 
 See [LICENSE.md](LICENSE.md) for the full license text.
 
@@ -829,6 +829,6 @@ Inspired by:
 
 ---
 
-**Questions?** Open an [issue](https://github.com/npiesco/fsdb/issues)
+**Questions?** Open an [issue](https://github.com/npiesco/posixlake/issues)
 
 **Like this project?** Star the repo and share with your data engineering team!

@@ -1,8 +1,8 @@
 use arrow::array::{ArrayRef, Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use fsdb::Result;
-use fsdb::database_ops::DatabaseOps;
+use posixlake::Result;
+use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
 use tracing::info;
 
@@ -39,7 +39,7 @@ fn count_parquet_files(db_path: &str) -> Result<usize> {
 async fn test_zorder_basic() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_zorder_basic";
+    let db_path = "/tmp/posixlake_test_zorder_basic";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake Z-ORDER Basic Test ===");
@@ -142,7 +142,7 @@ async fn test_zorder_basic() -> Result<()> {
 async fn test_zorder_single_column() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_zorder_single";
+    let db_path = "/tmp/posixlake_test_zorder_single";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake Z-ORDER Single Column Test ===");
@@ -209,7 +209,7 @@ async fn test_zorder_single_column() -> Result<()> {
 async fn test_zorder_after_optimize() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/fsdb_test_zorder_optimize";
+    let db_path = "/tmp/posixlake_test_zorder_optimize";
     let _ = std::fs::remove_dir_all(db_path);
 
     info!("=== Delta Lake OPTIMIZE + Z-ORDER Combined Test ===");

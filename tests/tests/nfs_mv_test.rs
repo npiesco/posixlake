@@ -2,8 +2,8 @@
 //! TDD: Test-driven development for POSIX mv command support
 
 use arrow::datatypes::{DataType, Field, Schema};
-use fsdb::DatabaseOps;
-use fsdb::nfs::NfsServer;
+use posixlake::DatabaseOps;
+use posixlake::nfs::NfsServer;
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ static INIT: Once = Once::new();
 
 fn init_logging() {
     INIT.call_once(|| {
-        let log_file = format!("/tmp/fsdb_nfs_mv_test_{}.log", std::process::id());
+        let log_file = format!("/tmp/posixlake_nfs_mv_test_{}.log", std::process::id());
         let file = std::fs::File::create(&log_file).expect("Failed to create log file");
         eprintln!("[TEST] Logging to: {}", log_file);
         tracing_subscriber::fmt()
@@ -42,7 +42,7 @@ fn check_can_mount() -> bool {
 
     let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
     let username_safe = username.replace('.', "_");
-    let sudoers_file = format!("/etc/sudoers.d/fsdb-nfs-{}", username_safe);
+    let sudoers_file = format!("/etc/sudoers.d/posixlake-nfs-{}", username_safe);
     std::path::Path::new(&sudoers_file).exists()
 }
 

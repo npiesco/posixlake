@@ -1,10 +1,10 @@
 //! NFS Server Integration Tests
-//! Testing FSDB's pure Rust NFS server implementation
+//! Testing posixlake's pure Rust NFS server implementation
 
 use arrow::array::{Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
-use fsdb::DatabaseOps;
-use fsdb::nfs::NfsServer;
+use posixlake::DatabaseOps;
+use posixlake::nfs::NfsServer;
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ static INIT: Once = Once::new();
 /// Initialize tracing for tests
 fn init_logging() {
     INIT.call_once(|| {
-        let log_file = format!("/tmp/fsdb_nfs_test_{}.log", std::process::id());
+        let log_file = format!("/tmp/posixlake_nfs_test_{}.log", std::process::id());
         let file = std::fs::File::create(&log_file).expect("Failed to create log file");
         eprintln!("[TEST] Logging to: {}", log_file);
         tracing_subscriber::fmt()
@@ -55,7 +55,7 @@ fn check_can_mount() -> bool {
     // Otherwise, check if the sudoers file exists (passwordless sudo configured)
     let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
     let username_safe = username.replace('.', "_");
-    let sudoers_file = format!("/etc/sudoers.d/fsdb-nfs-{}", username_safe);
+    let sudoers_file = format!("/etc/sudoers.d/posixlake-nfs-{}", username_safe);
 
     std::path::Path::new(&sudoers_file).exists()
 }
@@ -76,7 +76,7 @@ fn require_mount_capability() {
             To configure passwordless sudo:\n\
                 python3 scripts/setup_nfs_sudo.py\n\
             \n\
-            This will configure your system to allow FSDB to mount NFS without prompts.\n\
+            This will configure your system to allow posixlake to mount NFS without prompts.\n\
             \n\
             After running the setup script, re-run the tests.\n\
             ================================================================================\n\
@@ -108,7 +108,7 @@ async fn test_nfs_server_starts_and_stops() {
     let port = create_unique_port(12049);
 
     // This should compile and start server
-    let server = fsdb::nfs::NfsServer::new(db.clone(), port).await;
+    let server = posixlake::nfs::NfsServer::new(db.clone(), port).await;
     assert!(server.is_ok(), "NFS server should start successfully");
 
     let server = server.unwrap();
@@ -147,12 +147,12 @@ async fn test_nfs_server_exports_database() {
     db.insert(batch).await.unwrap();
 
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
-    // Server should export /fsdb path
+    // Server should export /posixlake path
     let exports = server.list_exports().await;
     assert_eq!(exports.len(), 1, "Should have exactly one export");
-    assert_eq!(exports[0], "/fsdb", "Should export /fsdb");
+    assert_eq!(exports[0], "/posixlake", "Should export /posixlake");
 
     server.shutdown().await.unwrap();
 }
@@ -173,7 +173,7 @@ async fn test_nfs_directory_structure() {
     let db = DatabaseOps::create(&db_path, schema).await.unwrap();
 
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Root should have "data" directory
     let root_entries = server.readdir("/").await.unwrap();
@@ -219,7 +219,7 @@ async fn test_nfs_read_csv_file() {
     db.insert(batch).await.unwrap();
 
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Read data.csv
     let content = server.read_file("/data/data.csv", 0, 1024).await.unwrap();
@@ -262,7 +262,7 @@ async fn test_nfs_write_to_csv() {
 
     let db = Arc::new(db);
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(db.clone(), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(db.clone(), port).await.unwrap();
 
     // Write new row: "2,Bob\n"
     let new_data = b"2,Bob\n";
@@ -310,7 +310,7 @@ async fn test_nfs_file_attributes() {
     db.insert(batch).await.unwrap();
 
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Get attributes for data.csv
     let attrs = server.getattr("/data/data.csv").await.unwrap();
@@ -559,7 +559,7 @@ async fn test_real_os_mount_and_posix_commands() {
     db.insert(batch).await.unwrap();
 
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Server is ready - new() waits for ready signal before returning
     // Mount using OS command - THIS MUST WORK
@@ -640,7 +640,7 @@ async fn test_real_os_write_through_mount() {
     db.insert(batch).await.unwrap();
 
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Server is ready - new() waits for ready signal before returning
     // Mount - THIS MUST WORK
@@ -1454,7 +1454,7 @@ async fn test_nfs_concurrent_multiprocess_access() {
 
     // Start NFS server
     let port = create_unique_port(11049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Mount the NFS server
     println!(
@@ -1615,7 +1615,7 @@ async fn test_nfs_concurrent_readers_and_writer() {
 
     // Start NFS server
     let port = create_unique_port(11149);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Mount the NFS server
     println!(
@@ -4242,7 +4242,7 @@ async fn test_nfs_mkdir_creates_directory() {
     let db = DatabaseOps::create(&db_path, schema).await.unwrap();
 
     let port = create_unique_port(12049);
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
     mount_nfs_os("localhost", port, &mount_point)
@@ -4320,7 +4320,7 @@ async fn test_nfs_cp_creates_file() {
 
     let port = create_unique_port(12049);
     // new() already waits for server readiness with event-based channel (see mod.rs:94-113)
-    let server = fsdb::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
+    let server = posixlake::nfs::NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
     mount_nfs_os("localhost", port, &mount_point)

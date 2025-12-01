@@ -1,11 +1,11 @@
 <div align="center">
-  <h1>FSDB Python Bindings</h1>
+  <h1>posixlake Python Bindings</h1>
   <p><strong>High-performance Delta Lake database with Python API and POSIX interface</strong></p>
   
-  <p><em>Python API for FSDB (File Store Database) - Access Delta Lake operations, SQL queries, time travel, and use Unix commands (`cat`, `grep`, `awk`, `wc`, `head`, `tail`, `sort`, `cut`, `echo >>`, `sed -i`, `vim`, `mkdir`, `mv`, `cp`, `rmdir`, `rm`) to query and trigger Delta Lake transactions. Mount databases as POSIX filesystems where standard Unix tools execute ACID operations. Works with local filesystem directories and object storage/S3. Built on Rust for maximum performance.</em></p>
+  <p><em>Python API for posixlake (File Store Database) - Access Delta Lake operations, SQL queries, time travel, and use Unix commands (`cat`, `grep`, `awk`, `wc`, `head`, `tail`, `sort`, `cut`, `echo >>`, `sed -i`, `vim`, `mkdir`, `mv`, `cp`, `rmdir`, `rm`) to query and trigger Delta Lake transactions. Mount databases as POSIX filesystems where standard Unix tools execute ACID operations. Works with local filesystem directories and object storage/S3. Built on Rust for maximum performance.</em></p>
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
-[![PyPI](https://img.shields.io/badge/PyPI-fsdb--py-3776AB?logo=pypi&logoColor=white)](https://pypi.org/project/fsdb-py/)
+[![PyPI](https://img.shields.io/badge/PyPI-posixlake--py-3776AB?logo=pypi&logoColor=white)](https://pypi.org/project/posixlake-py/)
 [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-Native%20Format-00ADD8?logo=delta&logoColor=white)](https://delta.io)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../../LICENSE.md)
 [![Rust](https://img.shields.io/badge/Powered%20by-Rust-orange.svg)](https://www.rust-lang.org)
@@ -36,33 +36,33 @@
 ### From PyPI (Recommended)
 
 ```bash
-pip install fsdb-py
+pip install posixlake-py
 ```
 
 **Requirements:**
 - **Python 3.11+** (required for prebuilt wheels with native library)
 - For other Python versions, install from source (see below)
 
-**PyPI Package:** https://pypi.org/project/fsdb-py/
+**PyPI Package:** https://pypi.org/project/posixlake-py/
 
 ### From Source
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/npiesco/fsdb.git
-cd fsdb
+git clone https://github.com/npiesco/posixlake.git
+cd posixlake
 
 # 2. Build Rust library
 cargo build --release
 
 # 3. Generate Python API
 cargo run --bin uniffi-bindgen -- generate \
-    --library target/release/libfsdb.dylib \
+    --library target/release/libposixlake.dylib \
     --language python \
     --out-dir bindings/python
 
 # 4. Copy library
-cp target/release/libfsdb.dylib bindings/python/
+cp target/release/libposixlake.dylib bindings/python/
 
 # 5. Install Python package
 cd bindings/python
@@ -81,7 +81,7 @@ pip install -e .
 ### Example 1: Basic Database Operations
 
 ```python
-from fsdb import DatabaseOps, Schema, Field, FsdbError
+from posixlake import DatabaseOps, Schema, Field, PosixLakeError
 
 # Create a schema
 schema = Schema(fields=[
@@ -95,7 +95,7 @@ schema = Schema(fields=[
 try:
     db = DatabaseOps.create("/path/to/db", schema)
     print("✓ Database created")
-except FsdbError as e:
+except PosixLakeError as e:
     print(f"✗ Error: {e}")
 
 # Insert data (JSON format)
@@ -115,7 +115,7 @@ print("✓ Row deleted")
 ### Example 2: Buffered Insert (High Performance)
 
 ```python
-from fsdb import DatabaseOps, Schema, Field
+from posixlake import DatabaseOps, Schema, Field
 import json
 
 schema = Schema(fields=[
@@ -149,7 +149,7 @@ print("✓ All buffered data committed to Delta Lake")
 ### Example 3: S3 / Object Storage Backend
 
 ```python
-from fsdb import DatabaseOps, Schema, Field, S3Config
+from posixlake import DatabaseOps, Schema, Field, S3Config
 
 schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
@@ -178,7 +178,7 @@ print(results)
 ### Example 4: POSIX Access via NFS Server
 
 ```python
-from fsdb import DatabaseOps, Schema, Field, NfsServer
+from posixlake import DatabaseOps, Schema, Field, NfsServer
 import time
 import subprocess
 
@@ -206,25 +206,25 @@ else:
     print("⚠ NFS server not ready, POSIX operations may fail")
 
 # Mount filesystem (requires sudo - run this in terminal)
-# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/fsdb
+# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/posixlake
 
 # Now use standard Unix tools to query and trigger Delta Lake operations:
-# $ cat /mnt/fsdb/data/data.csv  # Queries Parquet data, converts to CSV
+# $ cat /mnt/posixlake/data/data.csv  # Queries Parquet data, converts to CSV
 # id,name,age
 # 1,Alice,30
 # 2,Bob,25
 #
-# $ grep "Alice" /mnt/fsdb/data/data.csv | awk -F',' '{print $2}'  # Search and process
+# $ grep "Alice" /mnt/posixlake/data/data.csv | awk -F',' '{print $2}'  # Search and process
 # Alice
 #
-# $ wc -l /mnt/fsdb/data/data.csv  # Count records
-# 3 /mnt/fsdb/data/data.csv
+# $ wc -l /mnt/posixlake/data/data.csv  # Count records
+# 3 /mnt/posixlake/data/data.csv
 #
-# $ echo "3,Charlie,28" >> /mnt/fsdb/data/data.csv  # Triggers Delta Lake INSERT transaction!
+# $ echo "3,Charlie,28" >> /mnt/posixlake/data/data.csv  # Triggers Delta Lake INSERT transaction!
 #
-# $ sed -i 's/Alice,30/Alice,31/' /mnt/fsdb/data/data.csv  # Triggers Delta Lake MERGE (UPDATE) transaction!
+# $ sed -i 's/Alice,30/Alice,31/' /mnt/posixlake/data/data.csv  # Triggers Delta Lake MERGE (UPDATE) transaction!
 #
-# $ grep -v "Bob" /mnt/fsdb/data/data.csv > /tmp/temp && cat /tmp/temp > /mnt/fsdb/data/data.csv  # Triggers MERGE (DELETE) transaction!
+# $ grep -v "Bob" /mnt/posixlake/data/data.csv > /tmp/temp && cat /tmp/temp > /mnt/posixlake/data/data.csv  # Triggers MERGE (DELETE) transaction!
 
 # Shutdown NFS server when done
 # nfs_server.shutdown()
@@ -233,7 +233,7 @@ else:
 ### Example 5: Time Travel Queries
 
 ```python
-from fsdb import DatabaseOps, Schema, Field
+from posixlake import DatabaseOps, Schema, Field
 
 schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
@@ -271,7 +271,7 @@ print(f"Data at timestamp {timestamp}: {results}")
 ### Example 6: Delta Lake Operations
 
 ```python
-from fsdb import DatabaseOps, Schema, Field
+from posixlake import DatabaseOps, Schema, Field
 
 db = DatabaseOps.open("/path/to/db")
 
@@ -301,7 +301,7 @@ print(f"Data skipping stats: {stats}")
 #### Creating and Opening Databases
 
 ```python
-from fsdb import DatabaseOps, Schema, Field, S3Config
+from posixlake import DatabaseOps, Schema, Field, S3Config
 
 # Local filesystem
 schema = Schema(fields=[
@@ -382,7 +382,7 @@ db.delete_rows_where("1=1")
 
 ### Time Travel
 
-FSDB supports Delta Lake's time travel feature, allowing you to query historical versions of your data:
+posixlake supports Delta Lake's time travel feature, allowing you to query historical versions of your data:
 
 ```python
 # Get current version
@@ -445,7 +445,7 @@ The NFS server allows you to mount your Delta Lake database as a standard POSIX 
 #### Starting the NFS Server
 
 ```python
-from fsdb import DatabaseOps, Schema, Field, NfsServer
+from posixlake import DatabaseOps, Schema, Field, NfsServer
 import time
 
 # Create/open database
@@ -466,10 +466,10 @@ else:
 
 ```bash
 # Mount command (requires sudo)
-sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/fsdb
+sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/posixlake
 
 # Verify mount
-ls -la /mnt/fsdb/
+ls -la /mnt/posixlake/
 # data/
 # schema.sql
 # .query
@@ -481,35 +481,35 @@ Once mounted, your Delta Lake table is accessible like any other directory:
 
 ```bash
 # 1. List directory contents
-ls -la /mnt/fsdb/data/
+ls -la /mnt/posixlake/data/
 
 # 2. Read all data as CSV
-cat /mnt/fsdb/data/data.csv
+cat /mnt/posixlake/data/data.csv
 # id,name,age
 # 1,Alice,30
 # 2,Bob,25
 
 # 3. Search for specific records with grep
-grep "Alice" /mnt/fsdb/data/data.csv
+grep "Alice" /mnt/posixlake/data/data.csv
 # 1,Alice,30
 
 # 4. Process columns with awk
-awk -F',' '{print $2, $3}' /mnt/fsdb/data/data.csv
+awk -F',' '{print $2, $3}' /mnt/posixlake/data/data.csv
 # name age
 # Alice 30
 # Bob 25
 
 # 5. Count lines/records with wc
-wc -l /mnt/fsdb/data/data.csv
-# 3 /mnt/fsdb/data/data.csv (includes header)
+wc -l /mnt/posixlake/data/data.csv
+# 3 /mnt/posixlake/data/data.csv (includes header)
 
 # 6. Sort data by a column
-sort -t',' -k2 /mnt/fsdb/data/data.csv  # Sort by name
+sort -t',' -k2 /mnt/posixlake/data/data.csv  # Sort by name
 
 # 7. Append new data (triggers Delta Lake INSERT transaction!)
-echo "3,Charlie,28" >> /mnt/fsdb/data/data.csv
+echo "3,Charlie,28" >> /mnt/posixlake/data/data.csv
 # → Executes: Delta Lake INSERT transaction with ACID guarantees
-cat /mnt/fsdb/data/data.csv
+cat /mnt/posixlake/data/data.csv
 # id,name,age
 # 1,Alice,30
 # 2,Bob,25
@@ -517,27 +517,27 @@ cat /mnt/fsdb/data/data.csv
 
 # 8. Edit data (triggers Delta Lake MERGE transaction - atomic INSERT/UPDATE/DELETE!)
 # Example: Update Alice's age to 31
-sed -i 's/Alice,30/Alice,31/' /mnt/fsdb/data/data.csv
+sed -i 's/Alice,30/Alice,31/' /mnt/posixlake/data/data.csv
 # → Executes: Delta Lake MERGE transaction (UPDATE operation)
-cat /mnt/fsdb/data/data.csv
+cat /mnt/posixlake/data/data.csv
 # id,name,age
 # 1,Alice,31
 # 2,Bob,25
 # 3,Charlie,28
 
 # Example: Delete Bob (id=2)
-grep -v "2,Bob" /mnt/fsdb/data/data.csv > /tmp/temp_data.csv
-cat /tmp/temp_data.csv > /mnt/fsdb/data/data.csv
+grep -v "2,Bob" /mnt/posixlake/data/data.csv > /tmp/temp_data.csv
+cat /tmp/temp_data.csv > /mnt/posixlake/data/data.csv
 # → Executes: Delta Lake MERGE transaction (DELETE operation)
-cat /mnt/fsdb/data/data.csv
+cat /mnt/posixlake/data/data.csv
 # id,name,age
 # 1,Alice,31
 # 3,Charlie,28
 
 # 9. Truncate table (triggers Delta Lake DELETE ALL transaction!)
-rm /mnt/fsdb/data/data.csv
+rm /mnt/posixlake/data/data.csv
 # → Executes: Delta Lake DELETE ALL transaction
-cat /mnt/fsdb/data/data.csv
+cat /mnt/posixlake/data/data.csv
 # id,name,age
 ```
 
@@ -545,7 +545,7 @@ cat /mnt/fsdb/data/data.csv
 
 ```bash
 # Unmount filesystem
-sudo umount /mnt/fsdb
+sudo umount /mnt/posixlake
 ```
 
 ```python
@@ -563,7 +563,7 @@ nfs.shutdown()
 ### Authentication & Security
 
 ```python
-from fsdb import DatabaseOps, Schema, Field, Credentials
+from posixlake import DatabaseOps, Schema, Field, Credentials
 
 # Create database with authentication enabled
 schema = Schema(fields=[...])
@@ -656,7 +656,7 @@ Main class for database operations.
 Database schema definition.
 
 ```python
-from fsdb import Schema, Field
+from posixlake import Schema, Field
 
 schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
@@ -710,35 +710,35 @@ s3_config = S3Config(
 )
 ```
 
-### FsdbError
+### PosixLakeError
 
-Exception class for all FSDB errors.
+Exception class for all posixlake errors.
 
 ```python
-from fsdb import FsdbError
+from posixlake import PosixLakeError
 
 try:
     db.insert_json(data)
-except FsdbError as e:
+except PosixLakeError as e:
     print(f"Error: {e}")
 ```
 
 #### Error Types
 
-- `FsdbError.IoError` - I/O operations
-- `FsdbError.SerializationError` - JSON/Arrow serialization
-- `FsdbError.DeltaLakeError` - Delta Lake operations
-- `FsdbError.InvalidOperation` - Invalid operations
-- `FsdbError.QueryError` - SQL query errors
-- `FsdbError.AuthenticationError` - Authentication failures
-- `FsdbError.PermissionDenied` - Permission errors
-- `FsdbError.SchemaError` - Schema-related errors
-- `FsdbError.VersionError` - Version conflicts
-- `FsdbError.StorageError` - Storage backend errors
-- `FsdbError.NetworkError` - Network operations
-- `FsdbError.TimeoutError` - Operation timeouts
-- `FsdbError.NotFound` - Resource not found
-- `FsdbError.AlreadyExists` - Resource already exists
+- `PosixLakeError.IoError` - I/O operations
+- `PosixLakeError.SerializationError` - JSON/Arrow serialization
+- `PosixLakeError.DeltaLakeError` - Delta Lake operations
+- `PosixLakeError.InvalidOperation` - Invalid operations
+- `PosixLakeError.QueryError` - SQL query errors
+- `PosixLakeError.AuthenticationError` - Authentication failures
+- `PosixLakeError.PermissionDenied` - Permission errors
+- `PosixLakeError.SchemaError` - Schema-related errors
+- `PosixLakeError.VersionError` - Version conflicts
+- `PosixLakeError.StorageError` - Storage backend errors
+- `PosixLakeError.NetworkError` - Network operations
+- `PosixLakeError.TimeoutError` - Operation timeouts
+- `PosixLakeError.NotFound` - Resource not found
+- `PosixLakeError.AlreadyExists` - Resource already exists
 
 ---
 
@@ -786,26 +786,26 @@ db.flush_write_buffer()
 All Rust errors are properly mapped to Python exceptions:
 
 ```python
-from fsdb import FsdbError
+from posixlake import PosixLakeError
 
 try:
     db = DatabaseOps.create("/path/to/db", schema)
     db.insert_json(data)
     results = db.query_json("SELECT * FROM data")
-except FsdbError.IoError as e:
+except PosixLakeError.IoError as e:
     print(f"I/O error: {e}")
-except FsdbError.SerializationError as e:
+except PosixLakeError.SerializationError as e:
     print(f"Serialization error: {e}")
-except FsdbError.DeltaLakeError as e:
+except PosixLakeError.DeltaLakeError as e:
     print(f"Delta Lake error: {e}")
-except FsdbError.InvalidOperation as e:
+except PosixLakeError.InvalidOperation as e:
     print(f"Invalid operation: {e}")
-except FsdbError as e:
-    print(f"FSDB error: {e}")
+except PosixLakeError as e:
+    print(f"posixlake error: {e}")
 ```
 
 **Error Types:**
-- All errors inherit from `FsdbError`
+- All errors inherit from `PosixLakeError`
 - Specific error types for different failure modes
 - Comprehensive error messages with context
 - Stack traces preserved from Rust
@@ -819,7 +819,7 @@ except FsdbError as e:
 ```
 ┌─────────────────────────────────────────┐
 │  Python Application                     │
-│  from fsdb import DatabaseOps           │
+│  from posixlake import DatabaseOps           │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
@@ -830,7 +830,7 @@ except FsdbError as e:
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  Rust Library (libfsdb.dylib)           │
+│  Rust Library (libposixlake.dylib)           │
 │  • DatabaseOps                          │
 │  • Delta Lake operations                │
 │  • DataFusion SQL engine                │
@@ -854,7 +854,7 @@ except FsdbError as e:
 
 ### Storage Backends
 
-FSDB Python bindings support multiple storage backends:
+posixlake Python bindings support multiple storage backends:
 
 - **Local Filesystem**: Standard directory paths
 - **S3/MinIO**: Object storage with S3-compatible API
@@ -883,7 +883,7 @@ FSDB Python bindings support multiple storage backends:
 
 **Apache License 2.0**
 
-Copyright 2025 FSDB Contributors
+Copyright 2025 posixlake Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -916,8 +916,8 @@ Built with:
 
 ---
 
-**Questions?** Open an [issue](https://github.com/npiesco/fsdb/issues)
+**Questions?** Open an [issue](https://github.com/npiesco/posixlake/issues)
 
 **Like this project?** Star the repo and share with your data engineering team!
 
-**PyPI Package:** https://pypi.org/project/fsdb-py/
+**PyPI Package:** https://pypi.org/project/posixlake-py/

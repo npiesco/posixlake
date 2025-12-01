@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Setup passwordless sudo for NFS mount/umount operations.
-This is REQUIRED for FSDB NFS tests and CLI to work properly.
+This is REQUIRED for posixlake NFS tests and CLI to work properly.
 """
 
 import os
@@ -14,7 +14,7 @@ def check_sudo():
     """Check if passwordless sudo is configured by verifying sudoers file exists"""
     username = get_username()
     username_safe_filename = username.replace('.', '_')
-    sudoers_file = f"/etc/sudoers.d/fsdb-nfs-{username_safe_filename}"
+    sudoers_file = f"/etc/sudoers.d/posixlake-nfs-{username_safe_filename}"
     
     print(f"[DEBUG] Checking for sudoers file: {sudoers_file}")
     
@@ -54,7 +54,7 @@ def setup_macos():
     # Also create a filename-safe version (replace . with _)
     username_safe_filename = username.replace('.', '_')
     sudoers_line = f"{username} ALL=(ALL) NOPASSWD: /sbin/mount_nfs, /sbin/umount\n"
-    sudoers_file = f"/etc/sudoers.d/fsdb-nfs-{username_safe_filename}"
+    sudoers_file = f"/etc/sudoers.d/posixlake-nfs-{username_safe_filename}"
     
     print(f"[SETUP] Setting up passwordless sudo for {username} on macOS...")
     print(f"        Commands: mount_nfs, umount")
@@ -155,7 +155,7 @@ def setup_linux():
     """Setup passwordless sudo for Linux NFS commands"""
     username = get_username()
     sudoers_line = f"{username} ALL=(ALL) NOPASSWD: /bin/mount, /bin/umount\n"
-    sudoers_file = f"/etc/sudoers.d/fsdb-nfs-{username}"
+    sudoers_file = f"/etc/sudoers.d/posixlake-nfs-{username}"
     
     print(f"[SETUP] Setting up passwordless sudo for {username} on Linux...")
     print(f"        Commands: mount, umount")
@@ -239,13 +239,13 @@ def verify_setup():
 
 def main():
     print("=" * 70)
-    print("FSDB NFS Passwordless Sudo Setup")
+    print("posixlake NFS Passwordless Sudo Setup")
     print("=" * 70)
     print()
-    print("This script configures your system to allow FSDB to mount NFS")
+    print("This script configures your system to allow posixlake to mount NFS")
     print("filesystems without password prompts. This is REQUIRED for:")
     print("  - NFS integration tests")
-    print("  - `fsdb mount` CLI command")
+    print("  - `posixlake mount` CLI command")
     print()
     
     # Check if already configured
@@ -274,7 +274,7 @@ def main():
             print("=" * 70)
             print("\nYou can now run:")
             print("  - cargo test --test nfs_test")
-            print("  - fsdb mount /path/to/db /path/to/mount")
+            print("  - posixlake mount /path/to/db /path/to/mount")
             print()
             sys.exit(0)
         else:
