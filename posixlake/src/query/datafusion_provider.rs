@@ -449,7 +449,8 @@ mod tests {
             file2.to_str().unwrap().to_string(),
         ];
 
-        let provider = PosixLakeTableProvider::from_parquet_files(&file_paths, schema.clone()).unwrap();
+        let provider =
+            PosixLakeTableProvider::from_parquet_files(&file_paths, schema.clone()).unwrap();
 
         // Register table and query it
         let ctx = SessionContext::new();

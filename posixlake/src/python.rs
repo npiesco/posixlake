@@ -87,7 +87,9 @@ impl From<CoreError> for PosixLakeError {
                 PosixLakeError::DatabaseAlreadyExists { message: msg }
             }
             CoreError::InvalidOperation(msg) => PosixLakeError::InvalidOperation { message: msg },
-            CoreError::TransactionConflict(msg) => PosixLakeError::TransactionConflict { message: msg },
+            CoreError::TransactionConflict(msg) => {
+                PosixLakeError::TransactionConflict { message: msg }
+            }
             CoreError::Wal(msg) => PosixLakeError::WalError { message: msg },
             CoreError::Bincode(msg) => PosixLakeError::BincodeError { message: msg },
             CoreError::DeltaTable(e) => PosixLakeError::DeltaLakeError {
@@ -250,11 +252,12 @@ impl DatabaseOps {
     #[uniffi::constructor]
     pub fn create(path: String, schema: Schema) -> Result<Arc<Self>, PosixLakeError> {
         let arrow_schema = schema.to_arrow_schema()?;
-        let runtime = Arc::new(
-            tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
-                message: e.to_string(),
-            })?,
-        );
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
         let db = runtime.block_on(CoreDatabaseOps::create(&path, arrow_schema))?;
         Ok(Arc::new(Self {
             inner: Arc::new(db),
@@ -270,11 +273,12 @@ impl DatabaseOps {
         auth_enabled: bool,
     ) -> Result<Arc<Self>, PosixLakeError> {
         let arrow_schema = schema.to_arrow_schema()?;
-        let runtime = Arc::new(
-            tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
-                message: e.to_string(),
-            })?,
-        );
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
         let db = runtime.block_on(CoreDatabaseOps::create_with_auth(
             &path,
             arrow_schema,
@@ -294,11 +298,12 @@ impl DatabaseOps {
         s3_config: S3Config,
     ) -> Result<Arc<Self>, PosixLakeError> {
         let arrow_schema = schema.to_arrow_schema()?;
-        let runtime = Arc::new(
-            tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
-                message: e.to_string(),
-            })?,
-        );
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
         let db = runtime.block_on(CoreDatabaseOps::create_with_s3(
             &s3_path,
             arrow_schema,
@@ -315,11 +320,12 @@ impl DatabaseOps {
     /// Open an existing database
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, PosixLakeError> {
-        let runtime = Arc::new(
-            tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
-                message: e.to_string(),
-            })?,
-        );
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
         let db = runtime.block_on(CoreDatabaseOps::open(&path))?;
         Ok(Arc::new(Self {
             inner: Arc::new(db),
@@ -334,11 +340,12 @@ impl DatabaseOps {
         username: String,
         password: String,
     ) -> Result<Arc<Self>, PosixLakeError> {
-        let runtime = Arc::new(
-            tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
-                message: e.to_string(),
-            })?,
-        );
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
 
         // For credentials, we need to leak the strings to get 'static lifetime
         // This is acceptable since credentials are typically used for the lifetime of the app
@@ -356,11 +363,12 @@ impl DatabaseOps {
     /// Open an existing database on S3
     #[uniffi::constructor]
     pub fn open_with_s3(s3_path: String, s3_config: S3Config) -> Result<Arc<Self>, PosixLakeError> {
-        let runtime = Arc::new(
-            tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
-                message: e.to_string(),
-            })?,
-        );
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
         let db = runtime.block_on(CoreDatabaseOps::open_with_s3(
             &s3_path,
             &s3_config.endpoint,
@@ -468,7 +476,11 @@ impl DatabaseOps {
     /// The join is performed on the specified join_column (typically "id").
     ///
     /// Returns a JSON string with merge metrics: rows_inserted, rows_updated, rows_deleted
-    pub fn merge_json(&self, json_data: String, join_column: String) -> Result<String, PosixLakeError> {
+    pub fn merge_json(
+        &self,
+        json_data: String,
+        join_column: String,
+    ) -> Result<String, PosixLakeError> {
         // Parse JSON
         let value: Value =
             serde_json::from_str(&json_data).map_err(|e| PosixLakeError::SerializationError {
@@ -543,7 +555,11 @@ impl DatabaseOps {
     }
 
     /// Query data at a specific timestamp (milliseconds since epoch)
-    pub fn query_timestamp(&self, sql: String, timestamp_ms: i64) -> Result<Vec<Row>, PosixLakeError> {
+    pub fn query_timestamp(
+        &self,
+        sql: String,
+        timestamp_ms: i64,
+    ) -> Result<Vec<Row>, PosixLakeError> {
         let result = self
             .runtime
             .block_on(self.inner.query_timestamp(&sql, timestamp_ms))?;
@@ -810,18 +826,21 @@ impl DatabaseOps {
         for batch in batches {
             let mut cursor = Cursor::new(Vec::new());
             let mut writer = ArrayWriter::new(&mut cursor);
-            writer.write(&batch).map_err(|e| PosixLakeError::ArrowError {
-                message: e.to_string(),
-            })?;
+            writer
+                .write(&batch)
+                .map_err(|e| PosixLakeError::ArrowError {
+                    message: e.to_string(),
+                })?;
             writer.finish().map_err(|e| PosixLakeError::ArrowError {
                 message: e.to_string(),
             })?;
 
             let json_bytes = cursor.into_inner();
-            let json_value: Value =
-                serde_json::from_slice(&json_bytes).map_err(|e| PosixLakeError::SerializationError {
+            let json_value: Value = serde_json::from_slice(&json_bytes).map_err(|e| {
+                PosixLakeError::SerializationError {
                     message: e.to_string(),
-                })?;
+                }
+            })?;
 
             if let Value::Array(arr) = json_value {
                 json_rows.extend(arr);
@@ -844,11 +863,12 @@ impl NfsServer {
     /// Create and start a new NFS server
     #[uniffi::constructor]
     pub fn new(db: Arc<DatabaseOps>, port: u16) -> Result<Arc<Self>, PosixLakeError> {
-        let runtime = Arc::new(
-            tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
-                message: e.to_string(),
-            })?,
-        );
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
 
         let db_inner = db.inner.clone();
         let server = runtime.block_on(crate::nfs::NfsServer::new(db_inner, port))?;

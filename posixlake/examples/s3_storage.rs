@@ -140,7 +140,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     docker compose exec minio sh -c \"mc cat myminio/posixlake-test/s3_example_db/_delta_log/00000000000000000000.json\"");
     println!();
     println!("   List Parquet data files:");
-    println!("     docker compose exec minio sh -c \"mc ls myminio/posixlake-test/s3_example_db/\"");
+    println!(
+        "     docker compose exec minio sh -c \"mc ls myminio/posixlake-test/s3_example_db/\""
+    );
 
     println!("\n=== S3/MinIO Storage Example Complete ===\n");
     println!("Key Takeaways:");

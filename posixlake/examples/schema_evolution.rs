@@ -98,7 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. Query data with automatic schema unification
     println!("\n6. Querying data with mixed schema versions...");
-    println!("   posixlake automatically unifies schemas by adding NULL columns for missing fields");
+    println!(
+        "   posixlake automatically unifies schemas by adding NULL columns for missing fields"
+    );
 
     // Count all rows across both schema versions
     let count_result = db.query("SELECT COUNT(*) as count FROM data").await?;
