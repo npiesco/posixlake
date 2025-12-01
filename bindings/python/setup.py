@@ -21,7 +21,7 @@ class BinaryDistribution(Distribution):
 
 setup(
     name="fsdb-py",
-    version="0.2.16",
+    version="0.2.17",
     distclass=BinaryDistribution,
     description="High-performance Delta Lake database with POSIX interface and Python bindings",
     long_description=long_description,
