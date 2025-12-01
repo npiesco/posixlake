@@ -339,7 +339,7 @@ cargo build --release
 
 ```bash
 # Install from PyPI (recommended - requires Python 3.11+)
-pip install posixlake-py
+pip install posixlake
 
 # Or build from source (supports Python 3.8+)
 cd posixlake
@@ -356,7 +356,7 @@ pip install -e ../bindings/python/
 - **Python 3.11+** for prebuilt wheels with native library
 - Python 3.8+ for building from source
 
-**PyPI Package:** https://pypi.org/project/posixlake-py/
+**PyPI Package:** https://pypi.org/project/posixlake/
 
 **Python Quick Start:**
 
@@ -735,7 +735,7 @@ For detailed testing documentation, see [tests/POSIX_TEST_SETUP.md](tests/POSIX_
 - **Type Safety**: Complete type hints and error handling
 - **Zero-Copy Operations**: Efficient Rust-Python interop
 - **Robust**: Comprehensive error handling and async support
-- **PyPI Available**: `pip install posixlake-py` (Python 3.11+ for prebuilt wheels)
+- **PyPI Available**: `pip install posixlake` (Python 3.11+ for prebuilt wheels)
 
 Example MERGE (UPSERT) operation:
 ```python

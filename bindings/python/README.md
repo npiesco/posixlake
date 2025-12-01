@@ -5,7 +5,7 @@
   <p><em>Python API for posixlake (File Store Database) - Access Delta Lake operations, SQL queries, time travel, and use Unix commands (`cat`, `grep`, `awk`, `wc`, `head`, `tail`, `sort`, `cut`, `echo >>`, `sed -i`, `vim`, `mkdir`, `mv`, `cp`, `rmdir`, `rm`) to query and trigger Delta Lake transactions. Mount databases as POSIX filesystems where standard Unix tools execute ACID operations. Works with local filesystem directories and object storage/S3. Built on Rust for maximum performance.</em></p>
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
-[![PyPI](https://img.shields.io/badge/PyPI-posixlake--py-3776AB?logo=pypi&logoColor=white)](https://pypi.org/project/posixlake-py/)
+[![PyPI](https://img.shields.io/badge/PyPI-posixlake-3776AB?logo=pypi&logoColor=white)](https://pypi.org/project/posixlake/)
 [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-Native%20Format-00ADD8?logo=delta&logoColor=white)](https://delta.io)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../../LICENSE.md)
 [![Rust](https://img.shields.io/badge/Powered%20by-Rust-orange.svg)](https://www.rust-lang.org)
@@ -36,14 +36,14 @@
 ### From PyPI (Recommended)
 
 ```bash
-pip install posixlake-py
+pip install posixlake
 ```
 
 **Requirements:**
 - **Python 3.11+** (required for prebuilt wheels with native library)
 - For other Python versions, install from source (see below)
 
-**PyPI Package:** https://pypi.org/project/posixlake-py/
+**PyPI Package:** https://pypi.org/project/posixlake/
 
 ### From Source
 
@@ -920,4 +920,4 @@ Built with:
 
 **Like this project?** Star the repo and share with your data engineering team!
 
-**PyPI Package:** https://pypi.org/project/posixlake-py/
+**PyPI Package:** https://pypi.org/project/posixlake/
