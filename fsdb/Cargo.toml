@@ -1,0 +1,52 @@
+[package]
+name = "fsdb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+
+[dependencies]
+uniffi = { version = "0.29", features = ["cli", "tokio"] }
+arrow = "56.2.0"
+async-trait = "0.1.85"
+bincode = "2.0.1"
+bytes = "1.11.0"
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+crc = "3.3.0"
+csv = "1.4.0"
+ctrlc = "3.4"
+datafusion = "50.3.0"
+futures = "0.3.31"
+lazy_static = "1.5.0"
+md5 = "0.8.0"
+memmap2 = "0.9.9"
+moka = { version = "0.12.11", features = ["future"] }
+# NFS server implementation (replacing FUSE)
+nfsserve = { git = "https://github.com/xetdata/nfsserve.git", branch = "main" }
+nom = "8.0.0"
+object_store = { version = "0.12.4", features = ["aws", "http"] }
+parquet = "56.2.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sled = "0.34.7"
+thiserror = { workspace = true }
+tokio = { version = "1.48.0", features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = "2.5.7"
+uuid = { workspace = true }
+bcrypt = "0.15"
+deltalake = { version = "0.29.4", features = ["datafusion", "s3"] }
+
+[build-dependencies]
+uniffi = { version = "0.29", features = ["build"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"
+tracing-subscriber = { workspace = true }

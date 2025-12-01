@@ -1,0 +1,36 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Python bindings (generated files)
+bindings/python/fsdb.py
+bindings/python/*.dylib
+bindings/python/*.so
+bindings/python/*.dll
+bindings/python/fsdb/*.dylib
+bindings/python/fsdb/*.so
+bindings/python/fsdb/*.dll
+bindings/python/*.egg-info/
+bindings/python/dist/
+bindings/python/build/
+bindings/python/__pycache__/
+bindings/python/*.pyc
+
+# Python virtual environment
+.venv/
+venv/
+venv_spark/
+
+# Database test files
+/test_db/
+/tmp/
+*.db
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

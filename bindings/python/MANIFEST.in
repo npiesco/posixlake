@@ -1,0 +1,5 @@
+include *.dylib
+include *.so
+include *.dll
+include README.md
+

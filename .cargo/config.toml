@@ -1,0 +1,9 @@
+[build]
+rustflags = ["-D", "warnings", "-L", "lib"]
+
+[env]
+# MinIO/S3 Configuration for tests
+MINIO_ENDPOINT = "http://localhost:9000"
+MINIO_ACCESS_KEY = "minioadmin"
+MINIO_SECRET_KEY = "minioadmin"
+MINIO_BUCKET = "fsdb-test"

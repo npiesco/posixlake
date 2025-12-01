@@ -1,0 +1,264 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Check code formatting
+  fmt:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # Run Clippy linter
+  clippy:
+    name: Clippy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Build on multiple platforms
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Build
+        run: cargo build --workspace --verbose
+      - name: Build Release
+        run: cargo build --workspace --release --verbose
+
+  # Unit tests on multiple platforms
+  test-unit:
+    name: Unit Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Run unit tests
+        run: cargo test --lib --verbose
+
+  # Integration tests with MinIO (Linux only)
+  test-integration:
+    name: Integration Tests (Docker + MinIO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      
+      - name: Start MinIO
+        run: |
+          docker run -d \
+            --name minio \
+            -p 9000:9000 \
+            -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest \
+            server /data --console-address ":9001"
+          
+          # Wait for MinIO to be ready
+          timeout 30 bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 1; done'
+      
+      - name: Setup MinIO bucket
+        run: |
+          docker run --rm --network=host --entrypoint /bin/sh \
+            minio/mc:latest \
+            -c "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb myminio/fsdb-test || true"
+      
+      - name: Run S3 integration tests
+        env:
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          MINIO_BUCKET: fsdb-test
+        run: cargo test --test s3_test --verbose
+      
+      - name: Stop MinIO
+        if: always()
+        run: docker stop minio && docker rm minio
+
+  # Documentation build
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      
+      - name: Build documentation
+        run: cargo doc --no-deps --workspace --verbose
+
+  # Bump version before publishing
+  bump-version:
+    name: Bump Python Package Version
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [fmt, clippy, test-unit, test-integration]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Bump version
+        run: |
+          cd bindings/python
+          python -c "
+          import re
+          with open('setup.py', 'r') as f:
+              content = f.read()
+          match = re.search(r'version=\"(\d+)\.(\d+)\.(\d+)\"', content)
+          if match:
+              major, minor, patch = match.groups()
+              new_version = f'{major}.{minor}.{int(patch) + 1}'
+              content = re.sub(r'version=\"\d+\.\d+\.\d+\"', f'version=\"{new_version}\"', content)
+              with open('setup.py', 'w') as f:
+                  f.write(content)
+              print(f'Bumped version to {new_version}')
+          "
+      
+      - name: Commit and push version bump
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add bindings/python/setup.py
+          git diff --staged --quiet || (git commit -m "Bump version [skip ci]" && git push)
+
+  # Publish Python bindings to PyPI (only on main branch)
+  publish-python:
+    name: Publish Python Bindings
+    runs-on: ${{ matrix.os }}
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [bump-version]
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            lib: libfsdb.so
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            lib: libfsdb.dylib
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            lib: libfsdb.dylib
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install Python dependencies
+        run: |
+          pip install setuptools wheel twine uniffi-bindgen
+      
+      - name: Build Rust library
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p fsdb
+          ls -la target/${{ matrix.target }}/release/ | grep libfsdb || echo "Library not found!"
+      
+      - name: Generate UniFFI bindings
+        shell: bash
+        run: |
+          if [ ! -f "target/${{ matrix.target }}/release/${{ matrix.lib }}" ]; then
+            echo "Error: Library not found at target/${{ matrix.target }}/release/${{ matrix.lib }}"
+            exit 1
+          fi
+          cd fsdb
+          cargo run --bin uniffi-bindgen -- generate \
+            --library ../target/${{ matrix.target }}/release/${{ matrix.lib }} \
+            --language python \
+            --out-dir ../bindings/python/fsdb
+      
+      - name: Copy library to bindings
+        shell: bash
+        run: |
+          # Copy to fsdb package directory
+          cp target/${{ matrix.target }}/release/${{ matrix.lib }} bindings/python/fsdb/
+          echo "Contents of bindings/python/fsdb/:"
+          ls -lh bindings/python/fsdb/
+          # Verify library was copied
+          if [ ! -f "bindings/python/fsdb/${{ matrix.lib }}" ]; then
+            echo "Error: Library file not found in bindings/python/fsdb/"
+            exit 1
+          fi
+          echo "✓ Library file copied to fsdb package directory"
+      
+      - name: Build Python wheel
+        shell: bash
+        run: |
+          cd bindings/python
+          # Only build sdist on Linux to avoid duplicate uploads
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            python setup.py sdist bdist_wheel --plat-name manylinux2014_x86_64
+          else
+            python setup.py bdist_wheel
+          fi
+          echo "✓ Wheel built successfully"
+          ls -lh dist/
+      
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          cd bindings/python
+          pip install wheel
+          wheel_file=$(ls dist/*.whl | head -1)
+          echo "Inspecting wheel: $wheel_file"
+          python -m zipfile -l "$wheel_file" | grep -E "\.(dylib|so|dll)" || echo "WARNING: No native library found in wheel!"
+      
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          cd bindings/python
+          twine upload dist/* --skip-existing
+
