@@ -34,4 +34,5 @@ venv_spark/
 .vscode/
 *.swp
 *.swo
-*~
+*~**/__pycache__/
+*.pyc
