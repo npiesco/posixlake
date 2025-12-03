@@ -950,7 +950,10 @@ impl NfsServer {
             vec![
                 "mount".to_string(),
                 "-o".to_string(),
-                format!("anon,nolock,vers=3,port={},mountport={}", self.port, self.port),
+                format!(
+                    "anon,nolock,vers=3,port={},mountport={}",
+                    self.port, self.port
+                ),
                 format!("\\\\localhost\\"),
                 mount_point,
             ]

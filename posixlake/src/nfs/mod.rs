@@ -414,7 +414,7 @@ pub struct FileAttributes {
 
 /// MountGuard ensures NFS mounts are cleaned up even if code panics or times out.
 /// Implements Drop to automatically unmount when the guard goes out of scope.
-/// 
+///
 /// # Example
 /// ```ignore
 /// let guard = MountGuard::new(mount_point.clone());

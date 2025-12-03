@@ -1673,7 +1673,10 @@ async fn test_nfs_concurrent_readers_and_writer() {
         initial_content.contains("user1"),
         "Should contain test data"
     );
-    println!("[VERIFY] Initial read successful, {} bytes", initial_content.len());
+    println!(
+        "[VERIFY] Initial read successful, {} bytes",
+        initial_content.len()
+    );
 
     // Spawn concurrent readers - all reading the same file simultaneously
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<usize, String>>(10);
@@ -4479,10 +4482,7 @@ async fn test_mount_guard_cleans_up_on_drop() {
     let guard = MountGuard::new(mount_point.clone());
 
     // Verify mount is active
-    assert!(
-        guard.is_mounted(),
-        "Mount should be active after mounting"
-    );
+    assert!(guard.is_mounted(), "Mount should be active after mounting");
 
     // Verify we can read through the mount
     let data_path = mount_point.join("data/data.csv");
