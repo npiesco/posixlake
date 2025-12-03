@@ -60,7 +60,7 @@ def main():
     if sys.platform == "darwin":
         mount_cmd = f"sudo mount_nfs -o nolocks,vers=3,tcp,port={nfs_port},mountport={nfs_port} localhost:/ {test_dir}/mount"
     else:  # Linux
-        mount_cmd = f"sudo mount -t nfs -o nolock,vers=3,tcp,port={nfs_port},mountport={nfs_port} localhost:/ {test_dir}/mount"
+        mount_cmd = f"sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={nfs_port},mountport={nfs_port} localhost:/ {test_dir}/mount"
     print(f"$ {mount_cmd}")
     ret = subprocess.run(mount_cmd, shell=True, capture_output=True, text=True)
     if ret.returncode != 0:

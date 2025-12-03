@@ -411,3 +411,130 @@ pub struct FileAttributes {
     pub readable: bool,
     pub writable: bool,
 }
+
+/// MountGuard ensures NFS mounts are cleaned up even if code panics or times out.
+/// Implements Drop to automatically unmount when the guard goes out of scope.
+/// 
+/// # Example
+/// ```ignore
+/// let guard = MountGuard::new(mount_point.clone());
+/// // ... do NFS operations ...
+/// // On drop (normal or panic), mount is automatically cleaned up
+/// guard.mark_unmounted(); // Call if you manually unmount
+/// ```
+pub struct MountGuard {
+    mount_point: std::path::PathBuf,
+    unmounted: std::sync::atomic::AtomicBool,
+}
+
+impl MountGuard {
+    /// Create a new MountGuard for the given mount point
+    pub fn new(mount_point: std::path::PathBuf) -> Self {
+        Self {
+            mount_point,
+            unmounted: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Mark as already unmounted (call this if you manually unmount)
+    pub fn mark_unmounted(&self) {
+        self.unmounted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Check if this mount point is currently mounted
+    pub fn is_mounted(&self) -> bool {
+        if self.unmounted.load(std::sync::atomic::Ordering::SeqCst) {
+            return false;
+        }
+        // Check actual mount table
+        let output = std::process::Command::new("mount")
+            .output()
+            .expect("Failed to run mount command");
+        let mount_table = String::from_utf8_lossy(&output.stdout);
+        mount_table.contains(&self.mount_point.to_string_lossy().to_string())
+    }
+
+    /// Get the mount point path
+    pub fn mount_point(&self) -> &std::path::Path {
+        &self.mount_point
+    }
+}
+
+impl Drop for MountGuard {
+    fn drop(&mut self) {
+        if self.unmounted.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+
+        // Check if actually mounted before trying to unmount
+        let output = std::process::Command::new("mount")
+            .output()
+            .expect("Failed to run mount command");
+        let mount_table = String::from_utf8_lossy(&output.stdout);
+
+        if !mount_table.contains(&self.mount_point.to_string_lossy().to_string()) {
+            return;
+        }
+
+        eprintln!(
+            "[MountGuard] Cleaning up stale mount: {}",
+            self.mount_point.display()
+        );
+
+        // Synchronous unmount in Drop (can't use async in Drop)
+        #[cfg(unix)]
+        let is_root = unsafe { libc::geteuid() } == 0;
+        #[cfg(not(unix))]
+        let is_root = false;
+
+        // Use lazy unmount (-l) on Linux to avoid blocking if mount is busy
+        #[cfg(target_os = "linux")]
+        let unmount_args = if is_root {
+            vec!["-l", "-f"]
+        } else {
+            vec!["-l", "-f"]
+        };
+
+        #[cfg(not(target_os = "linux"))]
+        let unmount_args = vec!["-f"];
+
+        let status = if is_root {
+            let mut cmd = std::process::Command::new("umount");
+            for arg in &unmount_args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&self.mount_point).status()
+        } else {
+            let mut cmd = std::process::Command::new("sudo");
+            cmd.arg("-n").arg("umount");
+            for arg in &unmount_args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&self.mount_point).status()
+        };
+
+        match status {
+            Ok(s) if s.success() => {
+                eprintln!(
+                    "[MountGuard] Successfully unmounted: {}",
+                    self.mount_point.display()
+                );
+            }
+            Ok(s) => {
+                eprintln!(
+                    "[MountGuard] Failed to unmount {} (exit code: {:?})",
+                    self.mount_point.display(),
+                    s.code()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[MountGuard] Error unmounting {}: {}",
+                    self.mount_point.display(),
+                    e
+                );
+            }
+        }
+    }
+}

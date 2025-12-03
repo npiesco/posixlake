@@ -3,7 +3,7 @@
 
 use arrow::datatypes::{DataType, Field, Schema};
 use posixlake::DatabaseOps;
-use posixlake::nfs::NfsServer;
+use posixlake::nfs::{MountGuard, NfsServer};
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
@@ -40,11 +40,11 @@ fn check_can_mount() -> bool {
         }
     }
 
-    // Check if passwordless sudo works by running sudo -n true
-    // This is more reliable than checking for sudoers file existence
+    // Check if passwordless sudo works for mount command
+    // The sudoers file only allows specific commands (mount/umount), not generic 'true'
     // since /etc/sudoers.d/ is not readable by regular users
     std::process::Command::new("sudo")
-        .args(["-n", "true"])
+        .args(["-n", "mount", "--help"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -125,7 +125,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
                 .arg("nfs")
                 .arg("-o")
                 .arg(format!(
-                    "nolock,vers=3,tcp,port={},mountport={}",
+                    "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                     port, port
                 ))
                 .arg(format!("{}:/", host))
@@ -158,7 +158,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .arg("nfs")
             .arg("-o")
             .arg(format!(
-                "nolock,vers=3,tcp,port={},mountport={}",
+                "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                 port, port
             ))
             .arg(format!("{}:/", host))
@@ -269,6 +269,9 @@ async fn test_nfs_mv_rename_file() {
     mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
+
+    // Create mount guard for automatic cleanup on panic/timeout
+    let _guard = MountGuard::new(mount_point.clone());
 
     println!("[SUCCESS] NFS mounted successfully");
 
@@ -393,6 +396,9 @@ async fn test_nfs_mv_rename_directory() {
     mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
+
+    // Create mount guard for automatic cleanup on panic/timeout
+    let _guard = MountGuard::new(mount_point.clone());
 
     // Create a directory in the mount
     println!("[CREATE] Creating directory 'old_dir'");

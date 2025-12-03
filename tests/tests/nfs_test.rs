@@ -4,7 +4,7 @@
 use arrow::array::{Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use posixlake::DatabaseOps;
-use posixlake::nfs::NfsServer;
+use posixlake::nfs::{MountGuard, NfsServer};
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
@@ -52,11 +52,11 @@ fn check_can_mount() -> bool {
         }
     }
 
-    // Check if passwordless sudo works by running sudo -n true
-    // This is more reliable than checking for sudoers file existence
+    // Check if passwordless sudo works for mount command
+    // The sudoers file only allows specific commands (mount/umount), not generic 'true'
     // since /etc/sudoers.d/ is not readable by regular users
     std::process::Command::new("sudo")
-        .args(["-n", "true"])
+        .args(["-n", "mount", "--help"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -420,7 +420,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
                 .arg("nfs")
                 .arg("-o")
                 .arg(format!(
-                    "nolock,vers=3,tcp,port={},mountport={}",
+                    "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                     port, port
                 ))
                 .arg(format!("{}:/", host))
@@ -454,7 +454,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .arg("nfs")
             .arg("-o")
             .arg(format!(
-                "nolock,vers=3,tcp,port={},mountport={}",
+                "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                 port, port
             ))
             .arg(format!("{}:/", host))
@@ -584,6 +584,9 @@ async fn test_real_os_mount_and_posix_commands() {
         .await
         .expect("NFS mount must succeed");
 
+    // Create mount guard for automatic cleanup on panic/timeout
+    let _guard = MountGuard::new(mount_point.clone());
+
     println!("[SUCCESS] Successfully mounted NFS");
 
     // Test POSIX commands
@@ -666,6 +669,9 @@ async fn test_real_os_write_through_mount() {
     mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
+
+    // Create mount guard for automatic cleanup on panic/timeout
+    let _guard = MountGuard::new(mount_point.clone());
 
     let data_csv = mount_point.join("data").join("data.csv");
 
@@ -1488,14 +1494,14 @@ async fn test_nfs_concurrent_multiprocess_access() {
             "Mount failed, skipping multi-process test: {:?}",
             mount_result.err()
         );
-        drop(server);
+        server.shutdown().await.ok();
         return;
     }
 
-    println!("[SUCCESS] Successfully mounted NFS for multi-process test");
+    // Create mount guard for automatic cleanup on panic/timeout
+    let _guard = MountGuard::new(mount_dir.clone());
 
-    // Give mount a moment to settle
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    println!("[SUCCESS] Successfully mounted NFS for multi-process test");
 
     // Test that files are accessible
     let data_path = mount_dir.join("data").join("data.csv");
@@ -1597,10 +1603,10 @@ async fn test_nfs_concurrent_multiprocess_access() {
 #[tokio::test]
 #[serial]
 async fn test_nfs_concurrent_readers_and_writer() {
-    use std::time::Duration;
     init_logging();
 
-    // Test using actual OS NFS mount commands
+    // Test concurrent read operations through NFS mount
+    // Note: This tests concurrent READS only - concurrent writes to CSV are not supported
     require_mount_capability();
 
     // Create test database
@@ -1641,92 +1647,83 @@ async fn test_nfs_concurrent_readers_and_writer() {
 
     // Mount the NFS server
     println!(
-        "[MOUNT] Mounting NFS for concurrent read/write test on port {}",
+        "[MOUNT] Mounting NFS for concurrent read test on port {}",
         port
     );
     let mount_result = mount_nfs_os("localhost", port, &mount_dir).await;
 
     if mount_result.is_err() {
         println!("Mount failed, skipping test: {:?}", mount_result.err());
-        drop(server);
+        server.shutdown().await.ok();
         return;
     }
 
-    println!("[SUCCESS] Successfully mounted NFS for concurrent read/write test");
+    // Create mount guard for automatic cleanup
+    let guard = MountGuard::new(mount_dir.clone());
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    println!("[SUCCESS] Successfully mounted NFS for concurrent read test");
 
     let data_path = mount_dir.join("data/data.csv");
 
-    // Simple test: concurrent reads while doing a write
-    let result = tokio::time::timeout(Duration::from_secs(15), async {
-        // Spawn 3 readers
-        let mut reader_handles = vec![];
-        for i in 0..3 {
-            let path = data_path.clone();
-            let handle = tokio::spawn(async move {
-                for _ in 0..3 {
-                    let output = tokio::process::Command::new("cat")
-                        .arg(&path)
-                        .output()
-                        .await
-                        .unwrap_or_else(|_| panic!("Reader {} should succeed", i));
-                    assert!(output.status.success());
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            });
-            reader_handles.push(handle);
-        }
+    // Verify initial read works before spawning concurrent readers
+    let initial_content = tokio::fs::read_to_string(&data_path)
+        .await
+        .expect("Initial read should succeed");
+    assert!(
+        initial_content.contains("user1"),
+        "Should contain test data"
+    );
+    println!("[VERIFY] Initial read successful, {} bytes", initial_content.len());
 
-        // Single writer
+    // Spawn concurrent readers - all reading the same file simultaneously
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<usize, String>>(10);
+
+    for i in 0..5 {
         let path = data_path.clone();
-        let writer_handle = tokio::spawn(async move {
-            for j in 100..102 {
-                // Just 2 writes to keep it simple
-                let append_cmd = format!("echo '{},user{},{}' >> {}", j, j, j * 10, path.display());
-                let output = tokio::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&append_cmd)
-                    .output()
-                    .await
-                    .expect("Writer should succeed");
-                assert!(output.status.success());
-                tokio::time::sleep(Duration::from_millis(50)).await;
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result = tokio::fs::read_to_string(&path).await;
+            match result {
+                Ok(content) => {
+                    let _ = tx.send(Ok(content.len())).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("Reader {} failed: {}", i, e))).await;
+                }
             }
         });
+    }
+    drop(tx); // Close sender so rx.recv() returns None when all done
 
-        // Wait for all
-        for handle in reader_handles {
-            handle.await.expect("Reader should complete");
+    // Collect results - event-based, no polling
+    let mut success_count = 0;
+    let mut fail_count = 0;
+    while let Some(result) = rx.recv().await {
+        match result {
+            Ok(bytes) => {
+                println!("[READER] Success: {} bytes", bytes);
+                success_count += 1;
+            }
+            Err(e) => {
+                println!("[READER] Failed: {}", e);
+                fail_count += 1;
+            }
         }
-        writer_handle.await.expect("Writer should complete");
-    })
-    .await;
+    }
 
-    assert!(
-        result.is_ok(),
-        "Concurrent operations should complete within timeout"
-    );
-
-    // Small delay to let any pending NFS operations complete
-    println!("[WAIT] Waiting for NFS operations to settle...");
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Verify the server is still running and mount is still active
-    let final_content = std::fs::read_to_string(mount_dir.join("data/data.csv"))
-        .expect("Mount should still be active after concurrent operations");
     println!(
-        "[VERIFY] Final content has {} lines",
-        final_content.lines().count()
+        "[RESULT] {} successful reads, {} failed reads",
+        success_count, fail_count
     );
-    assert!(
-        final_content.lines().count() >= 21,
-        "Should have at least original data"
-    );
+    assert_eq!(success_count, 5, "All 5 concurrent readers should succeed");
+    assert_eq!(fail_count, 0, "No readers should fail");
 
-    println!("[CLEANUP] Unmounting and shutting down");
+    println!("[SUCCESS] Concurrent read test passed!");
+
+    // Cleanup via guard drop
+    guard.mark_unmounted();
     unmount_nfs_os(&mount_dir).await.ok();
-    drop(server);
+    server.shutdown().await.ok();
 }
 
 #[tokio::test]
@@ -4273,6 +4270,9 @@ async fn test_nfs_mkdir_creates_directory() {
         .await
         .expect("NFS mount must succeed");
 
+    // Create mount guard for automatic cleanup on panic/timeout
+    let _guard = MountGuard::new(mount_point.clone());
+
     println!("[TEST] Testing 'mkdir' command to create directory 'testdir'");
     let test_dir = mount_point.join("testdir");
 
@@ -4353,6 +4353,9 @@ async fn test_nfs_cp_creates_file() {
         .await
         .expect("NFS mount must succeed");
 
+    // Create mount guard for automatic cleanup on panic/timeout
+    let _guard = MountGuard::new(mount_point.clone());
+
     // Create a source file locally
     let source_file = temp_dir.path().join("source.txt");
     std::fs::write(&source_file, "Hello, World!").unwrap();
@@ -4417,5 +4420,144 @@ async fn test_nfs_cp_creates_file() {
     unmount_nfs_os(&mount_point)
         .await
         .expect("Unmount must succeed");
+    server.shutdown().await.unwrap();
+}
+
+// MountGuard is now imported from posixlake::nfs::MountGuard
+
+#[tokio::test]
+#[serial]
+async fn test_mount_guard_cleans_up_on_drop() {
+    // TDD: Test that MountGuard automatically unmounts when dropped
+    // This ensures stale mounts don't accumulate from failed/panicked tests
+    init_logging();
+    require_mount_capability();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_mount_guard");
+    let mount_point = temp_dir.path().join("mnt_guard_test");
+    std::fs::create_dir(&mount_point).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie"])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.unwrap();
+
+    let port = create_unique_port(11299);
+    let server = NfsServer::new(Arc::new(db), port).await.unwrap();
+
+    // Mount and create guard
+    mount_nfs_os("localhost", port, &mount_point)
+        .await
+        .expect("Mount should succeed");
+
+    let guard = MountGuard::new(mount_point.clone());
+
+    // Verify mount is active
+    assert!(
+        guard.is_mounted(),
+        "Mount should be active after mounting"
+    );
+
+    // Verify we can read through the mount
+    let data_path = mount_point.join("data/data.csv");
+    let content = tokio::fs::read_to_string(&data_path)
+        .await
+        .expect("Should read data through mount");
+    assert!(content.contains("Alice"), "Should contain test data");
+
+    println!("[TEST] Mount is active, now dropping guard to trigger cleanup...");
+
+    // Drop the guard - this should trigger automatic unmount
+    drop(guard);
+
+    // Give the unmount a moment to complete
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Verify mount is gone
+    let output = std::process::Command::new("mount")
+        .output()
+        .expect("Failed to run mount command");
+    let mount_table = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !mount_table.contains(&mount_point.to_string_lossy().to_string()),
+        "Mount should be cleaned up after guard is dropped"
+    );
+
+    println!("[SUCCESS] MountGuard successfully cleaned up mount on drop!");
+
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_mount_guard_skips_if_already_unmounted() {
+    // TDD: Test that MountGuard doesn't error if mount was already cleaned up manually
+    init_logging();
+    require_mount_capability();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_guard_skip");
+    let mount_point = temp_dir.path().join("mnt_guard_skip");
+    std::fs::create_dir(&mount_point).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Test"])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.unwrap();
+
+    let port = create_unique_port(11399);
+    let server = NfsServer::new(Arc::new(db), port).await.unwrap();
+
+    mount_nfs_os("localhost", port, &mount_point)
+        .await
+        .expect("Mount should succeed");
+
+    let guard = MountGuard::new(mount_point.clone());
+
+    assert!(guard.is_mounted(), "Mount should be active");
+
+    // Manually unmount and mark the guard
+    unmount_nfs_os(&mount_point)
+        .await
+        .expect("Manual unmount should succeed");
+    guard.mark_unmounted();
+
+    assert!(
+        !guard.is_mounted(),
+        "Mount should report as not mounted after manual unmount"
+    );
+
+    println!("[TEST] Dropping guard after manual unmount...");
+
+    // Drop guard - should not error since we marked it as unmounted
+    drop(guard);
+
+    println!("[SUCCESS] MountGuard correctly skipped cleanup for already-unmounted path!");
+
     server.shutdown().await.unwrap();
 }

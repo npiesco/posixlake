@@ -927,7 +927,7 @@ impl NfsServer {
 
         #[cfg(target_os = "linux")]
         {
-            // Linux uses 'nolock' (singular)
+            // Linux uses 'nolock' (singular) and 'noac' to disable attribute caching
             vec![
                 "sudo".to_string(),
                 "mount".to_string(),
@@ -935,7 +935,7 @@ impl NfsServer {
                 "nfs".to_string(),
                 "-o".to_string(),
                 format!(
-                    "nolock,vers=3,tcp,port={},mountport={}",
+                    "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                     self.port, self.port
                 ),
                 "localhost:/".to_string(),
