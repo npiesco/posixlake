@@ -490,11 +490,7 @@ impl Drop for MountGuard {
 
         // Use lazy unmount (-l) on Linux to avoid blocking if mount is busy
         #[cfg(target_os = "linux")]
-        let unmount_args = if is_root {
-            vec!["-l", "-f"]
-        } else {
-            vec!["-l", "-f"]
-        };
+        let unmount_args = vec!["-l", "-f"];
 
         #[cfg(not(target_os = "linux"))]
         let unmount_args = vec!["-f"];
