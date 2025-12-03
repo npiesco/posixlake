@@ -4306,12 +4306,25 @@ async fn test_nfs_mkdir_creates_directory() {
         "Directory 'testdir' should exist"
     );
 
-    // Verify it's actually a directory
-    let metadata = std::fs::metadata(&test_dir);
-    assert!(metadata.is_ok(), "Directory should exist");
-    assert!(metadata.unwrap().is_dir(), "testdir should be a directory");
+    // Verify it's actually a directory using async with timeout
+    let verify_result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let metadata = tokio::fs::metadata(&test_dir).await?;
+        assert!(metadata.is_dir(), "testdir should be a directory");
+        Ok::<(), std::io::Error>(())
+    })
+    .await;
 
-    println!("[SUCCESS] mkdir command successfully created directory!");
+    match verify_result {
+        Ok(Ok(())) => {
+            println!("[SUCCESS] mkdir command successfully created directory!");
+        }
+        Ok(Err(e)) => {
+            panic!("Directory verification failed: {}", e);
+        }
+        Err(_) => {
+            panic!("Directory verification timed out - mount may be unresponsive");
+        }
+    }
 
     unmount_nfs_os(&mount_point)
         .await
