@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
                 .arg("nfs")
                 .arg("-o")
                 .arg(format!(
-                    "nolocks,vers=3,tcp,port={},mountport={}",
+                    "nolock,vers=3,tcp,port={},mountport={}",
                     port, port
                 ))
                 .arg("localhost:/")
@@ -178,7 +178,9 @@ async fn main() -> Result<()> {
                     #[cfg(target_os = "macos")]
                     eprintln!("  sudo mount_nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
                     #[cfg(target_os = "linux")]
-                    eprintln!("  sudo mount -t nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    eprintln!("  sudo mount -t nfs -o nolock,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    #[cfg(target_os = "windows")]
+                    eprintln!("  mount -o anon,nolock,vers=3,port={},mountport={} \\\\localhost\\ {}", port, port, mount_point.display());
                     eprintln!();
                     eprintln!("Press Ctrl+C to shutdown server");
 
@@ -198,7 +200,9 @@ async fn main() -> Result<()> {
                     #[cfg(target_os = "macos")]
                     eprintln!("  sudo mount_nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
                     #[cfg(target_os = "linux")]
-                    eprintln!("  sudo mount -t nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    eprintln!("  sudo mount -t nfs -o nolock,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    #[cfg(target_os = "windows")]
+                    eprintln!("  mount -o anon,nolock,vers=3,port={},mountport={} \\\\localhost\\ {}", port, port, mount_point.display());
                     eprintln!();
                     eprintln!("Press Ctrl+C to shutdown server");
 

@@ -911,6 +911,7 @@ impl NfsServer {
     pub fn get_mount_command(&self, #[allow(unused_variables)] mount_point: String) -> Vec<String> {
         #[cfg(target_os = "macos")]
         {
+            // macOS uses 'nolocks' (plural)
             vec![
                 "sudo".to_string(),
                 "mount_nfs".to_string(),
@@ -926,6 +927,7 @@ impl NfsServer {
 
         #[cfg(target_os = "linux")]
         {
+            // Linux uses 'nolock' (singular)
             vec![
                 "sudo".to_string(),
                 "mount".to_string(),
@@ -933,7 +935,7 @@ impl NfsServer {
                 "nfs".to_string(),
                 "-o".to_string(),
                 format!(
-                    "nolocks,vers=3,tcp,port={},mountport={}",
+                    "nolock,vers=3,tcp,port={},mountport={}",
                     self.port, self.port
                 ),
                 "localhost:/".to_string(),
@@ -941,7 +943,20 @@ impl NfsServer {
             ]
         }
 
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "windows")]
+        {
+            // Windows NFS client mount command
+            // Requires Windows Services for NFS to be installed
+            vec![
+                "mount".to_string(),
+                "-o".to_string(),
+                format!("anon,nolock,vers=3,port={},mountport={}", self.port, self.port),
+                format!("\\\\localhost\\"),
+                mount_point,
+            ]
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             vec!["echo".to_string(), "Unsupported platform".to_string()]
         }
@@ -952,12 +967,22 @@ impl NfsServer {
         &self,
         #[allow(unused_variables)] mount_point: String,
     ) -> Vec<String> {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         {
             vec!["sudo".to_string(), "umount".to_string(), mount_point]
         }
 
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(target_os = "linux")]
+        {
+            vec!["sudo".to_string(), "umount".to_string(), mount_point]
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            vec!["umount".to_string(), mount_point]
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
             vec!["echo".to_string(), "Unsupported platform".to_string()]
         }

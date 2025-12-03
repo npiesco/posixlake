@@ -40,10 +40,16 @@ fn check_can_mount() -> bool {
         }
     }
 
-    let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    let username_safe = username.replace('.', "_");
-    let sudoers_file = format!("/etc/sudoers.d/posixlake-nfs-{}", username_safe);
-    std::path::Path::new(&sudoers_file).exists()
+    // Check if passwordless sudo works by running sudo -n true
+    // This is more reliable than checking for sudoers file existence
+    // since /etc/sudoers.d/ is not readable by regular users
+    std::process::Command::new("sudo")
+        .args(["-n", "true"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn require_mount_capability() {

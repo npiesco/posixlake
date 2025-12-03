@@ -1,7 +1,11 @@
 [build]
 rustflags = ["-D", "warnings", "-L", "lib"]
+# Limit parallel jobs to reduce memory usage during linking
+jobs = 2
 
 [env]
+# Run tests single-threaded to avoid parallel NFS mount issues
+RUST_TEST_THREADS = "1"
 # MinIO/S3 Configuration for tests
 MINIO_ENDPOINT = "http://localhost:9000"
 MINIO_ACCESS_KEY = "minioadmin"

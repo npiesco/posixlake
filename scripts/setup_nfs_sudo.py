@@ -18,18 +18,24 @@ def check_sudo():
     
     print(f"[DEBUG] Checking for sudoers file: {sudoers_file}")
     
-    # Check if file exists
-    if not os.path.exists(sudoers_file):
-        print(f"[DEBUG] File does not exist")
-        return False
-    
-    print(f"[DEBUG] File exists, checking ownership and permissions")
-    
-    # Check file ownership and permissions
+    # Check if file exists using sudo (sudoers.d is not readable by regular users)
     try:
-        stat_result = subprocess.run(['stat', '-f', '%u:%g %p', sudoers_file],
-                                    capture_output=True,
-                                    text=True)
+        system = platform.system()
+        if system == "Darwin":
+            # macOS: stat -f '%u:%g %p'
+            stat_result = subprocess.run(['sudo', 'stat', '-f', '%u:%g %p', sudoers_file],
+                                        capture_output=True,
+                                        text=True)
+        else:
+            # Linux: stat -c '%u:%g %a'
+            stat_result = subprocess.run(['sudo', 'stat', '-c', '%u:%g %a', sudoers_file],
+                                        capture_output=True,
+                                        text=True)
+        
+        if stat_result.returncode != 0:
+            print(f"[DEBUG] File does not exist or cannot stat: {stat_result.stderr.strip()}")
+            return False
+        
         print(f"[DEBUG] File stat: {stat_result.stdout.strip()}")
         
         # File should be owned by root (uid 0)
