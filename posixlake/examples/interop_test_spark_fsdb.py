@@ -193,10 +193,12 @@ def test_posix_operations(spark, delta_path, temp_dir):
         
         print(f"\n2. Mounting NFS at {mount_point}...")
         if sys.platform == "darwin":
+            # macOS uses 'nolocks' (plural) and mount_nfs command
             mount_cmd = ["sudo", "mount_nfs", "-o", "nolocks,vers=3,tcp,port=12050,mountport=12050", 
                         "localhost:/", str(mount_point)]
         else:  # Linux
-            mount_cmd = ["sudo", "mount", "-t", "nfs", "-o", "nolocks,vers=3,tcp,port=12050,mountport=12050",
+            # Linux uses 'nolock' (singular) with soft mount options to prevent hangs
+            mount_cmd = ["sudo", "mount", "-t", "nfs", "-o", "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port=12050,mountport=12050",
                         "localhost:/", str(mount_point)]
         
         result = subprocess.run(mount_cmd, capture_output=True, timeout=5)
