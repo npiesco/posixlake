@@ -390,12 +390,104 @@ nfs = NfsServer(db, 12049)
 
 See [Python Bindings Documentation](bindings/python/README.md) for complete API reference.
 
+### Creating a Database
+
+#### CLI
+
+```bash
+# 1. Create the directory
+mkdir storage
+
+# 2. Create a posixlake database with a schema
+posixlake create storage --schema "id:Int32,name:String,email:String"
+
+# 3. What gets created (even with no data):
+# storage/
+# ├── _delta_log/
+# │   └── 00000000000000000000.json   # Delta Lake transaction log
+# └── (no parquet files yet - empty table)
+
+# 4. Start NFS server to mount it
+posixlake serve storage --port 12099
+
+# 5. In another terminal, mount it
+sudo mkdir -p /mnt/storage
+sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port=12099,mountport=12099 localhost:/ /mnt/storage
+
+# 6. Now use POSIX commands
+ls /mnt/storage/data/           # Shows data.csv (empty, just header)
+cat /mnt/storage/data/data.csv  # Shows: id,name,email
+
+# 7. Add data via echo/redirect
+echo "1,Alice,alice@example.com" >> /mnt/storage/data/data.csv
+echo "2,Bob,bob@example.com" >> /mnt/storage/data/data.csv
+
+# 8. Verify
+cat /mnt/storage/data/data.csv
+# id,name,email
+# 1,Alice,alice@example.com
+# 2,Bob,bob@example.com
+```
+
+**Empty database** = valid Delta Lake table with schema but 0 rows. The `_delta_log/` is created immediately so any Delta Lake reader can open it.
+
+#### Python
+
+```python
+from posixlake import DatabaseOps, Schema, Field
+
+# 1. Define schema
+schema = Schema(fields=[
+    Field(name="id", data_type="Int32", nullable=False),
+    Field(name="name", data_type="String", nullable=False),
+    Field(name="email", data_type="String", nullable=True),
+])
+
+# 2. Create database at a path
+db = DatabaseOps.create("/path/to/my_database", schema)
+
+# 3. Insert data
+db.insert_json('[{"id": 1, "name": "Alice", "email": "alice@example.com"}]')
+```
+
+**Supported data types:**
+- `Int32`, `Int64`
+- `Float32`, `Float64`
+- `String`
+- `Boolean`
+- `Date32`, `Timestamp`
+- `Binary`
+
+#### Opening Existing Delta Lake Tables
+
+```python
+# Open any existing Delta Lake table (created by Spark, Databricks, etc.)
+db = DatabaseOps.open("/path/to/existing/delta_table")
+```
+
+#### Directory Behavior
+
+**Creating a new database (`DatabaseOps.create`):**
+- The directory must **not exist** or be **empty**
+- If files exist, it will fail to prevent overwriting data
+
+**Opening an existing database (`DatabaseOps.open`):**
+- Looks for `_delta_log/` subdirectory to identify it as a Delta Lake table
+- Ignores other files in the directory
+- Fails if no valid Delta Lake structure is found
+
+**If you want to add a Delta Lake table to a directory with existing files:**
+```python
+# Create in a subdirectory
+db = DatabaseOps.create("/path/to/existing_dir/my_delta_table", schema)
+```
+
 ### Usage - POSIX Interface
 
 The easiest way to use posixlake is to mount it as a filesystem:
 
 ```bash
-# Create and mount a database
+# Mount an existing database
 ./target/release/posixlake mount /path/to/database /mnt/data
 
 # Now use regular UNIX commands!
@@ -409,6 +501,51 @@ echo "id,name,value" >> /mnt/data/data/data.csv  # Append
 ```
 
 All writes persist to Delta Lake with full ACID guarantees. No special tools needed - just standard UNIX commands.
+
+### What Happens on Unmount
+
+When you unmount the NFS filesystem, **your data persists** because it's stored in the Delta Lake directory, not in the mount:
+
+```bash
+# Unmount
+./target/release/posixlake unmount /mnt/data
+
+# The mount point becomes empty, but data remains at:
+# /path/to/database/
+# ├── _delta_log/     # Transaction log
+# └── *.parquet       # Your data files
+```
+
+**The NFS mount is just a view** into the Delta Lake - it doesn't own the data.
+
+**To access data after unmount:**
+
+```python
+# Option 1: Re-mount via NFS
+nfs = NfsServer(db, port)
+# mount again...
+
+# Option 2: Use posixlake API directly (no mount needed)
+db = DatabaseOps.open("/path/to/database")
+results = db.query_json("SELECT * FROM data")
+
+# Option 3: Use any Delta Lake reader (Spark, DuckDB, etc.)
+spark.read.format("delta").load("/path/to/database")
+```
+
+### What the NFS Mount Exposes
+
+When mounted, the NFS server exposes a **virtual filesystem** representing the Delta Lake table:
+
+```
+/mnt/data/
+├── data/
+│   ├── data.csv      # Virtual CSV view of the table
+│   └── *.parquet     # The actual Parquet files
+└── schema.sql        # Table schema
+```
+
+It does **not** expose arbitrary files that exist in the underlying directory - it's a virtual filesystem, not a passthrough to the host filesystem.
 
 #### Setup MinIO (Optional - for S3 backend)
 
