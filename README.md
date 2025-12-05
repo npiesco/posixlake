@@ -1000,11 +1000,6 @@ Built with:
 - [Delta Lake](https://delta.io/) - Transaction log
 - [ObjectStore](https://docs.rs/object_store/) - Storage abstraction
 
-Inspired by:
-
-- [DuckDB](https://duckdb.org/) - Columnar analytics
-- [SQLite](https://sqlite.org/) - File-based database
-
 ---
 
 **Questions?** Open an [issue](https://github.com/npiesco/posixlake/issues)
