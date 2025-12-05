@@ -15,17 +15,10 @@ enum TxnLifecycleState {
 }
 
 /// Explicit transaction handle for user-controlled transaction boundaries
+/// Delta Lake handles MVCC natively via its transaction log
 pub struct Transaction {
     /// Reference to the database
     db: Arc<DatabaseOps>,
-
-    /// Transaction ID
-    #[allow(dead_code)]
-    txn_id: u64,
-
-    /// Snapshot for this transaction (MVCC isolation)
-    #[allow(dead_code)]
-    snapshot_version: u64,
 
     /// Snapshot of committed data at transaction start (for snapshot isolation)
     snapshot_data: Arc<tokio::sync::Mutex<Option<Vec<RecordBatch>>>>,
@@ -38,12 +31,10 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    /// Create a new transaction
-    pub(crate) fn new(db: Arc<DatabaseOps>, txn_id: u64, snapshot_version: u64) -> Self {
+    /// Create a new transaction (txn_id and snapshot_version handled by Delta Lake)
+    pub(crate) fn new(db: Arc<DatabaseOps>, _txn_id: u64, _snapshot_version: u64) -> Self {
         Self {
             db,
-            txn_id,
-            snapshot_version,
             snapshot_data: Arc::new(tokio::sync::Mutex::new(None)),
             write_buffer: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             state: Arc::new(tokio::sync::Mutex::new(TxnLifecycleState::Active)),

@@ -5,6 +5,7 @@
 pub mod batch_buffer;
 pub mod delta_lake;
 pub mod error;
+pub mod import;
 pub mod metadata;
 pub mod query;
 pub mod security;

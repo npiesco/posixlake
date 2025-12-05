@@ -3,7 +3,7 @@ use crate::error::Result;
 use arrow::array::RecordBatch;
 use arrow::csv::{ReaderBuilder as CsvReaderBuilder, Writer as CsvWriter};
 use arrow::json::{ArrayWriter as JsonArrayWriter, LineDelimitedWriter as JsonLinesWriter};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -388,50 +388,6 @@ impl CsvFileView {
         );
 
         Ok(())
-    }
-
-    /// Extract ID values from CSV string (legacy method, kept for reference)
-    #[allow(dead_code)]
-    fn extract_ids_from_csv(&self, csv_content: &str, id_column: &str) -> Result<HashSet<String>> {
-        let mut ids = HashSet::new();
-        let lines: Vec<&str> = csv_content.lines().collect();
-
-        if lines.is_empty() {
-            return Ok(ids);
-        }
-
-        // Parse header to find ID column index
-        let header = lines[0];
-        let headers: Vec<&str> = header.split(',').collect();
-        let id_index = headers
-            .iter()
-            .position(|&h| h.trim() == id_column)
-            .ok_or_else(|| {
-                crate::error::Error::InvalidOperation(format!(
-                    "ID column '{}' not found in CSV header",
-                    id_column
-                ))
-            })?;
-
-        debug!("ID column '{}' is at index {}", id_column, id_index);
-
-        // Extract IDs from data rows
-        for line in lines.iter().skip(1) {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let values: Vec<&str> = line.split(',').collect();
-            if values.len() > id_index {
-                let id_value = values[id_index].trim();
-                if !id_value.is_empty() {
-                    ids.insert(id_value.to_string());
-                }
-            }
-        }
-
-        debug!("Extracted {} IDs from CSV", ids.len());
-        Ok(ids)
     }
 
     /// Parse CSV string into a RecordBatch
@@ -903,7 +859,6 @@ impl SchemaFile {
 
 /// Special .stats file that shows database statistics as JSON
 pub struct StatsFile {
-    #[allow(dead_code)]
     db: Arc<DatabaseOps>,
 }
 
