@@ -2,10 +2,8 @@
 //!
 //! Delta Lake native implementation using deltalake-rs
 
-use crate::metadata::{BackupMetadata, BackupVerificationReport};
-use crate::query::QueryExecutor;
-// Removed: extract_predicates, is_value_less_than, is_value_greater_than - moved to query::pruning module
 use crate::delta_lake::stats::{get_column_statistics_from_delta, ColumnStats};
+use crate::metadata::{BackupMetadata, BackupVerificationReport};
 use crate::storage::parquet::ParquetReader;
 use crate::{Error, Result};
 use arrow::array::{Array, RecordBatch};
@@ -80,10 +78,6 @@ pub struct DatabaseOps {
     /// S3 configuration (if using S3 backend)
     s3_url: Option<String>,
     s3_storage_options: Option<std::collections::HashMap<String, String>>,
-
-    /// Query executor
-    #[allow(dead_code)]
-    query_executor: Arc<QueryExecutor>,
 
     /// Database schema (cached from Delta Lake)
     pub schema: SchemaRef,
@@ -192,7 +186,6 @@ impl DatabaseOps {
             table
         };
 
-        let query_executor = Arc::new(QueryExecutor::new());
         let metrics = Arc::new(MetricsTracker::new());
         let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
 
@@ -200,7 +193,6 @@ impl DatabaseOps {
             base_path,
             s3_url: None,
             s3_storage_options: None,
-            query_executor,
             schema,
             metrics,
             data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
@@ -210,6 +202,26 @@ impl DatabaseOps {
             role_manager: None,
             batch_buffer,
         })
+    }
+
+    /// Create a new database by importing data from a CSV file
+    ///
+    /// Delegates to [`crate::import::create_from_csv`]. See that function for details.
+    pub async fn create_from_csv<P: AsRef<Path>, C: AsRef<Path>>(
+        path: P,
+        csv_path: C,
+    ) -> Result<Self> {
+        crate::import::create_from_csv(path, csv_path).await
+    }
+
+    /// Create a new database by importing data from Parquet file(s)
+    ///
+    /// Delegates to [`crate::import::create_from_parquet`]. See that function for details.
+    pub async fn create_from_parquet<P: AsRef<Path>, Q: AsRef<Path>>(
+        path: P,
+        parquet_path: Q,
+    ) -> Result<Self> {
+        crate::import::create_from_parquet(path, parquet_path).await
     }
 
     /// Open an existing Delta Lake table with posixlake
@@ -251,7 +263,6 @@ impl DatabaseOps {
             (table, arrow_schema)
         };
 
-        let query_executor = Arc::new(QueryExecutor::new());
         let metrics = Arc::new(MetricsTracker::new());
         let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
 
@@ -259,7 +270,6 @@ impl DatabaseOps {
             base_path,
             s3_url: None,
             s3_storage_options: None,
-            query_executor,
             schema,
             metrics,
             data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
@@ -321,7 +331,6 @@ impl DatabaseOps {
         let base_path = get_s3_cache_path(s3_path);
         std::fs::create_dir_all(&base_path)?;
 
-        let query_executor = Arc::new(QueryExecutor::new());
         let metrics = Arc::new(MetricsTracker::new());
         let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
 
@@ -329,7 +338,6 @@ impl DatabaseOps {
             base_path,
             s3_url: Some(s3_path.to_string()),
             s3_storage_options: Some(storage_options),
-            query_executor,
             schema,
             metrics,
             data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
@@ -390,7 +398,6 @@ impl DatabaseOps {
         let base_path = get_s3_cache_path(s3_path);
         std::fs::create_dir_all(&base_path)?;
 
-        let query_executor = Arc::new(QueryExecutor::new());
         let metrics = Arc::new(MetricsTracker::new());
         let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
 
@@ -398,7 +405,6 @@ impl DatabaseOps {
             base_path,
             s3_url: Some(s3_path.to_string()),
             s3_storage_options: Some(storage_options),
-            query_executor,
             schema,
             metrics,
             data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
@@ -1796,12 +1802,6 @@ impl DatabaseOps {
         get_column_statistics_from_delta(&self.base_path)
     }
 
-    /// Legacy method - delegates to main method
-    #[allow(dead_code)]
-    async fn get_column_statistics_delta(&self) -> Result<HashMap<String, ColumnStats>> {
-        self.get_column_statistics().await
-    }
-
     /// Get query pruning statistics (Delta Lake handles this natively)
     pub async fn get_pruning_statistics(&self) -> Result<PruningStats> {
         // Delta Lake doesn't expose pruning stats the same way
@@ -2311,14 +2311,6 @@ mod tests {
             .downcast_ref::<arrow::array::Int64Array>()
             .unwrap();
         assert_eq!(count_col.value(0), 6); // 3 + 3 rows
-    }
-
-    // Removed: Legacy test for file deletion - Delta Lake uses deletion vectors natively
-    #[tokio::test]
-    #[allow(dead_code)]
-    async fn _removed_test_database_delete() {
-        // This test used file_inventory which doesn't exist in Delta Lake mode
-        // Delta Lake handles row-level deletion using deletion vectors
     }
 
     #[tokio::test]

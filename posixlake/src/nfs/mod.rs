@@ -30,8 +30,6 @@ lazy_static::lazy_static! {
 /// Manages server lifecycle and provides simple API matching tests
 pub struct NfsServer {
     db: Arc<DatabaseOps>,
-    #[allow(dead_code)]
-    port: u16,
     shutdown_tx: Option<mpsc::Sender<()>>,
     ready: bool,
     /// Cache for NFS operations (shared with filesystem)
@@ -105,7 +103,6 @@ impl NfsServer {
                 info!("NFS server is ready");
                 Ok(Self {
                     db,
-                    port,
                     shutdown_tx: Some(shutdown_tx),
                     ready: true,
                     cache,
@@ -416,8 +413,12 @@ pub struct FileAttributes {
 /// Implements Drop to automatically unmount when the guard goes out of scope.
 ///
 /// # Example
-/// ```ignore
-/// let guard = MountGuard::new(mount_point.clone());
+/// ```no_run
+/// use posixlake::nfs::MountGuard;
+/// use std::path::PathBuf;
+///
+/// let mount_point = PathBuf::from("/mnt/nfs");
+/// let guard = MountGuard::new(mount_point);
 /// // ... do NFS operations ...
 /// // On drop (normal or panic), mount is automatically cleaned up
 /// guard.mark_unmounted(); // Call if you manually unmount
