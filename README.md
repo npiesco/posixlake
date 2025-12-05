@@ -431,6 +431,29 @@ cat /mnt/storage/data/data.csv
 
 **Empty database** = valid Delta Lake table with schema but 0 rows. The `_delta_log/` is created immediately so any Delta Lake reader can open it.
 
+#### Import from CSV (Auto Schema Inference)
+
+```bash
+# Create database from CSV - schema is automatically inferred
+posixlake create /path/to/db --from-csv data.csv
+
+# Schema inference rules (from first 10 data rows):
+# - All values parse as integers → Int64
+# - All values parse as decimals → Float64  
+# - All values are true/false/1/0 → Boolean
+# - Otherwise → String
+```
+
+#### Import from Parquet
+
+```bash
+# Create database from single Parquet file
+posixlake create /path/to/db --from-parquet data.parquet
+
+# Create from multiple Parquet files (glob pattern)
+posixlake create /path/to/db --from-parquet "data/*.parquet"
+```
+
 #### Python
 
 ```python
@@ -448,6 +471,24 @@ db = DatabaseOps.create("/path/to/my_database", schema)
 
 # 3. Insert data
 db.insert_json('[{"id": 1, "name": "Alice", "email": "alice@example.com"}]')
+```
+
+**Import from CSV (auto schema inference):**
+```python
+# Schema is automatically inferred from CSV content
+db = DatabaseOps.create_from_csv("/path/to/db", "/path/to/data.csv")
+
+# Query the imported data
+results = db.query_json("SELECT * FROM data")
+```
+
+**Import from Parquet:**
+```python
+# Schema is read from Parquet metadata
+db = DatabaseOps.create_from_parquet("/path/to/db", "/path/to/data.parquet")
+
+# Supports glob patterns for multiple files
+db = DatabaseOps.create_from_parquet("/path/to/db", "/data/*.parquet")
 ```
 
 **Supported data types:**
