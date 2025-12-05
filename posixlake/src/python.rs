@@ -353,7 +353,10 @@ impl DatabaseOps {
                     message: e.to_string(),
                 })?,
             );
-        let db = runtime.block_on(CoreDatabaseOps::create_from_parquet(&db_path, &parquet_path))?;
+        let db = runtime.block_on(CoreDatabaseOps::create_from_parquet(
+            &db_path,
+            &parquet_path,
+        ))?;
         Ok(Arc::new(Self {
             inner: Arc::new(db),
             runtime,
