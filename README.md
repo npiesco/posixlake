@@ -21,7 +21,7 @@
 
 ## What is posixlake?
 
-posixlake is a **file-system database** where **POSIX commands trigger Delta Lake operations**. Works with **local filesystem directories** (`/path/to/database`) and **object storage/S3** (`s3://bucket/path`) - same unified API for both. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, and Athena.
+posixlake is a **file-system database** where **POSIX commands trigger Delta Lake operations**. Works with **local filesystem directories** (`/path/to/database`) and **object storage/S3** (`s3://bucket/path`) - same unified API for both. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, and Athena. **Start fresh, or with existing Delta Tables, raw Parquet files, or CSVs with schema inference.**
 
 ### Mount as Filesystem - Query with UNIX Tools
 
@@ -988,17 +988,6 @@ Contributions welcome! Please follow these guidelines:
 2. **Run full suite** - Ensure `cargo test` passes
 3. **Update documentation** - Keep README and docs up to date
 4. **Commit messages** - Use conventional commits (e.g., `feat: Add conflict detection`)
-
-## Acknowledgments
-
-Built with:
-
-- [Rust](https://www.rust-lang.org/) - Systems programming language
-- [Apache Arrow](https://arrow.apache.org/) - Columnar in-memory format
-- [Apache Parquet](https://parquet.apache.org/) - Columnar file format
-- [DataFusion](https://datafusion.apache.org/) - Query engine
-- [Delta Lake](https://delta.io/) - Transaction log
-- [ObjectStore](https://docs.rs/object_store/) - Storage abstraction
 
 ---
 
