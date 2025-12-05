@@ -28,6 +28,7 @@ Running:
   python3 posixlake/examples/python_example.py
 """
 
+import os
 import sys
 import json
 import tempfile
@@ -35,6 +36,9 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+
+# Add bindings to path for development
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../bindings/python'))
 
 from posixlake import (
     DatabaseOps,
@@ -87,6 +91,69 @@ def main():
         except PosixLakeError as e:
             print(f"✗ Failed to create database: {e}")
             return
+
+        # Example 1b: Create Database from CSV (Auto Schema Inference)
+        print_section("Example 1b: Create Database from CSV")
+
+        csv_db_path = str(Path(temp_dir) / "csv_db")
+        csv_file_path = str(Path(temp_dir) / "sample_data.csv")
+
+        # Create a sample CSV file
+        print("Creating sample CSV file...")
+        with open(csv_file_path, "w") as f:
+            f.write("product_id,product_name,price,in_stock\n")
+            f.write("1,Widget,29.99,true\n")
+            f.write("2,Gadget,49.99,true\n")
+            f.write("3,Gizmo,19.99,false\n")
+            f.write("4,Thingamajig,99.99,true\n")
+
+        print(f"CSV file: {csv_file_path}")
+        print("Schema will be auto-inferred from CSV content:")
+        print("  - product_id: Int64 (all values parse as integers)")
+        print("  - product_name: String (text values)")
+        print("  - price: Float64 (decimal values)")
+        print("  - in_stock: Boolean (true/false values)")
+
+        try:
+            csv_db = DatabaseOps.create_from_csv(csv_db_path, csv_file_path)
+            print(f"\n✓ Database created from CSV at: {csv_db_path}")
+
+            # Verify the inferred schema
+            csv_schema = csv_db.get_schema()
+            print("\nInferred schema:")
+            for field in csv_schema.fields:
+                print(f"  - {field.name}: {field.data_type}")
+
+            # Query the imported data
+            results = csv_db.query_json("SELECT * FROM data ORDER BY product_id")
+            print(f"\nImported data:\n{results}")
+        except PosixLakeError as e:
+            print(f"✗ CSV import failed: {e}")
+
+        # Example 1c: Create Database from Parquet
+        print_section("Example 1c: Create Database from Parquet")
+
+        parquet_db_path = str(Path(temp_dir) / "parquet_db")
+
+        # Use the parquet file from the CSV database we just created
+        parquet_files = [f for f in os.listdir(csv_db_path) if f.endswith('.parquet')]
+
+        if parquet_files:
+            parquet_file_path = str(Path(csv_db_path) / parquet_files[0])
+            print(f"Using Parquet file: {parquet_file_path}")
+            print("Schema is read directly from Parquet metadata (no inference needed)")
+
+            try:
+                parquet_db = DatabaseOps.create_from_parquet(parquet_db_path, parquet_file_path)
+                print(f"\n✓ Database created from Parquet at: {parquet_db_path}")
+
+                # Query the imported data
+                results = parquet_db.query_json("SELECT * FROM data ORDER BY product_id")
+                print(f"\nImported data:\n{results}")
+            except PosixLakeError as e:
+                print(f"✗ Parquet import failed: {e}")
+        else:
+            print("⚠ No parquet files found (CSV import may have failed)")
 
         # Example 2: Insert Data
         print_section("Example 2: Insert Data (JSON)")

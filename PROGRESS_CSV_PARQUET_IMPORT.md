@@ -29,27 +29,27 @@
   - Support single file or glob pattern
 
 ### 2. CLI (`bin/posixlake.rs`)
-- [ ] **2.1** Add `Create` subcommand
+- [x] **2.1** Add `Create` subcommand ✅ DONE
   ```bash
   posixlake create <DB_PATH> --schema "id:Int32,name:String"
   ```
-- [ ] **2.2** Add `--from-csv` option
+- [x] **2.2** Add `--from-csv` option ✅ DONE
   ```bash
   posixlake create <DB_PATH> --from-csv data.csv
   ```
-- [ ] **2.3** Add `--from-parquet` option
+- [x] **2.3** Add `--from-parquet` option ✅ DONE
   ```bash
   posixlake create <DB_PATH> --from-parquet "*.parquet"
   ```
 
 ### 3. Python Bindings (`python.rs` + UniFFI)
-- [ ] **3.1** Expose `DatabaseOps.create_from_csv()`
-- [ ] **3.2** Expose `DatabaseOps.create_from_parquet()`
+- [x] **3.1** Expose `DatabaseOps.create_from_csv()` ✅ DONE
+- [x] **3.2** Expose `DatabaseOps.create_from_parquet()` ✅ DONE
 
 ### 4. Tests
 - [x] **4.1** Unit tests for CSV import (schema inference, data integrity) ✅ DONE
 - [x] **4.2** Unit tests for Parquet import (single file, glob patterns) ✅ DONE
-- [ ] **4.3** Integration tests (CLI end-to-end)
+- [x] **4.3** Integration tests (CLI end-to-end) ✅ DONE
 
 ### 5. Documentation
 - [ ] **5.1** Update CLI `--help`
@@ -59,6 +59,6 @@
 
 ## Next Steps
 1. ~~Start with **1.1** and **1.2** (Rust core functions)~~ ✅ DONE
-2. Then **2.1-2.3** (CLI integration) ← **NEXT**
-3. Then **3.1-3.2** (Python bindings)
-4. ~~Finally **4.x** and **5.x** (tests and docs)~~ Tests done, docs pending
+2. ~~Then **2.1-2.3** (CLI integration)~~ ✅ DONE
+3. ~~Then **3.1-3.2** (Python bindings)~~ ✅ DONE
+4. Then **5.x** (Documentation) ← **NEXT**

@@ -317,6 +317,49 @@ impl DatabaseOps {
         }))
     }
 
+    /// Create a new database by importing from a CSV file
+    ///
+    /// Schema is automatically inferred from the CSV:
+    /// - Column names from header row
+    /// - Types inferred from first 10 data rows (Int64, Float64, Boolean, or String)
+    /// - All columns nullable
+    #[uniffi::constructor]
+    pub fn create_from_csv(db_path: String, csv_path: String) -> Result<Arc<Self>, PosixLakeError> {
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
+        let db = runtime.block_on(CoreDatabaseOps::create_from_csv(&db_path, &csv_path))?;
+        Ok(Arc::new(Self {
+            inner: Arc::new(db),
+            runtime,
+        }))
+    }
+
+    /// Create a new database by importing from Parquet file(s)
+    ///
+    /// Schema is read directly from Parquet metadata.
+    /// Supports single file or glob patterns (e.g., "data/*.parquet").
+    #[uniffi::constructor]
+    pub fn create_from_parquet(
+        db_path: String,
+        parquet_path: String,
+    ) -> Result<Arc<Self>, PosixLakeError> {
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
+        let db = runtime.block_on(CoreDatabaseOps::create_from_parquet(&db_path, &parquet_path))?;
+        Ok(Arc::new(Self {
+            inner: Arc::new(db),
+            runtime,
+        }))
+    }
+
     /// Open an existing database
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, PosixLakeError> {

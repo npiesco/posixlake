@@ -1,10 +1,14 @@
 //! posixlake CLI - Mount database as POSIX filesystem via NFS server
 //!
 //! Usage:
+//!   posixlake create <DB_PATH> --schema "id:Int64,name:String"
+//!   posixlake create <DB_PATH> --from-csv <CSV_FILE>
+//!   posixlake create <DB_PATH> --from-parquet <PARQUET_FILE>
 //!   posixlake mount <DB_PATH> <MOUNT_POINT> [--port PORT]
 //!   posixlake unmount <MOUNT_POINT>
 //!   posixlake status <MOUNT_POINT>
 
+use arrow::datatypes::{DataType, Field, Schema};
 use clap::{Parser, Subcommand};
 use posixlake::nfs::NfsServer;
 use posixlake::{error::Result, DatabaseOps};
@@ -24,6 +28,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Create a new Delta Lake database
+    Create {
+        /// Path for the new database
+        #[arg(value_name = "DB_PATH")]
+        db_path: PathBuf,
+
+        /// Schema definition: "col1:Type1,col2:Type2,..."
+        /// Supported types: Int64, Int32, Float64, Float32, String, Boolean
+        #[arg(long, conflicts_with_all = ["from_csv", "from_parquet"])]
+        schema: Option<String>,
+
+        /// Create database by importing from CSV file (auto-infers schema)
+        #[arg(long, conflicts_with_all = ["schema", "from_parquet"])]
+        from_csv: Option<PathBuf>,
+
+        /// Create database by importing from Parquet file(s) (supports glob patterns)
+        #[arg(long, conflicts_with_all = ["schema", "from_csv"])]
+        from_parquet: Option<PathBuf>,
+    },
+
     /// Mount a database as a filesystem via NFS
     Mount {
         /// Path to the database directory
@@ -80,6 +104,52 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Create {
+            db_path,
+            schema,
+            from_csv,
+            from_parquet,
+        } => {
+            match (schema, from_csv, from_parquet) {
+                (Some(schema_str), None, None) => {
+                    // Create with explicit schema
+                    eprintln!("Creating database at: {}", db_path.display());
+                    let parsed_schema = parse_schema(&schema_str)?;
+                    let _db = DatabaseOps::create(&db_path, Arc::new(parsed_schema)).await?;
+                    eprintln!("Database created successfully with schema:");
+                    eprintln!("  {}", schema_str);
+                    Ok(())
+                }
+                (None, Some(csv_path), None) => {
+                    // Create from CSV
+                    eprintln!("Creating database from CSV: {}", csv_path.display());
+                    let _db = DatabaseOps::create_from_csv(&db_path, &csv_path).await?;
+                    eprintln!("Database created successfully from CSV");
+                    eprintln!("  Source: {}", csv_path.display());
+                    eprintln!("  Database: {}", db_path.display());
+                    Ok(())
+                }
+                (None, None, Some(parquet_path)) => {
+                    // Create from Parquet
+                    eprintln!("Creating database from Parquet: {}", parquet_path.display());
+                    let _db = DatabaseOps::create_from_parquet(&db_path, &parquet_path).await?;
+                    eprintln!("Database created successfully from Parquet");
+                    eprintln!("  Source: {}", parquet_path.display());
+                    eprintln!("  Database: {}", db_path.display());
+                    Ok(())
+                }
+                (None, None, None) => {
+                    eprintln!("Error: Must specify one of --schema, --from-csv, or --from-parquet");
+                    std::process::exit(1);
+                }
+                _ => {
+                    // This shouldn't happen due to clap's conflicts_with_all
+                    eprintln!("Error: Cannot specify multiple schema sources");
+                    std::process::exit(1);
+                }
+            }
+        }
+
         Commands::Mount {
             db_path,
             mount_point,
@@ -356,4 +426,53 @@ async fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Parse schema string in format "col1:Type1,col2:Type2,..."
+/// Supported types: Int64, Int32, Float64, Float32, String, Boolean
+fn parse_schema(schema_str: &str) -> Result<Schema> {
+    let mut fields = Vec::new();
+
+    for part in schema_str.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = part.split(':').collect();
+        if parts.len() != 2 {
+            return Err(posixlake::error::Error::InvalidOperation(format!(
+                "Invalid schema field '{}'. Expected format: 'name:Type'",
+                part
+            )));
+        }
+
+        let name = parts[0].trim();
+        let type_str = parts[1].trim();
+
+        let data_type = match type_str.to_lowercase().as_str() {
+            "int64" | "bigint" | "long" => DataType::Int64,
+            "int32" | "int" | "integer" => DataType::Int32,
+            "float64" | "double" => DataType::Float64,
+            "float32" | "float" => DataType::Float32,
+            "string" | "utf8" | "text" | "varchar" => DataType::Utf8,
+            "boolean" | "bool" => DataType::Boolean,
+            _ => {
+                return Err(posixlake::error::Error::InvalidOperation(format!(
+                    "Unknown type '{}'. Supported: Int64, Int32, Float64, Float32, String, Boolean",
+                    type_str
+                )));
+            }
+        };
+
+        fields.push(Field::new(name, data_type, true)); // All columns nullable
+    }
+
+    if fields.is_empty() {
+        return Err(posixlake::error::Error::InvalidOperation(
+            "Schema must have at least one field".to_string(),
+        ));
+    }
+
+    Ok(Schema::new(fields))
 }
