@@ -11,11 +11,6 @@ import sys
 import tempfile
 import shutil
 
-# Add the bindings to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../bindings/python'))
-# Also support running from repo root
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../bindings/python'))
-
 from posixlake import DatabaseOps
 
 

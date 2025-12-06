@@ -37,9 +37,6 @@ import subprocess
 import time
 from pathlib import Path
 
-# Add bindings to path for development
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../bindings/python'))
-
 from posixlake import (
     DatabaseOps,
     Schema,
