@@ -100,7 +100,7 @@ def main():
     """Main test execution"""
     print("""
 ╔═══════════════════════════════════════════════════════════╗
-║  posixlake Linux NFS Testing (Docker/Podman Container)         ║
+║  posixlake Linux NFS Testing (Docker/Podman Container)    ║
 ╚═══════════════════════════════════════════════════════════╝
 """)
     

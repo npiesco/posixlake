@@ -17,6 +17,186 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Parse a Decimal128(precision,scale) type string
+fn parse_decimal128(s: &str) -> Result<DataType, PosixLakeError> {
+    // Format: Decimal128(precision,scale)
+    let inner = s
+        .strip_prefix("Decimal128(")
+        .and_then(|s| s.strip_suffix(")"))
+        .ok_or_else(|| PosixLakeError::InvalidOperation {
+            message: format!("Invalid Decimal128 format: {}", s),
+        })?;
+    let parts: Vec<&str> = inner.split(',').collect();
+    if parts.len() != 2 {
+        return Err(PosixLakeError::InvalidOperation {
+            message: format!("Decimal128 requires precision and scale: {}", s),
+        });
+    }
+    let precision: u8 = parts[0]
+        .trim()
+        .parse()
+        .map_err(|_| PosixLakeError::InvalidOperation {
+            message: format!("Invalid precision in Decimal128: {}", s),
+        })?;
+    let scale: i8 = parts[1]
+        .trim()
+        .parse()
+        .map_err(|_| PosixLakeError::InvalidOperation {
+            message: format!("Invalid scale in Decimal128: {}", s),
+        })?;
+    Ok(DataType::Decimal128(precision, scale))
+}
+
+/// Parse a Decimal256(precision,scale) type string
+fn parse_decimal256(s: &str) -> Result<DataType, PosixLakeError> {
+    let inner = s
+        .strip_prefix("Decimal256(")
+        .and_then(|s| s.strip_suffix(")"))
+        .ok_or_else(|| PosixLakeError::InvalidOperation {
+            message: format!("Invalid Decimal256 format: {}", s),
+        })?;
+    let parts: Vec<&str> = inner.split(',').collect();
+    if parts.len() != 2 {
+        return Err(PosixLakeError::InvalidOperation {
+            message: format!("Decimal256 requires precision and scale: {}", s),
+        });
+    }
+    let precision: u8 = parts[0]
+        .trim()
+        .parse()
+        .map_err(|_| PosixLakeError::InvalidOperation {
+            message: format!("Invalid precision in Decimal256: {}", s),
+        })?;
+    let scale: i8 = parts[1]
+        .trim()
+        .parse()
+        .map_err(|_| PosixLakeError::InvalidOperation {
+            message: format!("Invalid scale in Decimal256: {}", s),
+        })?;
+    Ok(DataType::Decimal256(precision, scale))
+}
+
+/// Parse a simple data type string to Arrow DataType
+fn parse_data_type(s: &str) -> Result<DataType, PosixLakeError> {
+    match s.trim() {
+        "Int8" => Ok(DataType::Int8),
+        "Int16" => Ok(DataType::Int16),
+        "Int32" => Ok(DataType::Int32),
+        "Int64" => Ok(DataType::Int64),
+        "UInt8" => Ok(DataType::UInt8),
+        "UInt16" => Ok(DataType::UInt16),
+        "UInt32" => Ok(DataType::UInt32),
+        "UInt64" => Ok(DataType::UInt64),
+        "Float32" => Ok(DataType::Float32),
+        "Float64" => Ok(DataType::Float64),
+        "String" | "Utf8" => Ok(DataType::Utf8),
+        "LargeUtf8" => Ok(DataType::LargeUtf8),
+        "Boolean" | "Bool" => Ok(DataType::Boolean),
+        "Binary" => Ok(DataType::Binary),
+        "LargeBinary" => Ok(DataType::LargeBinary),
+        "Date32" => Ok(DataType::Date32),
+        "Date64" => Ok(DataType::Date64),
+        "Timestamp" => Ok(DataType::Timestamp(
+            arrow::datatypes::TimeUnit::Microsecond,
+            None,
+        )),
+        s if s.starts_with("Decimal128(") => parse_decimal128(s),
+        s if s.starts_with("Decimal256(") => parse_decimal256(s),
+        s if s.starts_with("List<") && s.ends_with(">") => {
+            let inner = &s[5..s.len() - 1];
+            let inner_type = parse_data_type(inner)?;
+            Ok(DataType::List(Arc::new(ArrowField::new(
+                "item", inner_type, true,
+            ))))
+        }
+        _ => Err(PosixLakeError::InvalidOperation {
+            message: format!("Unsupported data type: {}", s),
+        }),
+    }
+}
+
+/// Parse Map<KeyType,ValueType> inner types
+fn parse_map_types(inner: &str) -> Result<(DataType, DataType), PosixLakeError> {
+    // Simple split on first comma (doesn't handle nested types with commas)
+    if let Some(comma_pos) = inner.find(',') {
+        let key_str = &inner[..comma_pos];
+        let value_str = &inner[comma_pos + 1..];
+        let key_type = parse_data_type(key_str)?;
+        let value_type = parse_data_type(value_str)?;
+        Ok((key_type, value_type))
+    } else {
+        Err(PosixLakeError::InvalidOperation {
+            message: format!("Invalid Map type format: Map<{}>", inner),
+        })
+    }
+}
+
+/// Parse Struct<name1:Type1,name2:Type2> fields
+fn parse_struct_fields(inner: &str) -> Result<Vec<ArrowField>, PosixLakeError> {
+    let mut fields = Vec::new();
+    for field_def in inner.split(',') {
+        let field_def = field_def.trim();
+        if let Some(colon_pos) = field_def.find(':') {
+            let name = &field_def[..colon_pos];
+            let type_str = &field_def[colon_pos + 1..];
+            let data_type = parse_data_type(type_str)?;
+            fields.push(ArrowField::new(name, data_type, true));
+        } else {
+            return Err(PosixLakeError::InvalidOperation {
+                message: format!("Invalid struct field format: {}", field_def),
+            });
+        }
+    }
+    Ok(fields)
+}
+
+/// Convert Arrow DataType to string representation
+fn arrow_type_to_string(dt: &DataType) -> String {
+    match dt {
+        DataType::Int8 => "Int8".to_string(),
+        DataType::Int16 => "Int16".to_string(),
+        DataType::Int32 => "Int32".to_string(),
+        DataType::Int64 => "Int64".to_string(),
+        DataType::UInt8 => "UInt8".to_string(),
+        DataType::UInt16 => "UInt16".to_string(),
+        DataType::UInt32 => "UInt32".to_string(),
+        DataType::UInt64 => "UInt64".to_string(),
+        DataType::Float32 => "Float32".to_string(),
+        DataType::Float64 => "Float64".to_string(),
+        DataType::Utf8 | DataType::LargeUtf8 => "String".to_string(),
+        DataType::Boolean => "Boolean".to_string(),
+        DataType::Binary => "Binary".to_string(),
+        DataType::LargeBinary => "LargeBinary".to_string(),
+        DataType::Date32 => "Date32".to_string(),
+        DataType::Date64 => "Date64".to_string(),
+        DataType::Timestamp(_, _) => "Timestamp".to_string(),
+        DataType::Decimal128(p, s) => format!("Decimal128({},{})", p, s),
+        DataType::Decimal256(p, s) => format!("Decimal256({},{})", p, s),
+        DataType::List(inner) => format!("List<{}>", arrow_type_to_string(inner.data_type())),
+        DataType::LargeList(inner) => format!("List<{}>", arrow_type_to_string(inner.data_type())),
+        DataType::Map(entries, _) => {
+            if let DataType::Struct(fields) = entries.data_type() {
+                if fields.len() == 2 {
+                    return format!(
+                        "Map<{},{}>",
+                        arrow_type_to_string(fields[0].data_type()),
+                        arrow_type_to_string(fields[1].data_type())
+                    );
+                }
+            }
+            "Map".to_string()
+        }
+        DataType::Struct(fields) => {
+            let field_strs: Vec<String> = fields
+                .iter()
+                .map(|f| format!("{}:{}", f.name(), arrow_type_to_string(f.data_type())))
+                .collect();
+            format!("Struct<{}>", field_strs.join(","))
+        }
+        _ => "String".to_string(),
+    }
+}
+
 /// Error types for posixlake Python bindings
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum PosixLakeError {
@@ -141,6 +321,38 @@ impl Schema {
                     "Timestamp" => {
                         DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None)
                     }
+                    // Decimal types: Decimal128(precision,scale) or Decimal256(precision,scale)
+                    s if s.starts_with("Decimal128(") => parse_decimal128(s)?,
+                    s if s.starts_with("Decimal256(") => parse_decimal256(s)?,
+                    // List types: List<ElementType>
+                    s if s.starts_with("List<") && s.ends_with(">") => {
+                        let inner = &s[5..s.len() - 1];
+                        let inner_type = parse_data_type(inner)?;
+                        DataType::List(Arc::new(ArrowField::new("item", inner_type, true)))
+                    }
+                    // Map types: Map<KeyType,ValueType>
+                    s if s.starts_with("Map<") && s.ends_with(">") => {
+                        let inner = &s[4..s.len() - 1];
+                        let (key_type, value_type) = parse_map_types(inner)?;
+                        let entries_field = ArrowField::new(
+                            "entries",
+                            DataType::Struct(
+                                vec![
+                                    ArrowField::new("key", key_type, false),
+                                    ArrowField::new("value", value_type, true),
+                                ]
+                                .into(),
+                            ),
+                            false,
+                        );
+                        DataType::Map(Arc::new(entries_field), false)
+                    }
+                    // Struct types: Struct<name1:Type1,name2:Type2>
+                    s if s.starts_with("Struct<") && s.ends_with(">") => {
+                        let inner = &s[7..s.len() - 1];
+                        let struct_fields = parse_struct_fields(inner)?;
+                        DataType::Struct(struct_fields.into())
+                    }
                     _ => {
                         return Err(PosixLakeError::InvalidOperation {
                             message: format!("Unsupported data type: {}", f.data_type),
@@ -177,7 +389,64 @@ impl Schema {
                     DataType::Date32 => "Date32",
                     DataType::Date64 => "Date64",
                     DataType::Timestamp(_, _) => "Timestamp",
-                    _ => "String", // Fallback for complex types
+                    DataType::Decimal128(p, s) => {
+                        return Field {
+                            name: f.name().clone(),
+                            data_type: format!("Decimal128({},{})", p, s),
+                            nullable: f.is_nullable(),
+                        };
+                    }
+                    DataType::Decimal256(p, s) => {
+                        return Field {
+                            name: f.name().clone(),
+                            data_type: format!("Decimal256({},{})", p, s),
+                            nullable: f.is_nullable(),
+                        };
+                    }
+                    DataType::List(inner) => {
+                        return Field {
+                            name: f.name().clone(),
+                            data_type: format!("List<{}>", arrow_type_to_string(inner.data_type())),
+                            nullable: f.is_nullable(),
+                        };
+                    }
+                    DataType::LargeList(inner) => {
+                        return Field {
+                            name: f.name().clone(),
+                            data_type: format!("List<{}>", arrow_type_to_string(inner.data_type())),
+                            nullable: f.is_nullable(),
+                        };
+                    }
+                    DataType::Map(entries, _) => {
+                        if let DataType::Struct(fields) = entries.data_type() {
+                            if fields.len() == 2 {
+                                return Field {
+                                    name: f.name().clone(),
+                                    data_type: format!(
+                                        "Map<{},{}>",
+                                        arrow_type_to_string(fields[0].data_type()),
+                                        arrow_type_to_string(fields[1].data_type())
+                                    ),
+                                    nullable: f.is_nullable(),
+                                };
+                            }
+                        }
+                        "Map"
+                    }
+                    DataType::Struct(fields) => {
+                        let field_strs: Vec<String> = fields
+                            .iter()
+                            .map(|sf| {
+                                format!("{}:{}", sf.name(), arrow_type_to_string(sf.data_type()))
+                            })
+                            .collect();
+                        return Field {
+                            name: f.name().clone(),
+                            data_type: format!("Struct<{}>", field_strs.join(",")),
+                            nullable: f.is_nullable(),
+                        };
+                    }
+                    _ => "String", // Fallback for other complex types
                 };
                 Field {
                     name: f.name().clone(),

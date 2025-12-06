@@ -180,9 +180,62 @@ def test_create_from_parquet(temp_dir, csv_db, results):
         return None
 
 
+def test_complex_types(temp_dir, results):
+    """Test 4: Complex data types (Decimal, List, Map, Struct)"""
+    section("Test 4: Complex Data Types")
+
+    try:
+        # Test Decimal128
+        db_path = os.path.join(temp_dir, "decimal_db")
+        schema = Schema(fields=[
+            Field(name="id", data_type="Int32", nullable=False),
+            Field(name="price", data_type="Decimal128(10,2)", nullable=False),
+        ])
+        db = DatabaseOps.create(db_path, schema)
+        s = db.get_schema()
+        assert s.fields[1].data_type == "Decimal128(10,2)", f"Expected Decimal128(10,2), got {s.fields[1].data_type}"
+        results.ok("Decimal128 type")
+
+        # Test List<Int32>
+        db_path = os.path.join(temp_dir, "list_db")
+        schema = Schema(fields=[
+            Field(name="id", data_type="Int32", nullable=False),
+            Field(name="scores", data_type="List<Int32>", nullable=True),
+        ])
+        db = DatabaseOps.create(db_path, schema)
+        s = db.get_schema()
+        assert "List" in s.fields[1].data_type, f"Expected List type, got {s.fields[1].data_type}"
+        results.ok("List<Int32> type")
+
+        # Test Struct
+        db_path = os.path.join(temp_dir, "struct_db")
+        schema = Schema(fields=[
+            Field(name="id", data_type="Int32", nullable=False),
+            Field(name="person", data_type="Struct<name:String,age:Int32>", nullable=True),
+        ])
+        db = DatabaseOps.create(db_path, schema)
+        s = db.get_schema()
+        assert "Struct" in s.fields[1].data_type, f"Expected Struct type, got {s.fields[1].data_type}"
+        results.ok("Struct type")
+
+        # Test Map<String,Int64>
+        db_path = os.path.join(temp_dir, "map_db")
+        schema = Schema(fields=[
+            Field(name="id", data_type="Int32", nullable=False),
+            Field(name="metadata", data_type="Map<String,Int64>", nullable=True),
+        ])
+        db = DatabaseOps.create(db_path, schema)
+        s = db.get_schema()
+        assert "Map" in s.fields[1].data_type, f"Expected Map type, got {s.fields[1].data_type}"
+        results.ok("Map<String,Int64> type")
+
+    except Exception as e:
+        results.fail("Complex types", str(e))
+
+
 def test_insert_and_query(db, results):
-    """Test 4: Insert data and query"""
-    section("Test 4: Insert and Query")
+    """Test 5: Insert data and query"""
+    section("Test 5: Insert and Query")
 
     if db is None:
         results.skip("Insert and Query", "Database not available")
@@ -221,8 +274,8 @@ def test_insert_and_query(db, results):
 
 
 def test_buffered_insert(db, results):
-    """Test 5: Buffered insert"""
-    section("Test 5: Buffered Insert")
+    """Test 6: Buffered insert"""
+    section("Test 6: Buffered Insert")
 
     if db is None:
         results.skip("Buffered Insert", "Database not available")
@@ -250,8 +303,8 @@ def test_buffered_insert(db, results):
 
 
 def test_time_travel(db, results):
-    """Test 6: Time travel"""
-    section("Test 6: Time Travel")
+    """Test 7: Time travel"""
+    section("Test 7: Time Travel")
 
     if db is None:
         results.skip("Time Travel", "Database not available")
@@ -283,8 +336,8 @@ def test_time_travel(db, results):
 
 
 def test_delete(db, results):
-    """Test 7: Delete rows"""
-    section("Test 7: Delete Rows")
+    """Test 8: Delete rows"""
+    section("Test 8: Delete Rows")
 
     if db is None:
         results.skip("Delete Rows", "Database not available")
@@ -310,8 +363,8 @@ def test_delete(db, results):
 
 
 def test_merge(db, results):
-    """Test 8: MERGE (UPSERT) operations"""
-    section("Test 8: MERGE Operations")
+    """Test 9: MERGE (UPSERT) operations"""
+    section("Test 9: MERGE Operations")
 
     if db is None:
         results.skip("MERGE", "Database not available")
@@ -336,8 +389,8 @@ def test_merge(db, results):
 
 
 def test_delta_operations(db, results):
-    """Test 9: Delta Lake operations"""
-    section("Test 9: Delta Lake Operations")
+    """Test 10: Delta Lake operations"""
+    section("Test 10: Delta Lake Operations")
 
     if db is None:
         results.skip("Delta Operations", "Database not available")
@@ -501,6 +554,7 @@ def main():
         db = test_create_with_schema(temp_dir, results)
         csv_db = test_create_from_csv(temp_dir, results)
         test_create_from_parquet(temp_dir, csv_db, results)
+        test_complex_types(temp_dir, results)
         test_insert_and_query(db, results)
         test_buffered_insert(db, results)
         test_time_travel(db, results)

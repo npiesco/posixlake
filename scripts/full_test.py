@@ -43,6 +43,23 @@ def main():
     except Exception as e:
         print(f"Failed to create database: {e}")
         sys.exit(1)
+
+    # Test complex data types
+    print("\nTesting complex data types...")
+    try:
+        complex_schema = Schema(fields=[
+            Field(name="id", data_type="Int32", nullable=False),
+            Field(name="price", data_type="Decimal128(10,2)", nullable=False),
+            Field(name="tags", data_type="List<String>", nullable=True),
+            Field(name="metadata", data_type="Map<String,Int64>", nullable=True),
+            Field(name="address", data_type="Struct<city:String,zip:Int32>", nullable=True),
+        ])
+        complex_db = DatabaseOps.create(f"{test_dir}/complex_db", complex_schema)
+        print("✓ Complex types database created:")
+        for f in complex_db.get_schema().fields:
+            print(f"  - {f.name}: {f.data_type}")
+    except Exception as e:
+        print(f"✗ Complex types failed: {e}")
     
     # Start NFS server
     print("\nStarting NFS server...")

@@ -155,6 +155,40 @@ def main():
         else:
             print("⚠ No parquet files found (CSV import may have failed)")
 
+        # Example 1d: Complex Data Types
+        print_section("Example 1d: Complex Data Types (Decimal, List, Map, Struct)")
+
+        complex_db_path = str(Path(temp_dir) / "complex_db")
+
+        print("Creating database with complex data types...")
+        print("Supported complex types:")
+        print("  - Decimal128(precision,scale) - Fixed-point decimals for currency/finance")
+        print("  - List<ElementType> - Arrays of values")
+        print("  - Map<KeyType,ValueType> - Key-value pairs")
+        print("  - Struct<field1:Type1,field2:Type2> - Nested records")
+
+        complex_schema = Schema(
+            fields=[
+                Field(name="id", data_type="Int32", nullable=False),
+                Field(name="price", data_type="Decimal128(10,2)", nullable=False),
+                Field(name="tags", data_type="List<String>", nullable=True),
+                Field(name="metadata", data_type="Map<String,Int64>", nullable=True),
+                Field(name="address", data_type="Struct<city:String,zip:Int32>", nullable=True),
+            ]
+        )
+
+        try:
+            complex_db = DatabaseOps.create(complex_db_path, complex_schema)
+            print(f"\n✓ Complex types database created at: {complex_db_path}")
+
+            # Verify the schema
+            s = complex_db.get_schema()
+            print("\nSchema with complex types:")
+            for field in s.fields:
+                print(f"  - {field.name}: {field.data_type} (nullable={field.nullable})")
+        except PosixLakeError as e:
+            print(f"✗ Complex types failed: {e}")
+
         # Example 2: Insert Data
         print_section("Example 2: Insert Data (JSON)")
 

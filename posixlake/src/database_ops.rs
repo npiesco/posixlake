@@ -437,6 +437,52 @@ impl DatabaseOps {
             ArrowDataType::LargeBinary => Ok(DeltaDataType::BINARY),
             ArrowDataType::Date32 => Ok(DeltaDataType::DATE),
             ArrowDataType::Timestamp(_, _) => Ok(DeltaDataType::TIMESTAMP_NTZ),
+            // Decimal types
+            ArrowDataType::Decimal128(precision, scale) => {
+                Ok(DeltaDataType::decimal(*precision, (*scale) as u8).unwrap())
+            }
+            ArrowDataType::Decimal256(precision, scale) => {
+                Ok(DeltaDataType::decimal(*precision, (*scale) as u8).unwrap())
+            }
+            // Complex types
+            ArrowDataType::List(field) | ArrowDataType::LargeList(field) => {
+                let element_type = Self::arrow_to_delta_type(field.data_type())?;
+                let array_type =
+                    deltalake::kernel::ArrayType::new(element_type, field.is_nullable());
+                Ok(DeltaDataType::Array(Box::new(array_type)))
+            }
+            ArrowDataType::Struct(fields) => {
+                let delta_fields: Result<Vec<_>> = fields
+                    .iter()
+                    .map(|f| {
+                        let delta_type = Self::arrow_to_delta_type(f.data_type())?;
+                        Ok(deltalake::kernel::StructField::new(
+                            f.name(),
+                            delta_type,
+                            f.is_nullable(),
+                        ))
+                    })
+                    .collect();
+                let struct_type = deltalake::kernel::StructType::try_new(delta_fields?)
+                    .map_err(|e| Error::Other(e.to_string()))?;
+                Ok(DeltaDataType::Struct(Box::new(struct_type)))
+            }
+            ArrowDataType::Map(entries_field, _sorted) => {
+                // Map entries are stored as Struct<key, value>
+                if let ArrowDataType::Struct(fields) = entries_field.data_type() {
+                    if fields.len() == 2 {
+                        let key_type = Self::arrow_to_delta_type(fields[0].data_type())?;
+                        let value_type = Self::arrow_to_delta_type(fields[1].data_type())?;
+                        let map_type = deltalake::kernel::MapType::new(
+                            key_type,
+                            value_type,
+                            fields[1].is_nullable(),
+                        );
+                        return Ok(DeltaDataType::Map(Box::new(map_type)));
+                    }
+                }
+                Err(Error::Other("Invalid Map structure".to_string()))
+            }
             other => Err(Error::Other(format!(
                 "Unsupported Arrow type for Delta Lake: {:?}",
                 other
@@ -466,11 +512,56 @@ impl DatabaseOps {
                 deltalake::kernel::PrimitiveType::TimestampNtz => {
                     Ok(ArrowDataType::Timestamp(TimeUnit::Microsecond, None))
                 }
+                deltalake::kernel::PrimitiveType::Decimal(decimal_type) => Ok(
+                    ArrowDataType::Decimal128(decimal_type.precision(), decimal_type.scale() as i8),
+                ),
                 other => Err(Error::Other(format!(
                     "Unsupported Delta Lake primitive type: {:?}",
                     other
                 ))),
             },
+            DeltaDataType::Array(array_type) => {
+                let element_type = Self::delta_to_arrow_type(array_type.element_type())?;
+                Ok(ArrowDataType::List(Arc::new(arrow::datatypes::Field::new(
+                    "item",
+                    element_type,
+                    array_type.contains_null(),
+                ))))
+            }
+            DeltaDataType::Struct(struct_type) => {
+                let arrow_fields: Result<Vec<_>> = struct_type
+                    .fields()
+                    .map(|f| {
+                        let arrow_type = Self::delta_to_arrow_type(f.data_type())?;
+                        Ok(arrow::datatypes::Field::new(
+                            f.name(),
+                            arrow_type,
+                            f.is_nullable(),
+                        ))
+                    })
+                    .collect();
+                Ok(ArrowDataType::Struct(arrow_fields?.into()))
+            }
+            DeltaDataType::Map(map_type) => {
+                let key_type = Self::delta_to_arrow_type(map_type.key_type())?;
+                let value_type = Self::delta_to_arrow_type(map_type.value_type())?;
+                let entries_field = arrow::datatypes::Field::new(
+                    "entries",
+                    ArrowDataType::Struct(
+                        vec![
+                            arrow::datatypes::Field::new("key", key_type, false),
+                            arrow::datatypes::Field::new(
+                                "value",
+                                value_type,
+                                map_type.value_contains_null(),
+                            ),
+                        ]
+                        .into(),
+                    ),
+                    false,
+                );
+                Ok(ArrowDataType::Map(Arc::new(entries_field), false))
+            }
             other => Err(Error::Other(format!(
                 "Unsupported Delta Lake type: {:?}",
                 other

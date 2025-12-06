@@ -22,6 +22,7 @@
 - **Delta Lake Native**: Full ACID transactions with native `_delta_log/` format
 - **SQL Queries**: DataFusion-powered SQL engine embedded in Python
 - **Time Travel**: Query historical versions and timestamps
+- **CSV/Parquet Import**: Create databases from CSV (auto schema inference) or Parquet files
 - **Buffered Inserts**: 10x performance improvement for small batch writes
 - **NFS Server**: Mount Delta Lake as POSIX filesystem - standard Unix tools work directly
 - **Storage Backends**: Works with local filesystem and S3/MinIO - same unified API
@@ -268,7 +269,45 @@ results = db.query_json_at_timestamp("SELECT * FROM data", timestamp)
 print(f"Data at timestamp {timestamp}: {results}")
 ```
 
-### Example 6: Delta Lake Operations
+### Example 6: Import from CSV (Auto Schema Inference)
+
+```python
+from posixlake import DatabaseOps
+import json
+
+# Create database by importing CSV - schema is automatically inferred!
+# Column types detected: Int64, Float64, Boolean, String
+db = DatabaseOps.create_from_csv("/path/to/new_db", "/path/to/data.csv")
+
+# Query the imported data
+results = db.query_json("SELECT * FROM data LIMIT 5")
+print(json.loads(results))
+
+# Check inferred schema
+schema = db.get_schema()
+for field in schema.fields:
+    print(f"  {field.name}: {field.data_type} (nullable={field.nullable})")
+```
+
+### Example 7: Import from Parquet
+
+```python
+from posixlake import DatabaseOps
+import json
+
+# Create database from existing Parquet file(s)
+# Schema is read directly from Parquet metadata
+db = DatabaseOps.create_from_parquet("/path/to/new_db", "/path/to/data.parquet")
+
+# Supports glob patterns for multiple files
+db = DatabaseOps.create_from_parquet("/path/to/db", "/data/*.parquet")
+
+# Query the imported data
+results = db.query_json("SELECT COUNT(*) as total FROM data")
+print(json.loads(results))
+```
+
+### Example 8: Delta Lake Operations
 
 ```python
 from posixlake import DatabaseOps, Schema, Field
@@ -303,13 +342,20 @@ print(f"Data skipping stats: {stats}")
 ```python
 from posixlake import DatabaseOps, Schema, Field, S3Config
 
-# Local filesystem
+# Local filesystem with explicit schema
 schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
     Field(name="name", data_type="String", nullable=False),
 ])
 db = DatabaseOps.create("/path/to/db", schema)
 db = DatabaseOps.open("/path/to/db")
+
+# Import from CSV (auto schema inference)
+db = DatabaseOps.create_from_csv("/path/to/db", "/path/to/data.csv")
+
+# Import from Parquet (schema from metadata)
+db = DatabaseOps.create_from_parquet("/path/to/db", "/path/to/data.parquet")
+db = DatabaseOps.create_from_parquet("/path/to/db", "/data/*.parquet")  # glob pattern
 
 # With authentication
 db = DatabaseOps.create_with_auth("/path/to/db", schema, auth_enabled=True)
@@ -626,6 +672,8 @@ Main class for database operations.
 | Method | Description | Returns |
 |--------|-------------|---------|
 | `create(path, schema)` | Create new database | `DatabaseOps` |
+| `create_from_csv(db_path, csv_path)` | Create from CSV (auto schema) | `DatabaseOps` |
+| `create_from_parquet(db_path, parquet_path)` | Create from Parquet | `DatabaseOps` |
 | `open(path)` | Open existing database | `DatabaseOps` |
 | `create_with_auth(path, schema, auth_enabled)` | Create with authentication | `DatabaseOps` |
 | `open_with_credentials(path, credentials)` | Open with credentials | `DatabaseOps` |
@@ -668,23 +716,34 @@ schema = Schema(fields=[
 
 #### Supported Data Types
 
+**Primitive Types:**
 - `Int8`, `Int16`, `Int32`, `Int64`
 - `UInt8`, `UInt16`, `UInt32`, `UInt64`
 - `Float32`, `Float64`
-- `String`, `Binary`
+- `String`, `LargeUtf8`, `Binary`, `LargeBinary`
 - `Boolean`
 - `Date32`, `Date64`
-- `Timestamp` (with timezone)
-- `Time32`, `Time64`
-- `Decimal128`, `Decimal256`
-- `List`, `Struct`, `Map`
+- `Timestamp`
+
+**Complex Types:**
+- `Decimal128(precision,scale)` - e.g., `Decimal128(10,2)` for currency
+- `List<ElementType>` - e.g., `List<Int32>`, `List<String>`
+- `Map<KeyType,ValueType>` - e.g., `Map<String,Int64>`
+- `Struct<field1:Type1,field2:Type2>` - e.g., `Struct<x:Int32,y:Int32>`
 
 ### Field
 
 Schema field definition.
 
 ```python
+# Simple types
 Field(name="id", data_type="Int32", nullable=False)
+Field(name="price", data_type="Decimal128(10,2)", nullable=False)
+
+# Complex types
+Field(name="tags", data_type="List<String>", nullable=True)
+Field(name="metadata", data_type="Map<String,String>", nullable=True)
+Field(name="address", data_type="Struct<city:String,zip:Int32>", nullable=True)
 ```
 
 ### NfsServer
@@ -819,7 +878,7 @@ except PosixLakeError as e:
 ```
 ┌─────────────────────────────────────────┐
 │  Python Application                     │
-│  from posixlake import DatabaseOps           │
+│  from posixlake import DatabaseOps      │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
@@ -830,7 +889,7 @@ except PosixLakeError as e:
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  Rust Library (libposixlake.dylib)           │
+│  Rust Library (libposixlake.dylib)      │
 │  • DatabaseOps                          │
 │  • Delta Lake operations                │
 │  • DataFusion SQL engine                │
@@ -838,8 +897,8 @@ except PosixLakeError as e:
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  Delta Lake Protocol                     │
-│  • ACID transactions                     │
+│  Delta Lake Protocol                    │
+│  • ACID transactions                    │
 │  • Time travel                          │
 │  • Parquet storage                      │
 └─────────────────────────────────────────┘
