@@ -10,11 +10,211 @@ use std::sync::Arc;
 use std::sync::Once;
 use tempfile::TempDir;
 
+/// Helper to kill processes using specific ports (Windows only)
+#[cfg(target_os = "windows")]
+async fn kill_processes_on_ports(ports: &[u16]) -> bool {
+    let mut killed_any = false;
+    for port in ports {
+        if let Ok(output) = tokio::process::Command::new("netstat")
+            .args(["-ano"])
+            .output()
+            .await
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let port_str = format!(":{}", port);
+                if line.contains(&port_str) && line.contains("LISTENING") {
+                    if let Some(pid_str) = line.split_whitespace().last() {
+                        if pid_str.chars().all(|c| c.is_ascii_digit()) && !pid_str.is_empty() {
+                            let result = tokio::process::Command::new("taskkill")
+                                .args(["/F", "/PID", pid_str])
+                                .output()
+                                .await;
+                            if let Ok(out) = result {
+                                if out.status.success() {
+                                    eprintln!("[PORT] Killed PID {} on port {}", pid_str, port);
+                                    killed_any = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    killed_any
+}
+
+/// Helper: If POSIXLAKE_PORT_LISTENER env var is set, act as a simple TCP listener
+/// This allows the test to spawn itself as a child process to hold a port
+#[cfg(target_os = "windows")]
+fn maybe_run_as_port_listener() -> bool {
+    if let Ok(port_str) = std::env::var("POSIXLAKE_PORT_LISTENER") {
+        if let Ok(port) = port_str.parse::<u16>() {
+            use std::net::TcpListener;
+            if let Ok(_listener) = TcpListener::bind(format!("0.0.0.0:{}", port)) {
+                // Hold the port for 60 seconds
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
+        }
+        return true;
+    }
+    false
+}
+
+/// TDD: Proves that port-killing code works
+/// Starts a simple TCP listener on port 2049, then kills it
+#[tokio::test]
+#[serial]
+#[cfg(target_os = "windows")]
+async fn test_kill_processes_on_nfs_ports() {
+    // Check if we're being run as a port listener subprocess
+    if maybe_run_as_port_listener() {
+        return;
+    }
+
+    // Check if ports are in use
+    let output = tokio::process::Command::new("netstat")
+        .args(["-ano"])
+        .output()
+        .await
+        .expect("netstat failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+
+    // If port is free, spawn ourselves as a child process to hold the port
+    let _child = if !port_2049_in_use {
+        eprintln!("[TEST] Port 2049 free, spawning child listener...");
+        let exe = std::env::current_exe().expect("Failed to get current exe");
+        let child = std::process::Command::new(&exe)
+            .env("POSIXLAKE_PORT_LISTENER", "2049")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("Failed to spawn child listener");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        Some(child)
+    } else {
+        None
+    };
+
+    // Verify port is now in use
+    let output = tokio::process::Command::new("netstat")
+        .args(["-ano"])
+        .output()
+        .await
+        .expect("netstat failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+    eprintln!("[TEST] Port 2049 in use before kill: {}", port_2049_in_use);
+    assert!(port_2049_in_use, "Port 2049 should be in use");
+
+    // Kill processes on NFS ports
+    let killed = kill_processes_on_ports(&[2049, 111]).await;
+    eprintln!("[TEST] Killed any processes: {}", killed);
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    // Verify ports are now free
+    let output = tokio::process::Command::new("netstat")
+        .args(["-ano"])
+        .output()
+        .await
+        .expect("netstat failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+
+    eprintln!("[TEST] Port 2049 in use after kill: {}", port_2049_in_use);
+    assert!(!port_2049_in_use, "Port 2049 should be FREE after killing processes");
+}
+
+/// TDD: Proves that RENAME operation is actually received by the NFS server
+/// This test will FAIL if Windows refuses to send RENAME for directories
+#[tokio::test]
+#[serial]
+async fn test_single_filesystem_instance_for_all_operations() {
+    init_logging();
+    require_mount_capability();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let mount_point = temp_dir.path().join("mnt");
+    std::fs::create_dir(&mount_point).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+    ]));
+    let db = DatabaseOps::create(&db_path, schema).await.unwrap();
+
+    // Port killing now handled by NfsServer::new, service restart by mount_nfs_os
+    let server = NfsServer::new(Arc::new(db), 2049).await.unwrap();
+
+    // Mount
+    let mount_point = mount_nfs_os("localhost", 2049, &mount_point, Some('X'))
+        .await
+        .expect("Mount must succeed");
+    let _guard = MountGuard::new(mount_point.clone());
+
+    // Create directory
+    let old_dir = mount_point.join("tdd_old_dir");
+    tokio::fs::create_dir(&old_dir).await.expect("MKDIR must succeed");
+
+    // Verify directory exists
+    let metadata = tokio::fs::metadata(&old_dir).await;
+    assert!(metadata.is_ok(), "Directory must exist after MKDIR");
+    assert!(metadata.unwrap().is_dir(), "Created path should be a directory");
+
+    // TDD: Attempt to rename the directory
+    // This will FAIL if Windows doesn't send NFS RENAME operation
+    let new_dir = mount_point.join("tdd_new_dir");
+
+    #[cfg(unix)]
+    let output = tokio::process::Command::new("mv")
+        .arg(&old_dir)
+        .arg(&new_dir)
+        .output()
+        .await
+        .expect("Failed to execute mv command");
+
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "move"])
+        .arg(&old_dir)
+        .arg(&new_dir)
+        .output()
+        .await
+        .expect("Failed to execute move command");
+
+    // TDD: This assertion will FAIL if RENAME is not supported
+    assert!(
+        output.status.success(),
+        "RENAME must succeed. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify rename worked
+    assert!(
+        !tokio::fs::metadata(&old_dir).await.is_ok(),
+        "Old directory should not exist after rename"
+    );
+    assert!(
+        tokio::fs::metadata(&new_dir).await.is_ok(),
+        "New directory should exist after rename"
+    );
+
+    // Cleanup
+    drop(_guard);
+    server.shutdown().await.unwrap();
+}
+
 static INIT: Once = Once::new();
 
 fn init_logging() {
     INIT.call_once(|| {
-        let log_file = format!("/tmp/posixlake_nfs_mv_test_{}.log", std::process::id());
+        let log_file = std::env::temp_dir()
+            .join(format!("posixlake_nfs_mv_test_{}.log", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         let file = std::fs::File::create(&log_file).expect("Failed to create log file");
         eprintln!("[TEST] Logging to: {}", log_file);
         tracing_subscriber::fmt()
@@ -26,9 +226,16 @@ fn init_logging() {
 }
 
 fn create_unique_port(base_port: u16) -> u16 {
-    let thread_id = format!("{:?}", std::thread::current().id());
-    let hash: u16 = thread_id.bytes().map(|b| b as u16).sum::<u16>() % 10000;
-    base_port + hash
+    // Windows mount.exe only supports the standard NFS port (2049)
+    #[cfg(target_os = "windows")]
+    { let _ = base_port; return 2049; }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let thread_id = format!("{:?}", std::thread::current().id());
+        let hash: u16 = thread_id.bytes().map(|b| b as u16).sum::<u16>() % 10000;
+        base_port + hash
+    }
 }
 
 fn check_can_mount() -> bool {
@@ -40,9 +247,16 @@ fn check_can_mount() -> bool {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        // Check if Windows NFS Client feature is installed (mount.exe exists)
+        return std::path::Path::new(r"C:\Windows\system32\mount.exe").exists();
+    }
+
     // Check if passwordless sudo works for mount command
     // The sudoers file only allows specific commands (mount/umount), not generic 'true'
     // since /etc/sudoers.d/ is not readable by regular users
+    #[cfg(not(target_os = "windows"))]
     std::process::Command::new("sudo")
         .args(["-n", "mount", "--help"])
         .stdout(std::process::Stdio::null())
@@ -61,18 +275,23 @@ fn require_mount_capability() {
             ================================================================================\n\
             \n\
             NFS mount tests require either:\n\
-            1. Running as root (UID 0), OR\n\
-            2. Passwordless sudo configured for mount/umount operations\n\
+            1. (Unix) Running as root (UID 0), OR\n\
+            2. (Unix) Passwordless sudo configured for mount/umount operations, OR\n\
+            3. (Windows) NFS Client feature enabled\n\
             \n\
-            To configure passwordless sudo:\n\
-                python3 scripts/setup_nfs_sudo.py\n\
+            Unix:  python3 scripts/setup_nfs_sudo.py\n\
+            Windows (admin PowerShell):\n\
+                Enable-WindowsOptionalFeature -Online -FeatureName ServicesForNFS-ClientOnly\n\
             ================================================================================\n\
             "
         );
     }
 }
 
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), String> {
+async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path, preferred_drive: Option<char>) -> Result<std::path::PathBuf, String> {
+    #[cfg(not(target_os = "windows"))]
+    let _ = preferred_drive; // Only used on Windows
+
     #[cfg(unix)]
     let is_root = unsafe { libc::geteuid() } == 0;
 
@@ -100,7 +319,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .map_err(|e| format!("Failed to execute mount_nfs: {}", e))?;
 
         if status.success() {
-            Ok(())
+            Ok(mount_point.to_path_buf())
         } else {
             Err(format!(
                 "mount_nfs failed with exit code: {:?}",
@@ -135,7 +354,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
                 .map_err(|e| format!("Failed to execute unshare mount: {}", e))?;
 
             if status.success() {
-                return Ok(());
+                return Ok(mount_point.to_path_buf());
             } else {
                 return Err(format!(
                     "unshare mount failed with exit code: {:?}",
@@ -168,74 +387,91 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .map_err(|e| format!("Failed to execute mount: {}", e))?;
 
         if status.success() {
-            Ok(())
+            Ok(mount_point.to_path_buf())
         } else {
             Err(format!("mount failed with exit code: {:?}", status.code()))
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
     {
-        Err("OS mounting not implemented for this platform".to_string())
-    }
-}
+        let _ = (port, mount_point);
 
-async fn unmount_nfs_os(mount_point: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    let is_root = unsafe { libc::geteuid() } == 0;
+        // Ensure Windows NFS client services are running
+        eprintln!("[MOUNT] Restarting Windows NFS client services...");
+        let _ = tokio::process::Command::new("sc").args(["stop", "NfsClnt"]).output().await;
+        let _ = tokio::process::Command::new("sc").args(["stop", "NfsRdr"]).output().await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let _ = tokio::process::Command::new("sc").args(["start", "NfsRdr"]).output().await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let start_result = tokio::process::Command::new("sc").args(["start", "NfsClnt"]).output().await;
+        if let Ok(out) = &start_result {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            eprintln!("[MOUNT] NfsClnt start result: {}", stdout.lines().next().unwrap_or(""));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        #[cfg(target_os = "linux")]
-        {
-            let in_container = std::path::Path::new("/.dockerenv").exists()
-                || std::path::Path::new("/run/.containerenv").exists();
+        // Use preferred drive letter if specified, otherwise find a free one (Z down to D)
+        let letter = if let Some(pref) = preferred_drive {
+            pref
+        } else {
+            ('D'..='Z')
+                .rev()
+                .find(|c| !Path::new(&format!("{}:\\", c)).exists())
+                .ok_or_else(|| "No free drive letter found".to_string())?
+        };
+        eprintln!("[MOUNT] Selected drive letter: {}:", letter);
 
-            if in_container && is_root {
-                let status = tokio::process::Command::new("unshare")
-                    .arg("--mount")
-                    .arg("--map-root-user")
-                    .arg("--propagation")
-                    .arg("unchanged")
-                    .arg("umount")
-                    .arg(mount_point.as_os_str())
-                    .status()
-                    .await
-                    .map_err(|e| format!("Failed to execute unshare umount: {}", e))?;
-
-                if status.success() {
-                    return Ok(());
-                } else {
-                    return Err(format!("unshare umount failed: {:?}", status));
-                }
+        // Clean up any stale NFS mount on this drive letter first
+        eprintln!("[MOUNT] Cleaning up drive {}:", letter);
+        let umount_result = tokio::process::Command::new("umount")
+            .args(["-f", &format!("{}:", letter)])
+            .output()
+            .await;
+        if let Ok(out) = &umount_result {
+            if !out.status.success() {
+                eprintln!("[MOUNT] umount {}: failed (expected if not mounted)", letter);
+            } else {
+                eprintln!("[MOUNT] umount {}: success", letter);
             }
         }
+        let net_result = tokio::process::Command::new("net")
+            .args(["use", &format!("{}:", letter), "/delete", "/y"])
+            .output()
+            .await;
+        if let Ok(out) = &net_result {
+            if !out.status.success() {
+                eprintln!("[MOUNT] net use /delete {}: failed (expected if not mapped)", letter);
+            } else {
+                eprintln!("[MOUNT] net use /delete {}: success", letter);
+            }
+        }
+        // Wait for Windows to release the drive letter
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        let mut cmd = if is_root {
-            tokio::process::Command::new("umount")
-        } else {
-            let mut c = tokio::process::Command::new("sudo");
-            c.arg("-n");
-            c.arg("umount");
-            c
-        };
-
-        let status = cmd
-            .arg(mount_point.as_os_str())
-            .status()
+        // Mount with options from nfsserve README for Windows
+        let output = tokio::process::Command::new("mount")
+            .arg("-o")
+            .arg("anon,nolock,mtype=soft,fileaccess=6,lang=ansi,rsize=128,wsize=128,timeout=60,retry=2")
+            .arg(format!("\\\\{}\\share", host))
+            .arg(format!("{}:", letter))
+            .output()
             .await
-            .map_err(|e| format!("Failed to execute umount: {}", e))?;
+            .map_err(|e| format!("Failed to execute mount: {}", e))?;
 
-        if status.success() {
-            Ok(())
+        if output.status.success() {
+            Ok(std::path::PathBuf::from(format!("{}:\\", letter)))
         } else {
-            Err(format!("umount failed: {:?}", status))
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Err(format!("mount failed (exit {:?}): stdout={}, stderr={}",
+                output.status.code(), stdout.trim(), stderr.trim()))
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        Err("OS unmounting not implemented for this platform".to_string())
+        Err("OS mounting not implemented for this platform".to_string())
     }
 }
 
@@ -266,7 +502,7 @@ async fn test_nfs_mv_rename_file() {
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('Z'))
         .await
         .expect("NFS mount must succeed");
 
@@ -303,12 +539,22 @@ async fn test_nfs_mv_rename_file() {
     println!("[TEST] Executing 'mv original.txt renamed.txt'");
     let renamed_file = mount_point.join("renamed.txt");
 
+    #[cfg(unix)]
     let output = tokio::process::Command::new("mv")
         .arg(&original_file)
         .arg(&renamed_file)
         .output()
         .await
         .expect("Failed to execute mv command");
+
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "move"])
+        .arg(&original_file)
+        .arg(&renamed_file)
+        .output()
+        .await
+        .expect("Failed to execute move command");
 
     // TDD: This assertion will FAIL because rename returns NFS3ERR_NOTSUPP
     assert!(
@@ -360,9 +606,8 @@ async fn test_nfs_mv_rename_file() {
         }
     }
 
-    unmount_nfs_os(&mount_point)
-        .await
-        .expect("Unmount must succeed");
+    // MountGuard handles unmount on drop
+    drop(_guard);
 
     server.shutdown().await.unwrap();
     println!("[SUCCESS] Test completed - mv command fully functional!");
@@ -393,7 +638,8 @@ async fn test_nfs_mv_rename_directory() {
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS for directory rename test");
-    mount_nfs_os("localhost", port, &mount_point)
+    // Use different drive letter (Y:) than file test (Z:) to avoid Windows NFS client cache issues
+    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('W'))  // Use W: (file test uses Z:)
         .await
         .expect("NFS mount must succeed");
 
@@ -427,16 +673,39 @@ async fn test_nfs_mv_rename_directory() {
         "Original directory should exist before rename"
     );
 
-    // TDD: Execute mv command on directory
+    // TDD: Execute rename on directory
     println!("[TEST] Executing 'mv old_dir new_dir'");
     let new_dir = mount_point.join("new_dir");
 
+    // Log paths to verify they're on same mount
+    println!("[DEBUG] old_dir path: {:?}", old_dir);
+    println!("[DEBUG] new_dir path: {:?}", new_dir);
+    println!("[DEBUG] mount_point path: {:?}", mount_point);
+
+    // Verify source exists before rename
+    match std::fs::metadata(&old_dir) {
+        Ok(m) => println!("[DEBUG] old_dir exists, is_dir={}", m.is_dir()),
+        Err(e) => println!("[DEBUG] old_dir metadata error: {}", e),
+    }
+
+    // Use platform-specific move command (tokio::fs::rename fails on Windows NFS mounts
+    // because Windows returns CrossesDevices at VFS layer without making NFS calls)
+    #[cfg(unix)]
     let output = tokio::process::Command::new("mv")
         .arg(&old_dir)
         .arg(&new_dir)
         .output()
         .await
         .expect("Failed to execute mv command");
+
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "move"])
+        .arg(&old_dir)
+        .arg(&new_dir)
+        .output()
+        .await
+        .expect("Failed to execute move command");
 
     // TDD: This should succeed after implementing rename
     assert!(
@@ -476,9 +745,8 @@ async fn test_nfs_mv_rename_directory() {
         }
     }
 
-    unmount_nfs_os(&mount_point)
-        .await
-        .expect("Unmount must succeed");
+    // MountGuard handles unmount on drop
+    drop(_guard);
 
     server.shutdown().await.unwrap();
     println!("[SUCCESS] Directory mv test completed!");

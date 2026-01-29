@@ -36,3 +36,7 @@ venv_spark/
 *.swo
 *~**/__pycache__/
 *.pyc
+
+# Local development
+aws-lc-rs/
+.claude/
