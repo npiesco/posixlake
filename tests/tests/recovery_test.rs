@@ -14,6 +14,13 @@ fn cleanup_test_db(path: &str) {
     let _ = fs::remove_dir_all(path);
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn create_test_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -38,14 +45,14 @@ fn create_test_batch(
 #[tokio::test]
 async fn test_recovery_after_abrupt_shutdown() {
     setup_logging();
-    let db_path = "/tmp/test_db_recovery_shutdown";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_recovery_shutdown");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     // Step 1: Create database and write some committed data
     {
-        let db = DatabaseOps::create(db_path, schema.clone())
+        let db = DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database");
 
@@ -76,7 +83,7 @@ async fn test_recovery_after_abrupt_shutdown() {
 
     // Step 2: Reopen database and verify data persisted
     {
-        let db = DatabaseOps::open(db_path)
+        let db = DatabaseOps::open(&db_path)
             .await
             .expect("Failed to reopen database");
 
@@ -125,20 +132,20 @@ async fn test_recovery_after_abrupt_shutdown() {
         assert_eq!(value_col.value(2), 300);
     }
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test]
 async fn test_recovery_with_multiple_restarts() {
     setup_logging();
-    let db_path = "/tmp/test_db_recovery_multiple";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_recovery_multiple");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     // First session: write and commit
     {
-        let db = DatabaseOps::create(db_path, schema.clone())
+        let db = DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database");
         let batch = create_test_batch(schema.clone(), vec![1], vec!["first"], vec![1]);
@@ -147,7 +154,7 @@ async fn test_recovery_with_multiple_restarts() {
 
     // Second session: write more data
     {
-        let db = DatabaseOps::open(db_path)
+        let db = DatabaseOps::open(&db_path)
             .await
             .expect("Failed to reopen 1");
         let batch = create_test_batch(schema.clone(), vec![2], vec!["second"], vec![2]);
@@ -156,7 +163,7 @@ async fn test_recovery_with_multiple_restarts() {
 
     // Third session: write even more data
     {
-        let db = DatabaseOps::open(db_path)
+        let db = DatabaseOps::open(&db_path)
             .await
             .expect("Failed to reopen 2");
         let batch = create_test_batch(schema.clone(), vec![3], vec!["third"], vec![3]);
@@ -165,7 +172,7 @@ async fn test_recovery_with_multiple_restarts() {
 
     // Fourth session: verify all data persisted
     {
-        let db = DatabaseOps::open(db_path)
+        let db = DatabaseOps::open(&db_path)
             .await
             .expect("Failed to reopen 3");
         let results = db
@@ -205,20 +212,20 @@ async fn test_recovery_with_multiple_restarts() {
         );
     }
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test]
 async fn test_recovery_with_deleted_rows() {
     setup_logging();
-    let db_path = "/tmp/test_db_recovery_deleted";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_recovery_deleted");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     // Create database and insert records
     {
-        let db = DatabaseOps::create(db_path, schema.clone())
+        let db = DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database");
 
@@ -241,7 +248,7 @@ async fn test_recovery_with_deleted_rows() {
 
     // Reopen and verify deletion persisted
     {
-        let db = DatabaseOps::open(db_path)
+        let db = DatabaseOps::open(&db_path)
             .await
             .expect("Failed to reopen after deletion");
 
@@ -274,20 +281,20 @@ async fn test_recovery_with_deleted_rows() {
         assert_eq!(name_col.value(1), "keep2");
     }
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test]
 async fn test_wal_corruption_handling() {
     setup_logging();
-    let db_path = "/tmp/test_db_wal_corruption";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_wal_corruption");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     // Create database and write data
     {
-        let db = DatabaseOps::create(db_path, schema.clone())
+        let db = DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database");
 
@@ -305,7 +312,7 @@ async fn test_wal_corruption_handling() {
 
     // Reopen database - Delta Lake transaction log provides durability
     {
-        let db = DatabaseOps::open(db_path)
+        let db = DatabaseOps::open(&db_path)
             .await
             .expect("Failed to reopen database");
 
@@ -326,20 +333,20 @@ async fn test_wal_corruption_handling() {
         );
     }
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test]
 async fn test_transaction_log_based_recovery() {
     setup_logging();
-    let db_path = "/tmp/test_db_txn_log_recovery";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_txn_log_recovery");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     // Create database with multiple transactions
     {
-        let db = DatabaseOps::create(db_path, schema.clone())
+        let db = DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database");
 
@@ -365,7 +372,7 @@ async fn test_transaction_log_based_recovery() {
 
     // Reopen and verify Delta Lake transaction log can reconstruct state
     {
-        let db = DatabaseOps::open(db_path).await.expect("Failed to reopen");
+        let db = DatabaseOps::open(&db_path).await.expect("Failed to reopen");
 
         let results = db
             .query("SELECT COUNT(*) as count FROM data")
@@ -397,5 +404,5 @@ async fn test_transaction_log_based_recovery() {
         assert_eq!(name_col.value(2), "txn3");
     }
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }

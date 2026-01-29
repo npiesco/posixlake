@@ -36,12 +36,15 @@ const CREATED_FILE_START: fileid3 = 2000;
 
 /// posixlake NFS Filesystem
 /// Maps database operations to NFS file operations
+#[derive(Clone)]
 pub struct PosixLakeFilesystem {
     db: Arc<DatabaseOps>,
     /// Cache of Parquet file IDs to paths
     pub(crate) parquet_files: Arc<Mutex<HashMap<fileid3, String>>>,
     /// Track created directories: (parent_dir_id, dir_name) -> dir_id
     created_dirs: Arc<Mutex<HashMap<(fileid3, String), fileid3>>>,
+    /// Unique instance ID for debugging (shared across clones via Arc)
+    instance_id: Arc<u64>,
     /// Next available directory ID
     next_dir_id: Arc<Mutex<fileid3>>,
     /// Track created files: (parent_dir_id, file_name) -> FileMetadata
@@ -56,6 +59,12 @@ pub struct PosixLakeFilesystem {
 
 impl PosixLakeFilesystem {
     pub fn new(db: Arc<DatabaseOps>) -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let instance_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        info!("Creating PosixLakeFilesystem instance {}", instance_id);
         Self {
             db,
             parquet_files: Arc::new(Mutex::new(HashMap::new())),
@@ -65,11 +74,18 @@ impl PosixLakeFilesystem {
             next_file_id: Arc::new(Mutex::new(CREATED_FILE_START)),
             cache: None,
             attr_cache: Arc::new(AttrCache::new()),
+            instance_id: Arc::new(instance_id),
         }
     }
 
     /// Create a new filesystem with caching enabled
     pub fn with_cache(db: Arc<DatabaseOps>, cache: Arc<NfsCache>) -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let instance_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        info!("Creating PosixLakeFilesystem instance {} with cache", instance_id);
         Self {
             db,
             parquet_files: Arc::new(Mutex::new(HashMap::new())),
@@ -79,6 +95,7 @@ impl PosixLakeFilesystem {
             next_file_id: Arc::new(Mutex::new(CREATED_FILE_START)),
             cache: Some(cache),
             attr_cache: Arc::new(AttrCache::new()),
+            instance_id: Arc::new(instance_id),
         }
     }
 
@@ -98,10 +115,10 @@ impl PosixLakeFilesystem {
         let now = Self::now();
         fattr3 {
             ftype: ftype3::NF3DIR,
-            mode: 0o755,
+            mode: 0o777, // World-writable so Windows anonymous NFS user can rename
             nlink: 2,
-            uid: 1000,
-            gid: 1000,
+            uid: 0, // Match Windows NFS client auth user UID (-2 as unsigned)
+            gid: 0, // Windows anonymous user GID (-2 as unsigned)
             size: 4096,
             used: 4096,
             rdev: specdata3::default(),
@@ -120,8 +137,8 @@ impl PosixLakeFilesystem {
             ftype: ftype3::NF3REG,
             mode: 0o644,
             nlink: 1,
-            uid: 1000,
-            gid: 1000,
+            uid: 0, // Match Windows NFS client auth
+            gid: 0,
             size,
             used: size,
             rdev: specdata3::default(),
@@ -201,7 +218,12 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 } else {
                     // Check created directories
                     let created_dirs = self.created_dirs.lock().await;
+                    debug!("NFS LOOKUP [inst={}]: created_dirs has {} entries: {:?}",
+                           self.instance_id,
+                           created_dirs.len(),
+                           created_dirs.keys().collect::<Vec<_>>());
                     if let Some(&dir_id) = created_dirs.get(&(ROOT_ID, name.to_string())) {
+                        debug!("NFS LOOKUP: found dir '{}' with id {}", name, dir_id);
                         return Ok(dir_id);
                     }
                     drop(created_dirs);
@@ -331,8 +353,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         ftype: ftype3::NF3REG,
                         mode: 0o644,
                         nlink: 1,
-                        uid: 1000,
-                        gid: 1000,
+                        uid: 0, // Match Windows NFS client auth
+                        gid: 0,
                         size,
                         used: size,
                         rdev: specdata3::default(),
@@ -370,8 +392,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     ftype: ftype3::NF3REG,
                     mode: 0o644, // Ignore mode changes for simplicity
                     nlink: 1,
-                    uid: 1000,
-                    gid: 1000,
+                    uid: 0, // Match Windows NFS client auth
+                    gid: 0,
                     size,
                     used: size,
                     rdev: specdata3::default(),
@@ -592,8 +614,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         ftype: ftype3::NF3REG,
                         mode: 0o644,
                         nlink: 1,
-                        uid: 1000,
-                        gid: 1000,
+                        uid: 0, // Match Windows NFS client auth
+                        gid: 0,
                         size,
                         used: size,
                         rdev: specdata3::default(),
@@ -677,8 +699,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
             ftype: ftype3::NF3REG,
             mode: 0o644,
             nlink: 1,
-            uid: 1000,
-            gid: 1000,
+            uid: 0, // Match Windows NFS client auth
+            gid: 0,
             size: 0,
             used: 0,
             rdev: specdata3::default(),
@@ -739,6 +761,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
         // Register the new directory
         let mut created_dirs = self.created_dirs.lock().await;
         created_dirs.insert((dirid, name.to_string()), new_dir_id);
+        debug!(
+            "NFS MKDIR [inst={}]: inserted ({}, {}) -> {}, created_dirs now has {} entries",
+            self.instance_id, dirid, name, new_dir_id, created_dirs.len()
+        );
         drop(created_dirs);
 
         // Create directory attributes
@@ -901,8 +927,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         ftype: ftype3::NF3REG,
                         mode: 0o644,
                         nlink: 1,
-                        uid: 1000,
-                        gid: 1000,
+                        uid: 0, // Match Windows NFS client auth
+                        gid: 0,
                         size: file_metadata.content.len() as u64,
                         used: file_metadata.content.len() as u64,
                         rdev: specdata3::default(),
@@ -1016,8 +1042,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
                                 ftype: ftype3::NF3REG,
                                 mode: 0o644,
                                 nlink: 1,
-                                uid: 1000,
-                                gid: 1000,
+                                uid: 0, // Match Windows NFS client auth
+                                gid: 0,
                                 size: metadata.content.len() as u64,
                                 used: metadata.content.len() as u64,
                                 rdev: specdata3::default(),
@@ -1106,8 +1132,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
                                 ftype: ftype3::NF3REG,
                                 mode: 0o644,
                                 nlink: 1,
-                                uid: 1000,
-                                gid: 1000,
+                                uid: 0, // Match Windows NFS client auth
+                                gid: 0,
                                 size: metadata.content.len() as u64,
                                 used: metadata.content.len() as u64,
                                 rdev: specdata3::default(),
@@ -1148,8 +1174,8 @@ impl NFSFileSystem for PosixLakeFilesystem {
                                 ftype: ftype3::NF3REG,
                                 mode: 0o644,
                                 nlink: 1,
-                                uid: 1000,
-                                gid: 1000,
+                                uid: 0, // Match Windows NFS client auth
+                                gid: 0,
                                 size: metadata.content.len() as u64,
                                 used: metadata.content.len() as u64,
                                 rdev: specdata3::default(),
@@ -1184,5 +1210,40 @@ impl NFSFileSystem for PosixLakeFilesystem {
         _id: fileid3,
     ) -> std::result::Result<nfsserve::nfs::nfspath3, nfsstat3> {
         Err(nfsstat3::NFS3ERR_NOTSUPP)
+    }
+
+    async fn path_to_id(&self, path: &[u8]) -> std::result::Result<fileid3, nfsstat3> {
+        let path_str = String::from_utf8_lossy(path);
+        info!("NFS PATH_TO_ID: path={}", path_str);
+
+        // Handle root path
+        if path.is_empty() || path == b"/" {
+            info!("NFS PATH_TO_ID: returning root");
+            return Ok(self.root_dir());
+        }
+
+        // Walk the path from root
+        let mut current_id = self.root_dir();
+        let path_trimmed = path_str.trim_start_matches('/');
+
+        for component in path_trimmed.split('/') {
+            if component.is_empty() {
+                continue;
+            }
+            info!("NFS PATH_TO_ID: looking up '{}' in dir {}", component, current_id);
+            match self.lookup(current_id, &component.as_bytes().into()).await {
+                Ok(id) => {
+                    info!("NFS PATH_TO_ID: found '{}' -> id {}", component, id);
+                    current_id = id;
+                }
+                Err(e) => {
+                    error!("NFS PATH_TO_ID: lookup failed for '{}': {:?}", component, e);
+                    return Err(e);
+                }
+            }
+        }
+
+        info!("NFS PATH_TO_ID: resolved path '{}' to id {}", path_str, current_id);
+        Ok(current_id)
     }
 }

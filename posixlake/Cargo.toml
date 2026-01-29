@@ -32,7 +32,7 @@ md5 = "0.8.0"
 memmap2 = "0.9.9"
 moka = { version = "0.12.11", features = ["future"] }
 # NFS server implementation (replacing FUSE)
-nfsserve = { git = "https://github.com/xetdata/nfsserve.git", branch = "main" }
+nfsserve = { git = "https://github.com/npiesco/nfsserve.git", branch = "main" }
 nom = "8.0.0"
 object_store = { version = "0.12.4", features = ["aws", "http"] }
 parquet = "56.2.0"

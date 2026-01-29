@@ -9,3 +9,6 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[patch.crates-io]
+aws-lc-sys = { git = "https://github.com/npiesco/aws-lc-rs", package = "aws-lc-sys", branch = "main" }

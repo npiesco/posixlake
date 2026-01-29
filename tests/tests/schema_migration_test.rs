@@ -14,12 +14,19 @@ fn cleanup_test_db(path: &str) {
     let _ = fs::remove_dir_all(path);
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Test: Query across multiple schema versions with automatic unification
 #[tokio::test]
 async fn test_query_with_schema_evolution() {
     setup_logging();
-    let db_path = "/tmp/test_db_schema_migration";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_schema_migration");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Query with Schema Evolution ===");
 
@@ -29,7 +36,7 @@ async fn test_query_with_schema_evolution() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema_v1.clone())
+    let db = DatabaseOps::create(&db_path, schema_v1.clone())
         .await
         .expect("Failed to create database");
 
@@ -125,15 +132,15 @@ async fn test_query_with_schema_evolution() {
 
     println!("✓ Query successfully unified schemas - v1 rows have NULL for new fields");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Query with column projection on evolved schema
 #[tokio::test]
 async fn test_query_projection_with_evolved_schema() {
     setup_logging();
-    let db_path = "/tmp/test_db_schema_projection";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_schema_projection");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Query Projection with Evolved Schema ===");
 
@@ -143,7 +150,7 @@ async fn test_query_projection_with_evolved_schema() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema_v1.clone())
+    let db = DatabaseOps::create(&db_path, schema_v1.clone())
         .await
         .expect("Failed to create database");
 
@@ -202,15 +209,15 @@ async fn test_query_projection_with_evolved_schema() {
         "Bob should have Engineering dept"
     );
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Backward and forward schema compatibility
 #[tokio::test]
 async fn test_schema_compatibility() {
     setup_logging();
-    let db_path = "/tmp/test_db_schema_compat";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_schema_compat");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Schema Compatibility ===");
 
@@ -220,7 +227,7 @@ async fn test_schema_compatibility() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema_v1.clone())
+    let db = DatabaseOps::create(&db_path, schema_v1.clone())
         .await
         .unwrap();
 
@@ -308,5 +315,5 @@ async fn test_schema_compatibility() {
 
     println!("✓ Successfully queried across 3 schema versions with correct NULL handling");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }

@@ -19,6 +19,13 @@ fn setup_logging() {
         .try_init();
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn cleanup_test_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
@@ -26,8 +33,8 @@ fn cleanup_test_db(path: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_user_authentication_required() {
     setup_logging();
-    let db_path = "/tmp/test_db_auth_required";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_auth_required");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: User Authentication Required ===");
 
@@ -37,7 +44,7 @@ async fn test_user_authentication_required() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create_with_auth(db_path, schema.clone(), true)
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
         .await
         .expect("Failed to create database");
 
@@ -45,7 +52,7 @@ async fn test_user_authentication_required() {
 
     // Try to access database with wrong credentials - should fail
     let result =
-        DatabaseOps::open_with_credentials(db_path, Some(("admin", "wrongpassword"))).await;
+        DatabaseOps::open_with_credentials(&db_path, Some(("admin", "wrongpassword"))).await;
     assert!(result.is_err(), "Should reject wrong credentials");
     println!("[OK] Wrong credentials rejected");
 
@@ -56,7 +63,7 @@ async fn test_user_authentication_required() {
     println!("[OK] Admin user created");
 
     // Try to access database with valid credentials - should succeed
-    let authed_db = DatabaseOps::open_with_credentials(db_path, Some(("admin", "admin_password")))
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_password")))
         .await
         .expect("Failed to authenticate");
     println!("[OK] Authenticated access granted");
@@ -80,18 +87,18 @@ async fn test_user_authentication_required() {
 
     // Try with wrong password - should fail
     let result =
-        DatabaseOps::open_with_credentials(db_path, Some(("admin", "wrong_password"))).await;
+        DatabaseOps::open_with_credentials(&db_path, Some(("admin", "wrong_password"))).await;
     assert!(result.is_err(), "Wrong password should fail");
     println!("[OK] Invalid credentials rejected");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_role_based_access_control() {
     setup_logging();
-    let db_path = "/tmp/test_db_rbac";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_rbac");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Role-Based Access Control ===");
 
@@ -100,7 +107,7 @@ async fn test_role_based_access_control() {
         Field::new("salary", DataType::Int32, false),
     ]));
 
-    let db = DatabaseOps::create_with_auth(db_path, schema.clone(), true)
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
         .await
         .expect("Failed to create database");
 
@@ -117,7 +124,7 @@ async fn test_role_based_access_control() {
     println!("[OK] Created users with different roles");
 
     // Admin can do everything
-    let admin_db = DatabaseOps::open_with_credentials(db_path, Some(("admin", "admin123")))
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin123")))
         .await
         .expect("Admin auth failed");
 
@@ -141,7 +148,7 @@ async fn test_role_based_access_control() {
     println!("[OK] Admin can read and write");
 
     // Reader can only read
-    let reader_db = DatabaseOps::open_with_credentials(db_path, Some(("reader", "reader123")))
+    let reader_db = DatabaseOps::open_with_credentials(&db_path, Some(("reader", "reader123")))
         .await
         .expect("Reader auth failed");
 
@@ -159,7 +166,7 @@ async fn test_role_based_access_control() {
     println!("[OK] Reader cannot write");
 
     // Writer can write but not read
-    let writer_db = DatabaseOps::open_with_credentials(db_path, Some(("writer", "writer123")))
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer123")))
         .await
         .expect("Writer auth failed");
 
@@ -170,14 +177,14 @@ async fn test_role_based_access_control() {
     assert!(query_result.is_err(), "Writer should not be able to query");
     println!("[OK] Writer cannot read");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_audit_logging() {
     setup_logging();
-    let db_path = "/tmp/test_db_audit";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_audit");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Audit Logging ===");
 
@@ -186,14 +193,14 @@ async fn test_audit_logging() {
         Field::new("data", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create_with_auth(db_path, schema.clone(), true)
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
         .await
         .expect("Failed to create database");
     db.create_user("user1", "pass1", &["admin"])
         .await
         .expect("Failed to create user");
 
-    let authed_db = DatabaseOps::open_with_credentials(db_path, Some(("user1", "pass1")))
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("user1", "pass1")))
         .await
         .expect("Auth failed");
 
@@ -264,14 +271,14 @@ async fn test_audit_logging() {
         create_user_entry.user
     );
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_permission_inheritance_and_revocation() {
     setup_logging();
-    let db_path = "/tmp/test_db_perm_revoke";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_perm_revoke");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Permission Inheritance and Revocation ===");
 
@@ -280,7 +287,7 @@ async fn test_permission_inheritance_and_revocation() {
         Field::new("value", DataType::Int32, false),
     ]));
 
-    let db = DatabaseOps::create_with_auth(db_path, schema.clone(), true)
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
         .await
         .expect("Failed to create database");
 
@@ -290,7 +297,7 @@ async fn test_permission_inheritance_and_revocation() {
         .expect("Failed to create user");
     println!("[OK] Created user with read and write permissions");
 
-    let user_db = DatabaseOps::open_with_credentials(db_path, Some(("user1", "pass1")))
+    let user_db = DatabaseOps::open_with_credentials(&db_path, Some(("user1", "pass1")))
         .await
         .expect("Auth failed");
 
@@ -315,7 +322,7 @@ async fn test_permission_inheritance_and_revocation() {
     println!("[OK] User can read and write");
 
     // Admin revokes write permission
-    let admin_db = DatabaseOps::open_with_credentials(db_path, None)
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, None)
         .await
         .expect("Failed to open as system");
     admin_db
@@ -325,7 +332,7 @@ async fn test_permission_inheritance_and_revocation() {
     println!("[OK] Revoked write permission from user1");
 
     // Reopen connection to pick up new permissions
-    let user_db2 = DatabaseOps::open_with_credentials(db_path, Some(("user1", "pass1")))
+    let user_db2 = DatabaseOps::open_with_credentials(&db_path, Some(("user1", "pass1")))
         .await
         .expect("Auth failed");
 
@@ -344,20 +351,20 @@ async fn test_permission_inheritance_and_revocation() {
     );
     println!("[OK] User cannot write after revocation");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_secure_password_hashing() {
     setup_logging();
-    let db_path = "/tmp/test_db_password_hash";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_password_hash");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Secure Password Hashing ===");
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
-    let db = DatabaseOps::create_with_auth(db_path, schema.clone(), true)
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
         .await
         .expect("Failed to create database");
 
@@ -386,16 +393,16 @@ async fn test_secure_password_hashing() {
 
     // Verify authentication still works with hashed password
     let _authed_db =
-        DatabaseOps::open_with_credentials(db_path, Some(("testuser", "mySecureP@ssw0rd!")))
+        DatabaseOps::open_with_credentials(&db_path, Some(("testuser", "mySecureP@ssw0rd!")))
             .await
             .expect("Authentication should succeed with correct password");
     println!("[OK] Authentication works with hashed passwords");
 
     // Verify wrong password fails
     let result =
-        DatabaseOps::open_with_credentials(db_path, Some(("testuser", "wrongpassword"))).await;
+        DatabaseOps::open_with_credentials(&db_path, Some(("testuser", "wrongpassword"))).await;
     assert!(result.is_err(), "Wrong password should fail");
     println!("[OK] Wrong password correctly rejected");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }

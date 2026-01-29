@@ -15,6 +15,13 @@ fn cleanup_test_db(path: &str) {
     let _ = fs::remove_dir_all(path);
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn create_test_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -42,13 +49,13 @@ fn create_batch_with_rows(schema: SchemaRef, start_id: i32, count: usize) -> Rec
 #[tokio::test]
 async fn test_sequential_write_performance() {
     setup_logging();
-    let db_path = "/tmp/test_db_perf_write";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_perf_write");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -76,7 +83,7 @@ async fn test_sequential_write_performance() {
         let mut parquet_size = 0u64;
         let mut delta_log_size = 0u64;
 
-        if let Ok(entries) = fs::read_dir(db_path) {
+        if let Ok(entries) = fs::read_dir(&db_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Ok(metadata) = entry.metadata() {
@@ -135,21 +142,21 @@ async fn test_sequential_write_performance() {
         );
     }
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Concurrent read performance - measure queries/sec
 #[tokio::test]
 async fn test_concurrent_read_performance() {
     setup_logging();
-    let db_path = "/tmp/test_db_perf_read";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_perf_read");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     // Create database and insert test data
     let db = Arc::new(
-        DatabaseOps::create(db_path, schema.clone())
+        DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database"),
     );
@@ -214,15 +221,15 @@ async fn test_concurrent_read_performance() {
         );
     }
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Query latency on various data sizes
 #[tokio::test]
 async fn test_query_latency_scaling() {
     setup_logging();
-    let db_path = "/tmp/test_db_perf_latency";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_perf_latency");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
@@ -232,7 +239,7 @@ async fn test_query_latency_scaling() {
     let dataset_sizes = vec![100, 1000, 10000];
 
     for total_rows in dataset_sizes {
-        let db = DatabaseOps::create(db_path, schema.clone())
+        let db = DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database");
 
@@ -282,7 +289,7 @@ async fn test_query_latency_scaling() {
         println!();
 
         // Cleanup for next iteration
-        cleanup_test_db(db_path);
+        cleanup_test_db(&db_path);
     }
 }
 
@@ -290,8 +297,8 @@ async fn test_query_latency_scaling() {
 #[tokio::test]
 async fn test_memory_overhead() {
     setup_logging();
-    let db_path = "/tmp/test_db_perf_memory";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_perf_memory");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
@@ -306,7 +313,7 @@ async fn test_memory_overhead() {
 
     // Create database
     let db = Arc::new(
-        DatabaseOps::create(db_path, schema.clone())
+        DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database"),
     );
@@ -379,22 +386,22 @@ async fn test_memory_overhead() {
         total_overhead
     );
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Compare posixlake query performance with direct Parquet access
 #[tokio::test]
 async fn test_fsdb_vs_direct_parquet_comparison() {
     setup_logging();
-    let db_path = "/tmp/test_db_perf_comparison";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_perf_comparison");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
 
     println!("\n=== posixlake vs Direct Parquet Comparison ===");
 
     // Create database and insert test data
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -441,7 +448,7 @@ async fn test_fsdb_vs_direct_parquet_comparison() {
     use std::fs::File;
 
     // In Delta Lake mode, parquet files are in the base directory
-    let parquet_files: Vec<_> = fs::read_dir(db_path)
+    let parquet_files: Vec<_> = fs::read_dir(&db_path)
         .expect("Failed to read database directory")
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("parquet"))
@@ -548,7 +555,7 @@ async fn test_fsdb_vs_direct_parquet_comparison() {
     // We expect posixlake to be slower due to SQL layer, but not excessively
     assert_eq!(total_count, total_rows, "Row count mismatch");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Helper: Get current process memory usage (RSS) in bytes

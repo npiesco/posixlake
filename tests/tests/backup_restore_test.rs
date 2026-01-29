@@ -10,6 +10,13 @@ fn setup_logging() {
         .try_init();
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn cleanup_test_db(path: &str) {
     let _ = fs::remove_dir_all(path);
 }
@@ -18,10 +25,10 @@ fn cleanup_test_db(path: &str) {
 #[tokio::test]
 async fn test_full_backup_and_restore() {
     setup_logging();
-    let db_path = "/tmp/test_db_backup_full";
-    let backup_path = "/tmp/test_backup_full";
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
+    let db_path = test_db_path("test_db_backup_full");
+    let backup_path = test_db_path("test_backup_full");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
 
     println!("\n=== Test: Full Backup and Restore ===");
 
@@ -32,7 +39,7 @@ async fn test_full_backup_and_restore() {
         Field::new("age", DataType::Int32, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -68,12 +75,12 @@ async fn test_full_backup_and_restore() {
     assert_eq!(count_before, 9, "Should have 9 rows before backup");
 
     // Create backup
-    db.backup(backup_path).await.expect("Backup should succeed");
+    db.backup(&backup_path).await.expect("Backup should succeed");
     println!("[OK] Backup created at: {}", backup_path);
 
     // Verify backup files exist (Delta Lake native format)
     assert!(
-        fs::metadata(backup_path).unwrap().is_dir(),
+        fs::metadata(&backup_path).unwrap().is_dir(),
         "Backup directory should exist"
     );
     assert!(
@@ -84,23 +91,23 @@ async fn test_full_backup_and_restore() {
     );
     // Note: In Delta Lake native mode, _metadata directory is optional (only if it existed in source)
     // Check for parquet files in root
-    let has_parquet = fs::read_dir(backup_path)
+    let has_parquet = fs::read_dir(&backup_path)
         .unwrap()
         .any(|entry| entry.unwrap().path().extension().and_then(|s| s.to_str()) == Some("parquet"));
     assert!(has_parquet, "Parquet files should be backed up");
     println!("[OK] Backup structure verified");
 
     // Restore to a new location
-    let restore_path = "/tmp/test_db_restore_full";
-    cleanup_test_db(restore_path);
+    let restore_path = test_db_path("test_db_restore_full");
+    cleanup_test_db(&restore_path);
 
-    DatabaseOps::restore(backup_path, restore_path)
+    DatabaseOps::restore(&backup_path, &restore_path)
         .await
         .expect("Restore should succeed");
     println!("[OK] Database restored to: {}", restore_path);
 
     // Open restored database and verify data
-    let restored_db = DatabaseOps::open(restore_path)
+    let restored_db = DatabaseOps::open(&restore_path)
         .await
         .expect("Should open restored database");
     let results_after = restored_db
@@ -145,21 +152,21 @@ async fn test_full_backup_and_restore() {
     }
     println!("[OK] Data integrity verified");
 
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
-    cleanup_test_db(restore_path);
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
 }
 
 /// Test: Incremental backup captures only new data since last backup
 #[tokio::test]
 async fn test_incremental_backup() {
     setup_logging();
-    let db_path = "/tmp/test_db_backup_incremental";
-    let backup1_path = "/tmp/test_backup_incr1";
-    let backup2_path = "/tmp/test_backup_incr2";
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup1_path);
-    cleanup_test_db(backup2_path);
+    let db_path = test_db_path("test_db_backup_incremental");
+    let backup1_path = test_db_path("test_backup_incr1");
+    let backup2_path = test_db_path("test_backup_incr2");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup1_path);
+    cleanup_test_db(&backup2_path);
 
     println!("\n=== Test: Incremental Backup ===");
 
@@ -168,7 +175,7 @@ async fn test_incremental_backup() {
         Field::new("value", DataType::Int32, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -185,7 +192,7 @@ async fn test_incremental_backup() {
     println!("[OK] Inserted 3 rows");
 
     // First full backup
-    db.backup(backup1_path).await.unwrap();
+    db.backup(&backup1_path).await.unwrap();
     println!("[OK] First backup created");
 
     // Insert more data
@@ -201,14 +208,14 @@ async fn test_incremental_backup() {
     println!("[OK] Inserted 3 more rows");
 
     // Second incremental backup
-    db.backup_incremental(backup1_path, backup2_path)
+    db.backup_incremental(&backup1_path, &backup2_path)
         .await
         .expect("Incremental backup should succeed");
     println!("[OK] Incremental backup created");
 
     // Verify incremental backup is smaller than full backup
-    let backup1_size = get_directory_size(backup1_path);
-    let backup2_size = get_directory_size(backup2_path);
+    let backup1_size = get_directory_size(&backup1_path);
+    let backup2_size = get_directory_size(&backup2_path);
     println!("  Full backup size: {} bytes", backup1_size);
     println!("  Incremental backup size: {} bytes", backup2_size);
     assert!(
@@ -216,19 +223,19 @@ async fn test_incremental_backup() {
         "Incremental backup should be smaller than full backup"
     );
 
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup1_path);
-    cleanup_test_db(backup2_path);
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup1_path);
+    cleanup_test_db(&backup2_path);
 }
 
 /// Test: Backup verification ensures integrity
 #[tokio::test]
 async fn test_backup_verification() {
     setup_logging();
-    let db_path = "/tmp/test_db_backup_verify";
-    let backup_path = "/tmp/test_backup_verify";
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
+    let db_path = test_db_path("test_db_backup_verify");
+    let backup_path = test_db_path("test_backup_verify");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
 
     println!("\n=== Test: Backup Verification ===");
 
@@ -237,7 +244,7 @@ async fn test_backup_verification() {
         Field::new("data", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -252,11 +259,11 @@ async fn test_backup_verification() {
     db.insert(batch).await.unwrap();
 
     // Create backup
-    db.backup(backup_path).await.unwrap();
+    db.backup(&backup_path).await.unwrap();
     println!("[OK] Backup created");
 
     // Verify backup
-    let verification_result = DatabaseOps::verify_backup(backup_path).await;
+    let verification_result = DatabaseOps::verify_backup(&backup_path).await;
     assert!(
         verification_result.is_ok(),
         "Backup verification should succeed"
@@ -277,27 +284,27 @@ async fn test_backup_verification() {
 
     // Corrupt backup and verify it fails (remove Delta Lake transaction log)
     fs::remove_dir_all(format!("{}/_delta_log", backup_path)).ok();
-    let corrupt_result = DatabaseOps::verify_backup(backup_path).await;
+    let corrupt_result = DatabaseOps::verify_backup(&backup_path).await;
     assert!(
         corrupt_result.is_err(),
         "Verification should fail for corrupted backup"
     );
     println!("[OK] Corrupted backup detected");
 
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
 }
 
 /// Test: Point-in-time restore from transaction log
 #[tokio::test]
 async fn test_point_in_time_restore() {
     setup_logging();
-    let db_path = "/tmp/test_db_pitr";
-    let backup_path = "/tmp/test_backup_pitr";
-    let restore_path = "/tmp/test_db_pitr_restore";
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
-    cleanup_test_db(restore_path);
+    let db_path = test_db_path("test_db_pitr");
+    let backup_path = test_db_path("test_backup_pitr");
+    let restore_path = test_db_path("test_db_pitr_restore");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
 
     println!("\n=== Test: Point-in-Time Restore ===");
 
@@ -306,7 +313,7 @@ async fn test_point_in_time_restore() {
         Field::new("value", DataType::Int32, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -345,16 +352,16 @@ async fn test_point_in_time_restore() {
     println!("[OK] Transaction 3 committed");
 
     // Backup full database
-    db.backup(backup_path).await.unwrap();
+    db.backup(&backup_path).await.unwrap();
 
     // Restore to a point before transaction 3
-    DatabaseOps::restore_to_transaction(backup_path, restore_path, txn2)
+    DatabaseOps::restore_to_transaction(&backup_path, &restore_path, txn2)
         .await
         .expect("Point-in-time restore should succeed");
     println!("[OK] Restored to transaction {}", txn2);
 
     // Verify restored database has only transactions 1 and 2
-    let restored_db = DatabaseOps::open(restore_path)
+    let restored_db = DatabaseOps::open(&restore_path)
         .await
         .expect("Should open restored database");
     let results = restored_db
@@ -370,25 +377,25 @@ async fn test_point_in_time_restore() {
     println!("[OK] Restored database has {} rows (should be 2)", count);
     assert_eq!(count, 2, "Should have restored only first 2 transactions");
 
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
-    cleanup_test_db(restore_path);
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
 }
 
 /// Test: Backup metadata includes timestamp and row count
 #[tokio::test]
 async fn test_backup_metadata() {
     setup_logging();
-    let db_path = "/tmp/test_db_backup_meta";
-    let backup_path = "/tmp/test_backup_meta";
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
+    let db_path = test_db_path("test_db_backup_meta");
+    let backup_path = test_db_path("test_backup_meta");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
 
     println!("\n=== Test: Backup Metadata ===");
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -400,10 +407,10 @@ async fn test_backup_metadata() {
     db.insert(batch).await.unwrap();
 
     // Create backup
-    db.backup(backup_path).await.unwrap();
+    db.backup(&backup_path).await.unwrap();
 
     // Read backup metadata
-    let metadata = DatabaseOps::get_backup_metadata(backup_path)
+    let metadata = DatabaseOps::get_backup_metadata(&backup_path)
         .await
         .expect("Should read backup metadata");
 
@@ -421,18 +428,18 @@ async fn test_backup_metadata() {
         "Backup size should be greater than zero"
     );
 
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
 }
 
 /// Test: Point-in-time restore across multiple schema versions (v1 -> v2 -> v3 -> v4)
 #[tokio::test]
 async fn test_point_in_time_restore_multiple_schema_versions() {
     setup_logging();
-    let db_path = "/tmp/test_db_pitr_multi_schema";
-    let backup_path = "/tmp/test_backup_pitr_multi";
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
+    let db_path = test_db_path("test_db_pitr_multi_schema");
+    let backup_path = test_db_path("test_backup_pitr_multi");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
 
     println!("\n=== Test: Point-in-Time Restore with Multiple Schema Versions ===");
 
@@ -442,7 +449,7 @@ async fn test_point_in_time_restore_multiple_schema_versions() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema_v1.clone())
+    let db = DatabaseOps::create(&db_path, schema_v1.clone())
         .await
         .expect("Failed to create database");
 
@@ -533,16 +540,16 @@ async fn test_point_in_time_restore_multiple_schema_versions() {
     println!("[OK] Txn 5: 3 rows, schema v4 (id, name, age, dept, salary) - Total: 10 rows");
 
     // Backup full database
-    db.backup(backup_path).await.unwrap();
+    db.backup(&backup_path).await.unwrap();
     println!("\n=== Testing Restores to Different Points ===");
 
     // Test 1: Restore to txn1 (schema v1, 2 rows)
-    let restore1 = "/tmp/test_restore_to_txn1";
-    cleanup_test_db(restore1);
-    DatabaseOps::restore_to_transaction(backup_path, restore1, txn1)
+    let restore1 = test_db_path("test_restore_to_txn1");
+    cleanup_test_db(&restore1);
+    DatabaseOps::restore_to_transaction(&backup_path, &restore1, txn1)
         .await
         .unwrap();
-    let db1 = DatabaseOps::open(restore1).await.unwrap();
+    let db1 = DatabaseOps::open(&restore1).await.unwrap();
     let count1 = db1.query("SELECT COUNT(*) FROM data").await.unwrap()[0]
         .column(0)
         .as_any()
@@ -554,12 +561,12 @@ async fn test_point_in_time_restore_multiple_schema_versions() {
     println!("[OK] Restore to txn1: 2 rows, 2 fields (id, name)");
 
     // Test 2: Restore to txn2 (schema v1, 3 rows)
-    let restore2 = "/tmp/test_restore_to_txn2";
-    cleanup_test_db(restore2);
-    DatabaseOps::restore_to_transaction(backup_path, restore2, txn2)
+    let restore2 = test_db_path("test_restore_to_txn2");
+    cleanup_test_db(&restore2);
+    DatabaseOps::restore_to_transaction(&backup_path, &restore2, txn2)
         .await
         .unwrap();
-    let db2 = DatabaseOps::open(restore2).await.unwrap();
+    let db2 = DatabaseOps::open(&restore2).await.unwrap();
     let count2 = db2.query("SELECT COUNT(*) FROM data").await.unwrap()[0]
         .column(0)
         .as_any()
@@ -571,12 +578,12 @@ async fn test_point_in_time_restore_multiple_schema_versions() {
     println!("[OK] Restore to txn2: 3 rows, 2 fields (id, name)");
 
     // Test 3: Restore to txn3 (schema v2, 5 rows)
-    let restore3 = "/tmp/test_restore_to_txn3";
-    cleanup_test_db(restore3);
-    DatabaseOps::restore_to_transaction(backup_path, restore3, txn3)
+    let restore3 = test_db_path("test_restore_to_txn3");
+    cleanup_test_db(&restore3);
+    DatabaseOps::restore_to_transaction(&backup_path, &restore3, txn3)
         .await
         .unwrap();
-    let db3 = DatabaseOps::open(restore3).await.unwrap();
+    let db3 = DatabaseOps::open(&restore3).await.unwrap();
     let count3 = db3.query("SELECT COUNT(*) FROM data").await.unwrap()[0]
         .column(0)
         .as_any()
@@ -588,12 +595,12 @@ async fn test_point_in_time_restore_multiple_schema_versions() {
     println!("[OK] Restore to txn3: 5 rows, 3 fields (id, name, age)");
 
     // Test 4: Restore to txn4 (schema v3, 7 rows)
-    let restore4 = "/tmp/test_restore_to_txn4";
-    cleanup_test_db(restore4);
-    DatabaseOps::restore_to_transaction(backup_path, restore4, txn4)
+    let restore4 = test_db_path("test_restore_to_txn4");
+    cleanup_test_db(&restore4);
+    DatabaseOps::restore_to_transaction(&backup_path, &restore4, txn4)
         .await
         .unwrap();
-    let db4 = DatabaseOps::open(restore4).await.unwrap();
+    let db4 = DatabaseOps::open(&restore4).await.unwrap();
     let count4 = db4.query("SELECT COUNT(*) FROM data").await.unwrap()[0]
         .column(0)
         .as_any()
@@ -606,12 +613,12 @@ async fn test_point_in_time_restore_multiple_schema_versions() {
 
     println!("\n[SUCCESS] All 4 restore points verified with correct schema evolution!");
 
-    cleanup_test_db(db_path);
-    cleanup_test_db(backup_path);
-    cleanup_test_db(restore1);
-    cleanup_test_db(restore2);
-    cleanup_test_db(restore3);
-    cleanup_test_db(restore4);
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore1);
+    cleanup_test_db(&restore2);
+    cleanup_test_db(&restore3);
+    cleanup_test_db(&restore4);
 }
 
 /// Helper: Calculate total size of a directory

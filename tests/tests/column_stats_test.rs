@@ -16,12 +16,19 @@ fn cleanup_test_db(path: &str) {
     let _ = std::fs::remove_dir_all(path);
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Test that min/max statistics are computed and stored during insert
 #[tokio::test]
 async fn test_column_stats_computed_on_insert() {
     setup_logging();
-    let db_path = "/tmp/test_db_column_stats_insert";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_column_stats_insert");
+    cleanup_test_db(&db_path);
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -30,7 +37,7 @@ async fn test_column_stats_computed_on_insert() {
     ]));
 
     let db = Arc::new(
-        DatabaseOps::create(db_path, schema.clone())
+        DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database"),
     );
@@ -100,8 +107,8 @@ async fn test_column_stats_computed_on_insert() {
 #[tokio::test]
 async fn test_column_stats_query_pruning() {
     setup_logging();
-    let db_path = "/tmp/test_db_column_stats_pruning";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_column_stats_pruning");
+    cleanup_test_db(&db_path);
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -109,7 +116,7 @@ async fn test_column_stats_query_pruning() {
     ]));
 
     let db = Arc::new(
-        DatabaseOps::create(db_path, schema.clone())
+        DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database"),
     );
@@ -173,8 +180,8 @@ async fn test_column_stats_query_pruning() {
 #[tokio::test]
 async fn test_column_stats_persistence() {
     setup_logging();
-    let db_path = "/tmp/test_db_column_stats_persist";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_column_stats_persist");
+    cleanup_test_db(&db_path);
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -184,7 +191,7 @@ async fn test_column_stats_persistence() {
     // Create DB and insert data
     {
         let db = Arc::new(
-            DatabaseOps::create(db_path, schema.clone())
+            DatabaseOps::create(&db_path, schema.clone())
                 .await
                 .expect("Failed to create database"),
         );
@@ -214,7 +221,7 @@ async fn test_column_stats_persistence() {
     {
         info!("[TEST] Reopening database...");
         let db = Arc::new(
-            DatabaseOps::open(db_path)
+            DatabaseOps::open(&db_path)
                 .await
                 .expect("Failed to reopen database"),
         );
@@ -255,8 +262,8 @@ async fn test_column_stats_persistence() {
 #[tokio::test]
 async fn test_column_stats_after_compaction() {
     setup_logging();
-    let db_path = "/tmp/test_db_column_stats_compact";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_column_stats_compact");
+    cleanup_test_db(&db_path);
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -264,7 +271,7 @@ async fn test_column_stats_after_compaction() {
     ]));
 
     let db = Arc::new(
-        DatabaseOps::create(db_path, schema.clone())
+        DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database"),
     );

@@ -14,12 +14,19 @@ fn cleanup_test_db(path: &str) {
     let _ = fs::remove_dir_all(path);
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Test: Database metrics tracking for queries, inserts, deletes
 #[tokio::test]
 async fn test_database_metrics_tracking() {
     setup_logging();
-    let db_path = "/tmp/test_db_metrics";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_metrics");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Database Metrics Tracking ===");
 
@@ -29,7 +36,7 @@ async fn test_database_metrics_tracking() {
         Field::new("value", DataType::Int32, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -117,15 +124,15 @@ async fn test_database_metrics_tracking() {
         final_metrics.uptime_seconds
     );
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Health check returns database status
 #[tokio::test]
 async fn test_health_check() {
     setup_logging();
-    let db_path = "/tmp/test_db_health";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_health");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Health Check ===");
 
@@ -134,7 +141,7 @@ async fn test_health_check() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -167,15 +174,15 @@ async fn test_health_check() {
     );
     println!("✓ Health after insert: status={}", health_after.status);
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Query latency tracking
 #[tokio::test]
 async fn test_query_latency_tracking() {
     setup_logging();
-    let db_path = "/tmp/test_db_latency";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_latency");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Query Latency Tracking ===");
 
@@ -184,7 +191,7 @@ async fn test_query_latency_tracking() {
         Field::new("value", DataType::Int32, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -219,15 +226,15 @@ async fn test_query_latency_tracking() {
     println!("  Average: {:.2}ms", metrics.avg_query_latency_ms);
     println!("  Max: {:.2}ms", metrics.max_query_latency_ms);
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Error tracking in metrics
 #[tokio::test]
 async fn test_error_tracking() {
     setup_logging();
-    let db_path = "/tmp/test_db_errors";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_errors");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Error Tracking ===");
 
@@ -236,7 +243,7 @@ async fn test_error_tracking() {
         Field::new("name", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -265,21 +272,21 @@ async fn test_error_tracking() {
         metrics_after.total_errors
     );
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Metrics reset functionality
 #[tokio::test]
 async fn test_metrics_reset() {
     setup_logging();
-    let db_path = "/tmp/test_db_reset";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_reset");
+    cleanup_test_db(&db_path);
 
     println!("\n=== Test: Metrics Reset ===");
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -312,5 +319,5 @@ async fn test_metrics_reset() {
 
     println!("✓ Metrics reset successfully (uptime preserved)");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }

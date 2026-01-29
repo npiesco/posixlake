@@ -15,6 +15,13 @@ fn cleanup_test_db(path: &str) {
     let _ = fs::remove_dir_all(path);
 }
 
+fn test_db_path(name: &str) -> String {
+    std::env::temp_dir()
+        .join(name)
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn create_test_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -60,11 +67,11 @@ fn create_large_batch(schema: SchemaRef, start_id: i32, count: usize) -> RecordB
 #[tokio::test]
 async fn test_large_file_handling() {
     setup_logging();
-    let db_path = "/tmp/test_db_stress_large_file";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_stress_large_file");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -101,7 +108,7 @@ async fn test_large_file_handling() {
 
     // Measure total database size (Parquet files in Delta Lake format)
     let mut total_size = 0u64;
-    for entry in fs::read_dir(db_path).unwrap() {
+    for entry in fs::read_dir(&db_path).unwrap() {
         let entry = entry.unwrap();
         if entry.path().extension().and_then(|s| s.to_str()) == Some("parquet") {
             total_size += entry.metadata().unwrap().len();
@@ -148,7 +155,7 @@ async fn test_large_file_handling() {
     );
     assert!(size_mb > 1.0, "Database should be larger than 1 MB");
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Many concurrent readers (stress test with 50 readers)
@@ -156,12 +163,12 @@ async fn test_large_file_handling() {
 #[tokio::test]
 async fn test_many_concurrent_readers() {
     setup_logging();
-    let db_path = "/tmp/test_db_stress_concurrent_readers";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_stress_concurrent_readers");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
     let db = Arc::new(
-        DatabaseOps::create(db_path, schema.clone())
+        DatabaseOps::create(&db_path, schema.clone())
             .await
             .expect("Failed to create database"),
     );
@@ -224,7 +231,7 @@ async fn test_many_concurrent_readers() {
         avg_latency_ms
     );
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Rapid write operations (stress test with many small writes)
@@ -232,11 +239,11 @@ async fn test_many_concurrent_readers() {
 #[tokio::test]
 async fn test_rapid_write_operations() {
     setup_logging();
-    let db_path = "/tmp/test_db_stress_rapid_writes";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_stress_rapid_writes");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -303,7 +310,7 @@ async fn test_rapid_write_operations() {
         rows_per_sec
     );
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }
 
 /// Test: Memory leak detection (insert and query many times, verify memory stability)
@@ -311,11 +318,11 @@ async fn test_rapid_write_operations() {
 #[tokio::test]
 async fn test_memory_leak_detection() {
     setup_logging();
-    let db_path = "/tmp/test_db_stress_memory_leak";
-    cleanup_test_db(db_path);
+    let db_path = test_db_path("test_db_stress_memory_leak");
+    cleanup_test_db(&db_path);
 
     let schema = create_test_schema();
-    let db = DatabaseOps::create(db_path, schema.clone())
+    let db = DatabaseOps::create(&db_path, schema.clone())
         .await
         .expect("Failed to create database");
 
@@ -393,5 +400,5 @@ async fn test_memory_leak_detection() {
     // This test verifies functional stability under repeated operations
     // Real memory profiling would need tools like Valgrind or heaptrack
 
-    cleanup_test_db(db_path);
+    cleanup_test_db(&db_path);
 }

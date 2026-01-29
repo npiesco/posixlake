@@ -14,7 +14,10 @@ static INIT: Once = Once::new();
 
 fn init_logging() {
     INIT.call_once(|| {
-        let log_file = format!("/tmp/posixlake_nfs_rmdir_test_{}.log", std::process::id());
+        let log_file = std::env::temp_dir()
+            .join(format!("posixlake_nfs_rmdir_test_{}.log", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         let file = std::fs::File::create(&log_file).expect("Failed to create log file");
         eprintln!("[TEST] Logging to: {}", log_file);
         tracing_subscriber::fmt()
@@ -26,9 +29,16 @@ fn init_logging() {
 }
 
 fn create_unique_port(base_port: u16) -> u16 {
-    let thread_id = format!("{:?}", std::thread::current().id());
-    let hash: u16 = thread_id.bytes().map(|b| b as u16).sum::<u16>() % 10000;
-    base_port + hash
+    // Windows mount.exe only supports the standard NFS port (2049)
+    #[cfg(target_os = "windows")]
+    { let _ = base_port; return 2049; }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let thread_id = format!("{:?}", std::thread::current().id());
+        let hash: u16 = thread_id.bytes().map(|b| b as u16).sum::<u16>() % 10000;
+        base_port + hash
+    }
 }
 
 fn check_can_mount() -> bool {
@@ -40,16 +50,25 @@ fn check_can_mount() -> bool {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        // Check if Windows NFS Client feature is installed (mount.exe exists)
+        return std::path::Path::new(r"C:\Windows\system32\mount.exe").exists();
+    }
+
     // Check if passwordless sudo works for mount command
     // The sudoers file only allows specific commands (mount/umount), not generic 'true'
     // since /etc/sudoers.d/ is not readable by regular users
-    std::process::Command::new("sudo")
-        .args(["-n", "mount", "--help"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("sudo")
+            .args(["-n", "mount", "--help"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 fn require_mount_capability() {
@@ -72,7 +91,7 @@ fn require_mount_capability() {
     }
 }
 
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), String> {
+async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::path::PathBuf, String> {
     #[cfg(unix)]
     let is_root = unsafe { libc::geteuid() } == 0;
 
@@ -100,7 +119,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .map_err(|e| format!("Failed to execute mount_nfs: {}", e))?;
 
         if status.success() {
-            Ok(())
+            Ok(mount_point.to_path_buf())
         } else {
             Err(format!(
                 "mount_nfs failed with exit code: {:?}",
@@ -135,7 +154,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
                 .map_err(|e| format!("Failed to execute unshare mount: {}", e))?;
 
             if status.success() {
-                return Ok(());
+                return Ok(mount_point.to_path_buf());
             } else {
                 return Err(format!(
                     "unshare mount failed with exit code: {:?}",
@@ -168,13 +187,38 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .map_err(|e| format!("Failed to execute mount: {}", e))?;
 
         if status.success() {
-            Ok(())
+            Ok(mount_point.to_path_buf())
         } else {
             Err(format!("mount failed with exit code: {:?}", status.code()))
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (port, mount_point);
+        // Find a free drive letter (Z down to D)
+        let letter = ('D'..='Z')
+            .rev()
+            .find(|c| !Path::new(&format!("{}:\\", c)).exists())
+            .ok_or_else(|| "No free drive letter found".to_string())?;
+
+        let status = tokio::process::Command::new("mount")
+            .arg("-o")
+            .arg("anon,nolock")
+            .arg(format!("\\\\{}\\/", host))
+            .arg(format!("{}:", letter))
+            .status()
+            .await
+            .map_err(|e| format!("Failed to execute mount: {}", e))?;
+
+        if status.success() {
+            Ok(std::path::PathBuf::from(format!("{}:\\", letter)))
+        } else {
+            Err(format!("mount failed with exit code: {:?}", status.code()))
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Err("OS mounting not implemented for this platform".to_string())
     }
@@ -233,7 +277,23 @@ async fn unmount_nfs_os(mount_point: &Path) -> Result<(), String> {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        let drive = mount_point.to_string_lossy();
+        let status = tokio::process::Command::new("umount")
+            .arg(drive.as_ref())
+            .status()
+            .await
+            .map_err(|e| format!("Failed to execute umount: {}", e))?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("umount failed: {:?}", status))
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Err("OS unmounting not implemented for this platform".to_string())
     }
@@ -266,7 +326,7 @@ async fn test_nfs_rmdir_removes_empty_directory() {
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
 
@@ -374,7 +434,7 @@ async fn test_nfs_rmdir_fails_on_non_empty_directory() {
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS for non-empty directory test");
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
 

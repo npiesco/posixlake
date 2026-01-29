@@ -18,7 +18,10 @@ static INIT: Once = Once::new();
 /// Initialize tracing for tests
 fn init_logging() {
     INIT.call_once(|| {
-        let log_file = format!("/tmp/posixlake_nfs_test_{}.log", std::process::id());
+        let log_file = std::env::temp_dir()
+            .join(format!("posixlake_nfs_test_{}.log", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
         let file = std::fs::File::create(&log_file).expect("Failed to create log file");
         eprintln!("[TEST] Logging to: {}", log_file);
         tracing_subscriber::fmt()
@@ -34,9 +37,16 @@ fn init_logging() {
 /// Helper to create unique NFS server port based on thread ID
 /// This allows parallel test execution without port conflicts
 fn create_unique_port(base_port: u16) -> u16 {
-    let thread_id = format!("{:?}", std::thread::current().id());
-    let hash: u16 = thread_id.bytes().map(|b| b as u16).sum::<u16>() % 10000;
-    base_port + hash
+    // Windows mount.exe only supports the standard NFS port (2049)
+    #[cfg(target_os = "windows")]
+    { let _ = base_port; return 2049; }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let thread_id = format!("{:?}", std::thread::current().id());
+        let hash: u16 = thread_id.bytes().map(|b| b as u16).sum::<u16>() % 10000;
+        base_port + hash
+    }
 }
 
 /// Check if we can run mount commands (either as root or with passwordless sudo)
@@ -52,16 +62,25 @@ fn check_can_mount() -> bool {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        // Check if Windows NFS Client feature is installed (mount.exe exists)
+        return std::path::Path::new(r"C:\Windows\system32\mount.exe").exists();
+    }
+
     // Check if passwordless sudo works for mount command
     // The sudoers file only allows specific commands (mount/umount), not generic 'true'
     // since /etc/sudoers.d/ is not readable by regular users
-    std::process::Command::new("sudo")
-        .args(["-n", "mount", "--help"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("sudo")
+            .args(["-n", "mount", "--help"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Ensure we can run mount commands, panic with instructions if not
@@ -346,7 +365,7 @@ async fn test_nfs_file_attributes() {
 
 /// Helper to mount NFS using OS command
 /// Requires passwordless sudo (configured via scripts/setup_nfs_sudo.py)
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), String> {
+async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::path::PathBuf, String> {
     // Check if we're running as root
     #[cfg(unix)]
     let is_root = unsafe { libc::geteuid() } == 0;
@@ -393,7 +412,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .map_err(|e| format!("Failed to execute mount_nfs: {}", e))?;
 
         if status.success() {
-            Ok(())
+            Ok(mount_point.to_path_buf())
         } else {
             Err(format!(
                 "mount_nfs failed with exit code: {:?}",
@@ -430,7 +449,7 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
                 .map_err(|e| format!("Failed to execute unshare mount: {}", e))?;
 
             if status.success() {
-                return Ok(());
+                return Ok(mount_point.to_path_buf());
             } else {
                 return Err(format!(
                     "unshare mount failed with exit code: {:?}",
@@ -464,13 +483,38 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<(), S
             .map_err(|e| format!("Failed to execute mount: {}", e))?;
 
         if status.success() {
-            Ok(())
+            Ok(mount_point.to_path_buf())
         } else {
             Err(format!("mount failed with exit code: {:?}", status.code()))
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (port, mount_point);
+        // Find a free drive letter (Z down to D)
+        let letter = ('D'..='Z')
+            .rev()
+            .find(|c| !Path::new(&format!("{}:\\", c)).exists())
+            .ok_or_else(|| "No free drive letter found".to_string())?;
+
+        let status = tokio::process::Command::new("mount")
+            .arg("-o")
+            .arg("anon,nolock")
+            .arg(format!("\\\\{}\\/", host))
+            .arg(format!("{}:", letter))
+            .status()
+            .await
+            .map_err(|e| format!("Failed to execute mount: {}", e))?;
+
+        if status.success() {
+            Ok(std::path::PathBuf::from(format!("{}:\\", letter)))
+        } else {
+            Err(format!("mount failed with exit code: {:?}", status.code()))
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Err("OS mounting not implemented for this platform".to_string())
     }
@@ -536,7 +580,23 @@ async fn unmount_nfs_os(mount_point: &Path) -> Result<(), String> {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        let drive = mount_point.to_string_lossy();
+        let status = tokio::process::Command::new("umount")
+            .arg(drive.as_ref())
+            .status()
+            .await
+            .map_err(|e| format!("Failed to execute umount: {}", e))?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("umount failed: {:?}", status))
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Err("OS unmounting not implemented for this platform".to_string())
     }
@@ -580,7 +640,7 @@ async fn test_real_os_mount_and_posix_commands() {
     // Server is ready - new() waits for ready signal before returning
     // Mount using OS command - THIS MUST WORK
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
 
@@ -666,7 +726,7 @@ async fn test_real_os_write_through_mount() {
     // Server is ready - new() waits for ready signal before returning
     // Mount - THIS MUST WORK
     println!("[MOUNT] Mounting NFS for write test on port {}", port);
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
 
@@ -1497,6 +1557,7 @@ async fn test_nfs_concurrent_multiprocess_access() {
         server.shutdown().await.ok();
         return;
     }
+    let mount_dir = mount_result.unwrap();
 
     // Create mount guard for automatic cleanup on panic/timeout
     let _guard = MountGuard::new(mount_dir.clone());
@@ -1657,6 +1718,7 @@ async fn test_nfs_concurrent_readers_and_writer() {
         server.shutdown().await.ok();
         return;
     }
+    let mount_dir = mount_result.unwrap();
 
     // Create mount guard for automatic cleanup
     let guard = MountGuard::new(mount_dir.clone());
@@ -4269,7 +4331,7 @@ async fn test_nfs_mkdir_creates_directory() {
         .unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
 
@@ -4365,7 +4427,7 @@ async fn test_nfs_cp_creates_file() {
         .unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("NFS mount must succeed");
 
@@ -4475,7 +4537,7 @@ async fn test_mount_guard_cleans_up_on_drop() {
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     // Mount and create guard
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("Mount should succeed");
 
@@ -4546,7 +4608,7 @@ async fn test_mount_guard_skips_if_already_unmounted() {
     let port = create_unique_port(11399);
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
-    mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point)
         .await
         .expect("Mount should succeed");
 
@@ -4571,6 +4633,111 @@ async fn test_mount_guard_skips_if_already_unmounted() {
     drop(guard);
 
     println!("[SUCCESS] MountGuard correctly skipped cleanup for already-unmounted path!");
+
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[serial]
+async fn test_portmapper_listener_on_111() {
+    init_logging();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+    let db = Arc::new(db);
+
+    let port = create_unique_port(12049);
+    let server = NfsServer::new(db.clone(), port).await.unwrap();
+
+    // Give portmapper listener time to bind
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // TCP connect to port 111
+    let connect_result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::net::TcpStream::connect("127.0.0.1:111"),
+    )
+    .await;
+
+    match connect_result {
+        Ok(Ok(mut stream)) => {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+            // PMAPPROC_GETPORT RPC call: program=100003 (NFS), version=3, protocol=TCP(6)
+            // RPC message format: fragment header + XID + msg_type(CALL=0) + rpc_vers(2) +
+            //   prog(100000/PMAP) + vers(2) + proc(3/GETPORT) + auth(0) + verf(0) +
+            //   target_prog(100003) + target_vers(3) + proto(6/TCP) + port(0)
+            let rpc_call: Vec<u8> = vec![
+                // Fragment header: last fragment (0x80) | length (56 bytes)
+                0x80, 0x00, 0x00, 0x38,
+                // XID
+                0x00, 0x00, 0x00, 0x01,
+                // Message type: CALL (0)
+                0x00, 0x00, 0x00, 0x00,
+                // RPC version: 2
+                0x00, 0x00, 0x00, 0x02,
+                // Program: PMAP (100000)
+                0x00, 0x01, 0x86, 0xa0,
+                // Version: 2
+                0x00, 0x00, 0x00, 0x02,
+                // Procedure: GETPORT (3)
+                0x00, 0x00, 0x00, 0x03,
+                // Auth: AUTH_NULL
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                // Verifier: AUTH_NULL
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                // Target program: NFS (100003)
+                0x00, 0x01, 0x86, 0xa3,
+                // Target version: 3
+                0x00, 0x00, 0x00, 0x03,
+                // Protocol: TCP (6)
+                0x00, 0x00, 0x00, 0x06,
+                // Port: 0 (asking for it)
+                0x00, 0x00, 0x00, 0x00,
+            ];
+
+            stream.write_all(&rpc_call).await.expect("Failed to send RPC");
+
+            let mut response = vec![0u8; 128];
+            let n = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                stream.read(&mut response),
+            )
+            .await
+            .expect("Response timeout")
+            .expect("Failed to read response");
+
+            assert!(n >= 28, "Response should contain at least an RPC reply header, got {} bytes", n);
+
+            // The last 4 bytes of the reply body should be the port number
+            // RPC reply: fragment(4) + XID(4) + msg_type(4) + reply_stat(4) + verf(8) + accept_stat(4) + port(4) = 32
+            if n >= 32 {
+                let port_bytes = &response[28..32];
+                let returned_port = u32::from_be_bytes([port_bytes[0], port_bytes[1], port_bytes[2], port_bytes[3]]);
+                assert!(returned_port > 0, "Portmapper should return a non-zero port, got {}", returned_port);
+                println!("[TEST] Portmapper returned port: {}", returned_port);
+            }
+
+            println!("[SUCCESS] Portmapper listener on port 111 is working!");
+        }
+        Ok(Err(e)) => {
+            // Connection refused - port 111 not bound (e.g., no root privileges)
+            println!("[SKIPPED] Cannot connect to port 111 (need root/admin): {}", e);
+            println!("[INFO] Run with sudo/admin to test portmapper binding");
+        }
+        Err(_) => {
+            println!("[SKIPPED] Connection to port 111 timed out");
+        }
+    }
 
     server.shutdown().await.unwrap();
 }
