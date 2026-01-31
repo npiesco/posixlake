@@ -15,7 +15,7 @@ fn create_unique_port(base_port: u16) -> u16 {
 }
 
 #[tokio::test]
-#[serial] // NFS server tests must run serially to avoid port conflicts
+#[serial(nfs)] // NFS server tests must run serially to avoid port conflicts
 async fn test_csv_generation_with_multiple_parquet_files() {
     // Create database
     let temp_dir = TempDir::new().unwrap();

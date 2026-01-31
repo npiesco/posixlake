@@ -7,6 +7,7 @@ pub mod cache;
 pub mod file_views;
 pub mod mmap_cache;
 pub mod server;
+pub mod windows;
 pub mod write_buffer;
 
 use crate::database_ops::DatabaseOps;

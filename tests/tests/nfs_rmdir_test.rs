@@ -4,11 +4,73 @@
 use arrow::datatypes::{DataType, Field, Schema};
 use posixlake::DatabaseOps;
 use posixlake::nfs::{MountGuard, NfsServer};
+#[cfg(target_os = "windows")]
+use posixlake::nfs::windows::{prepare_nfs_mount, find_free_drive, ensure_clean_nfs_state, cleanup_after_test, MOUNT_OPTIONS};
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Once;
 use tempfile::TempDir;
+
+/// Helper: If POSIXLAKE_PORT_LISTENER env var is set, act as a simple TCP listener
+#[cfg(target_os = "windows")]
+fn maybe_run_as_port_listener() -> bool {
+    if let Ok(port_str) = std::env::var("POSIXLAKE_PORT_LISTENER") {
+        if let Ok(port) = port_str.parse::<u16>() {
+            use std::net::TcpListener;
+            if let Ok(_listener) = TcpListener::bind(format!("0.0.0.0:{}", port)) {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
+        }
+        return true;
+    }
+    false
+}
+
+/// Clears NFS client state before other tests run.
+/// Matches nfs_mv_test's init: spawns a port listener, kills it, verifies cleanup.
+#[tokio::test]
+#[serial(nfs)]
+#[cfg(target_os = "windows")]
+async fn test_aaa_init_clean_nfs_state() {
+    if maybe_run_as_port_listener() {
+        return;
+    }
+
+    eprintln!("[TEST] Initializing clean NFS state for rmdir tests...");
+    ensure_clean_nfs_state().await;
+
+    // Spawn a child to hold port 2049, then kill it - this exercises the cleanup
+    let output = tokio::process::Command::new("netstat")
+        .args(["-ano"])
+        .output()
+        .await
+        .expect("netstat failed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+
+    let _child = if !port_2049_in_use {
+        eprintln!("[TEST] Port 2049 free, spawning child listener...");
+        let exe = std::env::current_exe().expect("Failed to get current exe");
+        let child = std::process::Command::new(&exe)
+            .env("POSIXLAKE_PORT_LISTENER", "2049")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("Failed to spawn child listener");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        Some(child)
+    } else {
+        None
+    };
+
+    // Kill the child process using ensure_clean_nfs_state
+    let killed = ensure_clean_nfs_state().await;
+    eprintln!("[TEST] Clean state result: {}", killed);
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    eprintln!("[TEST] NFS state cleared");
+}
 
 static INIT: Once = Once::new();
 
@@ -91,7 +153,10 @@ fn require_mount_capability() {
     }
 }
 
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::path::PathBuf, String> {
+async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path, preferred_drive: Option<char>) -> Result<std::path::PathBuf, String> {
+    #[cfg(unix)]
+    let _ = preferred_drive; // Only used on Windows
+
     #[cfg(unix)]
     let is_root = unsafe { libc::geteuid() } == 0;
 
@@ -196,25 +261,31 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::
     #[cfg(target_os = "windows")]
     {
         let _ = (port, mount_point);
-        // Find a free drive letter (Z down to D)
-        let letter = ('D'..='Z')
-            .rev()
-            .find(|c| !Path::new(&format!("{}:\\", c)).exists())
-            .ok_or_else(|| "No free drive letter found".to_string())?;
 
-        let status = tokio::process::Command::new("mount")
+        // Find drive letter using prod helper
+        let letter = find_free_drive(preferred_drive)
+            .ok_or_else(|| "No free drive letter found".to_string())?;
+        eprintln!("[MOUNT] Selected drive letter: {}:", letter);
+
+        // Use prod helper to restart services and cleanup stale mount
+        prepare_nfs_mount(letter).await;
+
+        let output = tokio::process::Command::new("mount")
             .arg("-o")
-            .arg("anon,nolock")
-            .arg(format!("\\\\{}\\/", host))
+            .arg(MOUNT_OPTIONS)
+            .arg(format!("\\\\{}\\share", host))
             .arg(format!("{}:", letter))
-            .status()
+            .output()
             .await
             .map_err(|e| format!("Failed to execute mount: {}", e))?;
 
-        if status.success() {
+        if output.status.success() {
             Ok(std::path::PathBuf::from(format!("{}:\\", letter)))
         } else {
-            Err(format!("mount failed with exit code: {:?}", status.code()))
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Err(format!("mount failed (exit {:?}): stdout={}, stderr={}",
+                output.status.code(), stdout.trim(), stderr.trim()))
         }
     }
 
@@ -300,7 +371,7 @@ async fn unmount_nfs_os(mount_point: &Path) -> Result<(), String> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_rmdir_removes_empty_directory() {
     init_logging();
     println!("\n[TEST] test_nfs_rmdir_removes_empty_directory - TDD: Testing 'rmdir' command");
@@ -323,10 +394,12 @@ async fn test_nfs_rmdir_removes_empty_directory() {
     let db = DatabaseOps::create(&db_path, schema).await.unwrap();
 
     let port = create_unique_port(14049);
+    #[cfg(target_os = "windows")]
+    ensure_clean_nfs_state().await;
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
-    let mount_point = mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('X'))
         .await
         .expect("NFS mount must succeed");
 
@@ -363,6 +436,15 @@ async fn test_nfs_rmdir_removes_empty_directory() {
     // TDD: Execute rmdir command - THIS WILL FAIL until rmdir is implemented
     println!("[TEST] Executing 'rmdir test_dir'");
 
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "rmdir"])
+        .arg(&test_dir)
+        .output()
+        .await
+        .expect("Failed to execute rmdir command");
+
+    #[cfg(not(windows))]
     let output = tokio::process::Command::new("rmdir")
         .arg(&test_dir)
         .output()
@@ -407,11 +489,13 @@ async fn test_nfs_rmdir_removes_empty_directory() {
         .expect("Unmount must succeed");
 
     server.shutdown().await.unwrap();
+    #[cfg(target_os = "windows")]
+    cleanup_after_test().await;
     println!("[SUCCESS] Test completed - rmdir command fully functional!");
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_rmdir_fails_on_non_empty_directory() {
     init_logging();
     println!(
@@ -431,10 +515,12 @@ async fn test_nfs_rmdir_fails_on_non_empty_directory() {
     let db = DatabaseOps::create(&db_path, schema).await.unwrap();
 
     let port = create_unique_port(14050);
+    #[cfg(target_os = "windows")]
+    ensure_clean_nfs_state().await;
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS for non-empty directory test");
-    let mount_point = mount_nfs_os("localhost", port, &mount_point)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('V'))
         .await
         .expect("NFS mount must succeed");
 
@@ -458,6 +544,15 @@ async fn test_nfs_rmdir_fails_on_non_empty_directory() {
     // TDD: Execute rmdir command - should FAIL because directory is not empty
     println!("[TEST] Executing 'rmdir non_empty_dir' (should fail - directory not empty)");
 
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "rmdir"])
+        .arg(&test_dir)
+        .output()
+        .await
+        .expect("Failed to execute rmdir command");
+
+    #[cfg(not(windows))]
     let output = tokio::process::Command::new("rmdir")
         .arg(&test_dir)
         .output()
@@ -484,5 +579,7 @@ async fn test_nfs_rmdir_fails_on_non_empty_directory() {
         .expect("Unmount must succeed");
 
     server.shutdown().await.unwrap();
+    #[cfg(target_os = "windows")]
+    cleanup_after_test().await;
     println!("[SUCCESS] Non-empty directory test completed!");
 }

@@ -11,6 +11,8 @@
 use arrow::datatypes::{DataType, Field, Schema};
 use clap::{Parser, Subcommand};
 use posixlake::nfs::NfsServer;
+#[cfg(target_os = "windows")]
+use posixlake::nfs::windows::MOUNT_OPTIONS;
 use posixlake::{error::Result, DatabaseOps};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -251,9 +253,8 @@ async fn main() -> Result<()> {
                     eprintln!("  sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
                     #[cfg(target_os = "windows")]
                     eprintln!(
-                        "  mount -o anon,nolock,vers=3,port={},mountport={} \\\\localhost\\ {}",
-                        port,
-                        port,
+                        "  mount -o {} \\\\localhost\\share {}",
+                        MOUNT_OPTIONS,
                         mount_point.display()
                     );
                     eprintln!();
@@ -278,9 +279,8 @@ async fn main() -> Result<()> {
                     eprintln!("  sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
                     #[cfg(target_os = "windows")]
                     eprintln!(
-                        "  mount -o anon,nolock,vers=3,port={},mountport={} \\\\localhost\\ {}",
-                        port,
-                        port,
+                        "  mount -o {} \\\\localhost\\share {}",
+                        MOUNT_OPTIONS,
                         mount_point.display()
                     );
                     eprintln!();
