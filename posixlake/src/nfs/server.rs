@@ -135,7 +135,7 @@ impl PosixLakeFilesystem {
         let now = Self::now();
         fattr3 {
             ftype: ftype3::NF3REG,
-            mode: 0o644,
+            mode: 0o666,
             nlink: 1,
             uid: 0, // Match Windows NFS client auth
             gid: 0,
@@ -351,7 +351,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     let size = metadata.content.len() as u64;
                     let attr = fattr3 {
                         ftype: ftype3::NF3REG,
-                        mode: 0o644,
+                        mode: 0o666,
                         nlink: 1,
                         uid: 0, // Match Windows NFS client auth
                         gid: 0,
@@ -390,7 +390,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 // Return current attributes with stable timestamps
                 let attr = fattr3 {
                     ftype: ftype3::NF3REG,
-                    mode: 0o644, // Ignore mode changes for simplicity
+                    mode: 0o666, // Ignore mode changes for simplicity
                     nlink: 1,
                     uid: 0, // Match Windows NFS client auth
                     gid: 0,
@@ -532,10 +532,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
     async fn write(
         &self,
         id: fileid3,
-        _offset: u64,
+        offset: u64,
         data: &[u8],
     ) -> std::result::Result<fattr3, nfsstat3> {
-        info!("NFS WRITE: id={}, data_len={}", id, data.len());
+        info!("NFS WRITE: id={}, offset={}, data_len={}", id, offset, data.len());
 
         match id {
             DATA_CSV_ID => {
@@ -559,7 +559,38 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 let db = self.db.clone();
                 let view = CsvFileView::new(db);
 
-                view.apply_write(data, cached_content).await.map_err(|e| {
+                // Handle partial writes (append) by combining with existing content
+                let write_data = if offset > 0 {
+                    // Get current content
+                    let current = match &cached_content {
+                        Some(c) => c.clone(),
+                        None => view.generate_csv().await.map_err(|e| {
+                            error!("Failed to get current content for append: {}", e);
+                            nfsstat3::NFS3ERR_IO
+                        })?,
+                    };
+
+                    let offset_usize = offset as usize;
+                    if offset_usize <= current.len() {
+                        // Combine: content before offset + new data
+                        let mut combined = current[..offset_usize].to_vec();
+                        combined.extend_from_slice(data);
+                        info!("Append write: existing {} bytes + {} new bytes at offset {}",
+                              current.len(), data.len(), offset);
+                        combined
+                    } else {
+                        // Offset beyond current content - pad with zeros (unusual case)
+                        let mut combined = current.clone();
+                        combined.resize(offset_usize, 0);
+                        combined.extend_from_slice(data);
+                        combined
+                    }
+                } else {
+                    // Offset 0 - treat as complete write
+                    data.to_vec()
+                };
+
+                view.apply_write(&write_data, cached_content).await.map_err(|e| {
                     error!("Write error: {}", e);
                     nfsstat3::NFS3ERR_IO
                 })?;
@@ -612,7 +643,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     // Create attributes with stable timestamps
                     let attr = fattr3 {
                         ftype: ftype3::NF3REG,
-                        mode: 0o644,
+                        mode: 0o666,
                         nlink: 1,
                         uid: 0, // Match Windows NFS client auth
                         gid: 0,
@@ -697,7 +728,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
         // Create file attributes using stored timestamps
         let attr = fattr3 {
             ftype: ftype3::NF3REG,
-            mode: 0o644,
+            mode: 0o666,
             nlink: 1,
             uid: 0, // Match Windows NFS client auth
             gid: 0,
@@ -925,7 +956,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     file_metadata.file_id,
                     fattr3 {
                         ftype: ftype3::NF3REG,
-                        mode: 0o644,
+                        mode: 0o666,
                         nlink: 1,
                         uid: 0, // Match Windows NFS client auth
                         gid: 0,
@@ -1040,7 +1071,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                             name: file_name.as_bytes().into(),
                             attr: fattr3 {
                                 ftype: ftype3::NF3REG,
-                                mode: 0o644,
+                                mode: 0o666,
                                 nlink: 1,
                                 uid: 0, // Match Windows NFS client auth
                                 gid: 0,
@@ -1130,7 +1161,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                             name: file_name.as_bytes().into(),
                             attr: fattr3 {
                                 ftype: ftype3::NF3REG,
-                                mode: 0o644,
+                                mode: 0o666,
                                 nlink: 1,
                                 uid: 0, // Match Windows NFS client auth
                                 gid: 0,
@@ -1172,7 +1203,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                             name: file_name.as_bytes().into(),
                             attr: fattr3 {
                                 ftype: ftype3::NF3REG,
-                                mode: 0o644,
+                                mode: 0o666,
                                 nlink: 1,
                                 uid: 0, // Match Windows NFS client auth
                                 gid: 0,

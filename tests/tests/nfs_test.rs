@@ -789,6 +789,7 @@ async fn test_real_os_write_through_mount() {
             .expect("Failed to open file for append");
         file.write_all(b"\n2,Bob").await.expect("Failed to write");
         file.flush().await.expect("Failed to flush");
+        file.sync_all().await.expect("Failed to sync");
     }
     println!("[SUCCESS] Write completed");
 
