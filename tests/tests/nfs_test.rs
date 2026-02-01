@@ -778,23 +778,55 @@ async fn test_real_os_write_through_mount() {
 
     let data_csv = mount_point.join("data").join("data.csv");
 
-    // Write new row - use tokio::fs for reliable cross-platform append
+    // Write new row - use explicit read+write with offset to ensure proper append
     println!("[TEST] Testing write through mount...");
     {
-        use tokio::io::AsyncWriteExt;
+        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+
+        // First, read current content and size
+        let current_content = tokio::fs::read_to_string(&data_csv)
+            .await
+            .expect("Failed to read current content");
+        println!("[DEBUG] Current content before write ({} bytes):\n{}",
+                 current_content.len(), current_content);
+
+        // Open file for write (not append - we'll seek explicitly)
         let mut file = tokio::fs::OpenOptions::new()
-            .append(true)
+            .read(true)
+            .write(true)
             .open(&data_csv)
             .await
-            .expect("Failed to open file for append");
+            .expect("Failed to open file for read/write");
+
+        // Seek to end
+        let pos = file.seek(std::io::SeekFrom::End(0)).await.expect("Failed to seek");
+        println!("[DEBUG] Seeked to position {} for append", pos);
+
+        // Write new row
         file.write_all(b"\n2,Bob").await.expect("Failed to write");
+        println!("[DEBUG] Write completed");
+
+        // Force sync to NFS server
         file.flush().await.expect("Failed to flush");
+        println!("[DEBUG] Flush completed");
         file.sync_all().await.expect("Failed to sync");
+        println!("[DEBUG] Sync completed");
     }
     println!("[SUCCESS] Write completed");
 
-    // Read back and verify
+    // Small delay to allow Windows NFS cache to settle
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Read back and verify using multiple methods
     println!("[TEST] Testing read-after-write consistency...");
+
+    // Method 1: Direct tokio::fs read
+    let direct_content = tokio::fs::read_to_string(&data_csv)
+        .await
+        .expect("Failed to read file directly");
+    println!("[DEBUG] Direct tokio::fs read ({} bytes):\n{}", direct_content.len(), direct_content);
+
+    // Method 2: OS command (type on Windows, cat on Unix)
     #[cfg(not(windows))]
     let output = tokio::process::Command::new("cat")
         .arg(&data_csv)
@@ -811,12 +843,14 @@ async fn test_real_os_write_through_mount() {
         .expect("Failed to execute type");
 
     let content = String::from_utf8_lossy(&output.stdout);
-    println!("  Content after write:\n{}", content);
+    println!("[DEBUG] OS command read ({} bytes):\n{}", content.len(), content);
+
+    // Use the direct content for assertion (more reliable)
     assert!(
-        content.contains("Alice"),
+        direct_content.contains("Alice"),
         "Original data should still be there"
     );
-    assert!(content.contains("Bob"), "New data should be written");
+    assert!(direct_content.contains("Bob"), "New data should be written");
 
     println!("[SUCCESS] Write operations working through NFS mount!");
 

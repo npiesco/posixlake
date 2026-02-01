@@ -536,6 +536,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
         data: &[u8],
     ) -> std::result::Result<fattr3, nfsstat3> {
         info!("NFS WRITE: id={}, offset={}, data_len={}", id, offset, data.len());
+        debug!("NFS WRITE data preview: {:?}", String::from_utf8_lossy(&data[..data.len().min(100)]));
 
         match id {
             DATA_CSV_ID => {
@@ -590,10 +591,15 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     data.to_vec()
                 };
 
+                info!("NFS WRITE: final write_data size={}, preview={:?}",
+                      write_data.len(),
+                      String::from_utf8_lossy(&write_data[..write_data.len().min(100)]));
+
                 view.apply_write(&write_data, cached_content).await.map_err(|e| {
                     error!("Write error: {}", e);
                     nfsstat3::NFS3ERR_IO
                 })?;
+                info!("NFS WRITE: apply_write completed successfully");
 
                 // UPDATE content cache after write (don't invalidate!)
                 // This keeps subsequent reads fast by avoiding CSV regeneration
@@ -604,6 +610,9 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         nfsstat3::NFS3ERR_IO
                     })?;
                     let fresh_size = fresh_csv.len();
+                    info!("NFS WRITE: fresh CSV after write ({} bytes): {:?}",
+                          fresh_size,
+                          String::from_utf8_lossy(&fresh_csv[..fresh_csv.len().min(200)]));
 
                     // Update cache with new content
                     if let Err(e) = cache.insert("csv:data".to_string(), fresh_csv).await {
