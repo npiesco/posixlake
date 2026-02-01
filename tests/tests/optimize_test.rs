@@ -4,6 +4,7 @@ use arrow::record_batch::RecordBatch;
 use posixlake::Result;
 use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tracing::info;
 
 fn setup_tracing() {
@@ -30,8 +31,9 @@ fn setup_tracing() {
 async fn test_optimize_compaction() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_optimize";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake OPTIMIZE Test ===");
 
@@ -42,8 +44,8 @@ async fn test_optimize_compaction() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
-    info!("  Created database at: {}", db_path);
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
+    info!("  Created database at: {}", db_path_str);
 
     // Insert 20 small batches (each with just 5 rows) to create many small files
     info!("  Inserting 20 small batches (5 rows each)...");
@@ -70,7 +72,7 @@ async fn test_optimize_compaction() -> Result<()> {
     info!("  Total rows inserted: 100 (20 batches × 5 rows)");
 
     // Count Parquet files before optimization
-    let files_before = count_parquet_files(db_path)?;
+    let files_before = count_parquet_files(db_path_str)?;
     info!("  Parquet files BEFORE optimize: {}", files_before);
     assert!(
         files_before >= 10,
@@ -79,7 +81,7 @@ async fn test_optimize_compaction() -> Result<()> {
     );
 
     // Get total size before
-    let size_before = get_total_parquet_size(db_path)?;
+    let size_before = get_total_parquet_size(db_path_str)?;
     info!("  Total size BEFORE optimize: {} bytes", size_before);
 
     // Verify data integrity before optimization
@@ -104,7 +106,7 @@ async fn test_optimize_compaction() -> Result<()> {
     // Count Parquet files after optimization
     // NOTE: Delta Lake OPTIMIZE does not physically delete old files - they remain for time travel
     // VACUUM is required to physically remove old Parquet files
-    let files_after = count_parquet_files(db_path)?;
+    let files_after = count_parquet_files(db_path_str)?;
     info!(
         "  Parquet files AFTER optimize: {} (includes old files for time travel)",
         files_after
@@ -129,7 +131,7 @@ async fn test_optimize_compaction() -> Result<()> {
     );
 
     // Get total size after
-    let size_after = get_total_parquet_size(db_path)?;
+    let size_after = get_total_parquet_size(db_path_str)?;
     info!("  Total size AFTER optimize: {} bytes", size_after);
 
     // Size might be similar or slightly different due to recompression
@@ -189,9 +191,7 @@ async fn test_optimize_compaction() -> Result<()> {
         files_before
     );
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }
 
@@ -202,8 +202,9 @@ async fn test_optimize_compaction() -> Result<()> {
 async fn test_optimize_with_filter() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_optimize_filter";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake OPTIMIZE with Filter Test ===");
 
@@ -215,7 +216,7 @@ async fn test_optimize_with_filter() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
     info!("  Created database");
 
     // Insert data for category "A"
@@ -246,7 +247,7 @@ async fn test_optimize_with_filter() -> Result<()> {
 
     info!("  Inserted 20 small batches (10 for each category)");
 
-    let files_before = count_parquet_files(db_path)?;
+    let files_before = count_parquet_files(db_path_str)?;
     info!("  Parquet files before: {}", files_before);
 
     // Try to optimize with filter - should return error for non-partitioned table
@@ -268,7 +269,7 @@ async fn test_optimize_with_filter() -> Result<()> {
     info!("  Running basic OPTIMIZE without filter...");
     db.optimize().await?;
 
-    let files_after = count_parquet_files(db_path)?;
+    let files_after = count_parquet_files(db_path_str)?;
     info!("  Parquet files after basic optimize: {}", files_after);
 
     // Verify all data is still intact
@@ -283,9 +284,7 @@ async fn test_optimize_with_filter() -> Result<()> {
 
     info!("  Data integrity verified: all 20 rows present");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }
 
@@ -294,8 +293,9 @@ async fn test_optimize_with_filter() -> Result<()> {
 async fn test_optimize_with_target_size() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_optimize_size";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake OPTIMIZE with Target Size Test ===");
 
@@ -304,7 +304,7 @@ async fn test_optimize_with_target_size() -> Result<()> {
         Field::new("data", DataType::Utf8, false),
     ]));
 
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
 
     // Insert larger batches
     for i in 0..50 {
@@ -323,16 +323,16 @@ async fn test_optimize_with_target_size() -> Result<()> {
 
     info!("  Inserted 5000 rows in 50 batches");
 
-    let files_before = count_parquet_files(db_path)?;
-    let size_before = get_total_parquet_size(db_path)?;
+    let files_before = count_parquet_files(db_path_str)?;
+    let size_before = get_total_parquet_size(db_path_str)?;
     info!("  Before: {} files, {} bytes", files_before, size_before);
 
     // Optimize with target file size (1MB)
     info!("  Running OPTIMIZE with target size: 1MB");
     db.optimize_with_target_size(1024 * 1024).await?;
 
-    let files_after = count_parquet_files(db_path)?;
-    let size_after = get_total_parquet_size(db_path)?;
+    let files_after = count_parquet_files(db_path_str)?;
+    let size_after = get_total_parquet_size(db_path_str)?;
     info!(
         "  After: {} files, {} bytes (includes old files for time travel)",
         files_after, size_after
@@ -359,9 +359,7 @@ async fn test_optimize_with_target_size() -> Result<()> {
 
     info!("  Data integrity verified");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }
 

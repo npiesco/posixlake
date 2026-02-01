@@ -141,6 +141,7 @@ impl NfsServer {
 
         // Spawn portmapper listener on port 111
         let (portmap_shutdown_tx, mut portmap_shutdown_rx) = mpsc::channel(1);
+        let (portmap_ready_tx, portmap_ready_rx) = mpsc::channel::<bool>(1);
         let nfs_port = port; // Capture NFS port to tell portmapper
         let portmap_handle = tokio::spawn(async move {
             let addr = "127.0.0.1:111";
@@ -149,10 +150,12 @@ impl NfsServer {
             let mut listener = match NFSTcpListener::bind(addr, portmap_fs).await {
                 Ok(l) => {
                     info!("Portmapper listener bound successfully on port 111");
+                    portmap_ready_tx.send(true).await.ok();
                     l
                 }
                 Err(e) => {
                     warn!("Failed to bind portmapper on port 111 (needs root/admin): {:?}", e);
+                    portmap_ready_tx.send(false).await.ok(); // Signal failure but don't block
                     return;
                 }
             };
@@ -174,32 +177,62 @@ impl NfsServer {
             info!("Portmapper listener stopped");
         });
 
-        // Wait for server to be ready
+        // Wait for both NFS server and portmapper to be ready
         let mut ready_rx = ready_rx;
-        match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut portmap_ready_rx = portmap_ready_rx;
+
+        // Wait for NFS server first (required)
+        let nfs_ready = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             ready_rx.recv().await
         })
-        .await
-        {
+        .await;
+
+        match nfs_ready {
             Ok(Some(())) => {
                 info!("NFS server is ready");
-                Ok(Self {
-                    db,
-                    shutdown_tx: Some(shutdown_tx),
-                    portmap_shutdown_tx: Some(portmap_shutdown_tx),
-                    ready: true,
-                    filesystem: server_fs,
-                    server_handle: Some(server_handle),
-                    portmap_handle: Some(portmap_handle),
-                })
             }
-            Ok(None) => Err(Error::InvalidOperation(
-                "NFS server failed to start".to_string(),
-            )),
-            Err(_) => Err(Error::InvalidOperation(
-                "NFS server startup timeout".to_string(),
-            )),
+            Ok(None) => {
+                return Err(Error::InvalidOperation(
+                    "NFS server failed to start".to_string(),
+                ));
+            }
+            Err(_) => {
+                return Err(Error::InvalidOperation(
+                    "NFS server startup timeout".to_string(),
+                ));
+            }
         }
+
+        // Wait for portmapper (optional - may fail without admin)
+        let portmap_ready = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            portmap_ready_rx.recv().await
+        })
+        .await;
+
+        match portmap_ready {
+            Ok(Some(true)) => {
+                info!("Portmapper is ready");
+            }
+            Ok(Some(false)) => {
+                info!("Portmapper failed to bind (continuing without it)");
+            }
+            Ok(None) => {
+                warn!("Portmapper channel closed unexpectedly");
+            }
+            Err(_) => {
+                warn!("Portmapper startup timeout (continuing without it)");
+            }
+        }
+
+        Ok(Self {
+            db,
+            shutdown_tx: Some(shutdown_tx),
+            portmap_shutdown_tx: Some(portmap_shutdown_tx),
+            ready: true,
+            filesystem: server_fs,
+            server_handle: Some(server_handle),
+            portmap_handle: Some(portmap_handle),
+        })
     }
 
     /// Check if server is ready
