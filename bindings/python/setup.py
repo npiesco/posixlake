@@ -12,7 +12,7 @@ else:
 
 # Read the README file for PyPI description
 this_directory = Path(__file__).parent
-long_description = (this_directory / "README.md").read_text()
+long_description = (this_directory / "README.md").read_text(encoding="utf-8")
 
 # Force platform-specific wheel since we have native code
 class BinaryDistribution(Distribution):
