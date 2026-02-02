@@ -16,7 +16,8 @@ use std::path::Path;
 /// - rsize/wsize=128: small buffer sizes for compatibility
 /// - timeout=60: 60 second timeout
 /// - retry=2: retry twice on failure
-pub const MOUNT_OPTIONS: &str = "anon,nolock,mtype=soft,fileaccess=6,lang=ansi,rsize=128,wsize=128,timeout=60,retry=2";
+pub const MOUNT_OPTIONS: &str =
+    "anon,nolock,mtype=soft,fileaccess=6,lang=ansi,rsize=128,wsize=128,timeout=60,retry=2";
 use std::time::Duration;
 use tokio::process::Command;
 use tracing::info;
@@ -35,11 +36,7 @@ pub async fn kill_processes_on_nfs_ports() -> bool {
         let mut any_in_use = false;
 
         for port in ports {
-            if let Ok(output) = Command::new("netstat")
-                .args(["-ano"])
-                .output()
-                .await
-            {
+            if let Ok(output) = Command::new("netstat").args(["-ano"]).output().await {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
                     let port_str = format!(":{}", port);
@@ -51,7 +48,12 @@ pub async fn kill_processes_on_nfs_ports() -> bool {
                                     .args(["/F", "/PID", pid_str])
                                     .output()
                                     .await;
-                                info!("Killed PID {} on port {} (attempt {})", pid_str, port, attempt + 1);
+                                info!(
+                                    "Killed PID {} on port {} (attempt {})",
+                                    pid_str,
+                                    port,
+                                    attempt + 1
+                                );
                             }
                         }
                     }
@@ -69,14 +71,13 @@ pub async fn kill_processes_on_nfs_ports() -> bool {
 
     // Final verification
     for port in ports {
-        if let Ok(output) = Command::new("netstat")
-            .args(["-ano"])
-            .output()
-            .await
-        {
+        if let Ok(output) = Command::new("netstat").args(["-ano"]).output().await {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let port_str = format!(":{}", port);
-            if stdout.lines().any(|l| l.contains(&port_str) && l.contains("LISTENING")) {
+            if stdout
+                .lines()
+                .any(|l| l.contains(&port_str) && l.contains("LISTENING"))
+            {
                 info!("Warning: Port {} still in use after kill attempts", port);
                 return false;
             }
@@ -102,14 +103,13 @@ pub async fn wait_for_ports_free(timeout_secs: u64) -> bool {
     while start.elapsed() < timeout {
         let mut all_free = true;
         for port in ports {
-            if let Ok(output) = Command::new("netstat")
-                .args(["-ano"])
-                .output()
-                .await
-            {
+            if let Ok(output) = Command::new("netstat").args(["-ano"]).output().await {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let port_str = format!(":{}", port);
-                if stdout.lines().any(|l| l.contains(&port_str) && l.contains("LISTENING")) {
+                if stdout
+                    .lines()
+                    .any(|l| l.contains(&port_str) && l.contains("LISTENING"))
+                {
                     all_free = false;
                     break;
                 }
@@ -190,10 +190,7 @@ pub async fn cleanup_stale_mount(drive_letter: char) {
 
     let drive = format!("{}:", drive_letter);
 
-    let umount_result = Command::new("umount")
-        .args(["-f", &drive])
-        .output()
-        .await;
+    let umount_result = Command::new("umount").args(["-f", &drive]).output().await;
     if let Ok(out) = &umount_result {
         if !out.status.success() {
             info!("umount {}: failed (expected if not mounted)", drive_letter);
@@ -208,7 +205,10 @@ pub async fn cleanup_stale_mount(drive_letter: char) {
         .await;
     if let Ok(out) = &net_result {
         if !out.status.success() {
-            info!("net use /delete {}: failed (expected if not mapped)", drive_letter);
+            info!(
+                "net use /delete {}: failed (expected if not mapped)",
+                drive_letter
+            );
         } else {
             info!("net use /delete {}: success", drive_letter);
         }

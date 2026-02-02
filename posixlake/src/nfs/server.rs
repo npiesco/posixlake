@@ -85,7 +85,10 @@ impl PosixLakeFilesystem {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        info!("Creating PosixLakeFilesystem instance {} with cache", instance_id);
+        info!(
+            "Creating PosixLakeFilesystem instance {} with cache",
+            instance_id
+        );
         Self {
             db,
             parquet_files: Arc::new(Mutex::new(HashMap::new())),
@@ -218,10 +221,12 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 } else {
                     // Check created directories
                     let created_dirs = self.created_dirs.lock().await;
-                    debug!("NFS LOOKUP [inst={}]: created_dirs has {} entries: {:?}",
-                           self.instance_id,
-                           created_dirs.len(),
-                           created_dirs.keys().collect::<Vec<_>>());
+                    debug!(
+                        "NFS LOOKUP [inst={}]: created_dirs has {} entries: {:?}",
+                        self.instance_id,
+                        created_dirs.len(),
+                        created_dirs.keys().collect::<Vec<_>>()
+                    );
                     if let Some(&dir_id) = created_dirs.get(&(ROOT_ID, name.to_string())) {
                         debug!("NFS LOOKUP: found dir '{}' with id {}", name, dir_id);
                         return Ok(dir_id);
@@ -535,8 +540,16 @@ impl NFSFileSystem for PosixLakeFilesystem {
         offset: u64,
         data: &[u8],
     ) -> std::result::Result<fattr3, nfsstat3> {
-        info!("NFS WRITE: id={}, offset={}, data_len={}", id, offset, data.len());
-        debug!("NFS WRITE data preview: {:?}", String::from_utf8_lossy(&data[..data.len().min(100)]));
+        info!(
+            "NFS WRITE: id={}, offset={}, data_len={}",
+            id,
+            offset,
+            data.len()
+        );
+        debug!(
+            "NFS WRITE data preview: {:?}",
+            String::from_utf8_lossy(&data[..data.len().min(100)])
+        );
 
         match id {
             DATA_CSV_ID => {
@@ -576,8 +589,12 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         // Combine: content before offset + new data
                         let mut combined = current[..offset_usize].to_vec();
                         combined.extend_from_slice(data);
-                        info!("Append write: existing {} bytes + {} new bytes at offset {}",
-                              current.len(), data.len(), offset);
+                        info!(
+                            "Append write: existing {} bytes + {} new bytes at offset {}",
+                            current.len(),
+                            data.len(),
+                            offset
+                        );
                         combined
                     } else {
                         // Offset beyond current content - pad with zeros (unusual case)
@@ -591,14 +608,18 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     data.to_vec()
                 };
 
-                info!("NFS WRITE: final write_data size={}, preview={:?}",
-                      write_data.len(),
-                      String::from_utf8_lossy(&write_data[..write_data.len().min(100)]));
+                info!(
+                    "NFS WRITE: final write_data size={}, preview={:?}",
+                    write_data.len(),
+                    String::from_utf8_lossy(&write_data[..write_data.len().min(100)])
+                );
 
-                view.apply_write(&write_data, cached_content).await.map_err(|e| {
-                    error!("Write error: {}", e);
-                    nfsstat3::NFS3ERR_IO
-                })?;
+                view.apply_write(&write_data, cached_content)
+                    .await
+                    .map_err(|e| {
+                        error!("Write error: {}", e);
+                        nfsstat3::NFS3ERR_IO
+                    })?;
                 info!("NFS WRITE: apply_write completed successfully");
 
                 // UPDATE content cache after write (don't invalidate!)
@@ -610,9 +631,11 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         nfsstat3::NFS3ERR_IO
                     })?;
                     let fresh_size = fresh_csv.len();
-                    info!("NFS WRITE: fresh CSV after write ({} bytes): {:?}",
-                          fresh_size,
-                          String::from_utf8_lossy(&fresh_csv[..fresh_csv.len().min(200)]));
+                    info!(
+                        "NFS WRITE: fresh CSV after write ({} bytes): {:?}",
+                        fresh_size,
+                        String::from_utf8_lossy(&fresh_csv[..fresh_csv.len().min(200)])
+                    );
 
                     // Update cache with new content
                     if let Err(e) = cache.insert("csv:data".to_string(), fresh_csv).await {
@@ -803,7 +826,11 @@ impl NFSFileSystem for PosixLakeFilesystem {
         created_dirs.insert((dirid, name.to_string()), new_dir_id);
         debug!(
             "NFS MKDIR [inst={}]: inserted ({}, {}) -> {}, created_dirs now has {} entries",
-            self.instance_id, dirid, name, new_dir_id, created_dirs.len()
+            self.instance_id,
+            dirid,
+            name,
+            new_dir_id,
+            created_dirs.len()
         );
         drop(created_dirs);
 
@@ -1270,7 +1297,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
             if component.is_empty() {
                 continue;
             }
-            info!("NFS PATH_TO_ID: looking up '{}' in dir {}", component, current_id);
+            info!(
+                "NFS PATH_TO_ID: looking up '{}' in dir {}",
+                component, current_id
+            );
             match self.lookup(current_id, &component.as_bytes().into()).await {
                 Ok(id) => {
                     info!("NFS PATH_TO_ID: found '{}' -> id {}", component, id);
@@ -1283,7 +1313,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
             }
         }
 
-        info!("NFS PATH_TO_ID: resolved path '{}' to id {}", path_str, current_id);
+        info!(
+            "NFS PATH_TO_ID: resolved path '{}' to id {}",
+            path_str, current_id
+        );
         Ok(current_id)
     }
 }

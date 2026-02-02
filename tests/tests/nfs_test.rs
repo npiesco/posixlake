@@ -4,9 +4,11 @@
 use arrow::array::{Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use posixlake::DatabaseOps;
-use posixlake::nfs::{MountGuard, NfsServer};
 #[cfg(target_os = "windows")]
-use posixlake::nfs::windows::{prepare_nfs_mount, find_free_drive, ensure_clean_nfs_state, MOUNT_OPTIONS};
+use posixlake::nfs::windows::{
+    MOUNT_OPTIONS, ensure_clean_nfs_state, find_free_drive, prepare_nfs_mount,
+};
+use posixlake::nfs::{MountGuard, NfsServer};
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
@@ -54,7 +56,10 @@ fn init_logging() {
 fn create_unique_port(base_port: u16) -> u16 {
     // Windows mount.exe only supports the standard NFS port (2049)
     #[cfg(target_os = "windows")]
-    { let _ = base_port; return 2049; }
+    {
+        let _ = base_port;
+        2049
+    }
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -80,7 +85,7 @@ fn check_can_mount() -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check if Windows NFS Client feature is installed (mount.exe exists)
-        return std::path::Path::new(r"C:\Windows\system32\mount.exe").exists();
+        std::path::Path::new(r"C:\Windows\system32\mount.exe").exists()
     }
 
     // Check if passwordless sudo works for mount command
@@ -380,7 +385,11 @@ async fn test_nfs_file_attributes() {
 
 /// Helper to mount NFS using OS command
 /// Requires passwordless sudo (configured via scripts/setup_nfs_sudo.py)
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::path::PathBuf, String> {
+async fn mount_nfs_os(
+    host: &str,
+    port: u16,
+    mount_point: &Path,
+) -> Result<std::path::PathBuf, String> {
     // Check if we're running as root
     #[cfg(unix)]
     let is_root = unsafe { libc::geteuid() } == 0;
@@ -509,8 +518,8 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::
         let _ = (port, mount_point);
 
         // Find drive letter using prod helper
-        let letter = find_free_drive(None)
-            .ok_or_else(|| "No free drive letter found".to_string())?;
+        let letter =
+            find_free_drive(None).ok_or_else(|| "No free drive letter found".to_string())?;
         eprintln!("[MOUNT] Selected drive letter: {}:", letter);
 
         // Use prod helper to restart services and cleanup stale mount
@@ -717,7 +726,10 @@ async fn test_real_os_mount_and_posix_commands() {
     #[cfg(not(windows))]
     assert!(listing.contains("data.csv"), "Should list data.csv");
     #[cfg(windows)]
-    assert!(listing.to_lowercase().contains("data.csv"), "Should list data.csv");
+    assert!(
+        listing.to_lowercase().contains("data.csv"),
+        "Should list data.csv"
+    );
 
     println!("[SUCCESS] All POSIX commands working through NFS mount!");
 
@@ -787,8 +799,11 @@ async fn test_real_os_write_through_mount() {
         let current_content = tokio::fs::read_to_string(&data_csv)
             .await
             .expect("Failed to read current content");
-        println!("[DEBUG] Current content before write ({} bytes):\n{}",
-                 current_content.len(), current_content);
+        println!(
+            "[DEBUG] Current content before write ({} bytes):\n{}",
+            current_content.len(),
+            current_content
+        );
 
         // Open file for write (not append - we'll seek explicitly)
         let mut file = tokio::fs::OpenOptions::new()
@@ -799,7 +814,10 @@ async fn test_real_os_write_through_mount() {
             .expect("Failed to open file for read/write");
 
         // Seek to end
-        let pos = file.seek(std::io::SeekFrom::End(0)).await.expect("Failed to seek");
+        let pos = file
+            .seek(std::io::SeekFrom::End(0))
+            .await
+            .expect("Failed to seek");
         println!("[DEBUG] Seeked to position {} for append", pos);
 
         // Write new row
@@ -824,7 +842,11 @@ async fn test_real_os_write_through_mount() {
     let direct_content = tokio::fs::read_to_string(&data_csv)
         .await
         .expect("Failed to read file directly");
-    println!("[DEBUG] Direct tokio::fs read ({} bytes):\n{}", direct_content.len(), direct_content);
+    println!(
+        "[DEBUG] Direct tokio::fs read ({} bytes):\n{}",
+        direct_content.len(),
+        direct_content
+    );
 
     // Method 2: OS command (type on Windows, cat on Unix)
     #[cfg(not(windows))]
@@ -843,7 +865,11 @@ async fn test_real_os_write_through_mount() {
         .expect("Failed to execute type");
 
     let content = String::from_utf8_lossy(&output.stdout);
-    println!("[DEBUG] OS command read ({} bytes):\n{}", content.len(), content);
+    println!(
+        "[DEBUG] OS command read ({} bytes):\n{}",
+        content.len(),
+        content
+    );
 
     // Use the direct content for assertion (more reliable)
     assert!(
@@ -4582,7 +4608,11 @@ async fn test_nfs_cp_creates_file() {
     // Use -X flag to not copy extended attributes
     #[cfg(target_os = "macos")]
     let output = tokio::process::Command::new("cp")
-        .args(["-X", source_file.to_str().unwrap(), dest_file.to_str().unwrap()])
+        .args([
+            "-X",
+            source_file.to_str().unwrap(),
+            dest_file.to_str().unwrap(),
+        ])
         .output()
         .await
         .expect("Failed to execute cp");
@@ -4820,36 +4850,26 @@ async fn test_portmapper_listener_on_111() {
             //   target_prog(100003) + target_vers(3) + proto(6/TCP) + port(0)
             let rpc_call: Vec<u8> = vec![
                 // Fragment header: last fragment (0x80) | length (56 bytes)
-                0x80, 0x00, 0x00, 0x38,
-                // XID
-                0x00, 0x00, 0x00, 0x01,
-                // Message type: CALL (0)
-                0x00, 0x00, 0x00, 0x00,
-                // RPC version: 2
-                0x00, 0x00, 0x00, 0x02,
-                // Program: PMAP (100000)
-                0x00, 0x01, 0x86, 0xa0,
-                // Version: 2
-                0x00, 0x00, 0x00, 0x02,
-                // Procedure: GETPORT (3)
-                0x00, 0x00, 0x00, 0x03,
-                // Auth: AUTH_NULL
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                // Verifier: AUTH_NULL
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
+                0x80, 0x00, 0x00, 0x38, // XID
+                0x00, 0x00, 0x00, 0x01, // Message type: CALL (0)
+                0x00, 0x00, 0x00, 0x00, // RPC version: 2
+                0x00, 0x00, 0x00, 0x02, // Program: PMAP (100000)
+                0x00, 0x01, 0x86, 0xa0, // Version: 2
+                0x00, 0x00, 0x00, 0x02, // Procedure: GETPORT (3)
+                0x00, 0x00, 0x00, 0x03, // Auth: AUTH_NULL
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Verifier: AUTH_NULL
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 // Target program: NFS (100003)
-                0x00, 0x01, 0x86, 0xa3,
-                // Target version: 3
-                0x00, 0x00, 0x00, 0x03,
-                // Protocol: TCP (6)
-                0x00, 0x00, 0x00, 0x06,
-                // Port: 0 (asking for it)
+                0x00, 0x01, 0x86, 0xa3, // Target version: 3
+                0x00, 0x00, 0x00, 0x03, // Protocol: TCP (6)
+                0x00, 0x00, 0x00, 0x06, // Port: 0 (asking for it)
                 0x00, 0x00, 0x00, 0x00,
             ];
 
-            stream.write_all(&rpc_call).await.expect("Failed to send RPC");
+            stream
+                .write_all(&rpc_call)
+                .await
+                .expect("Failed to send RPC");
 
             let mut response = vec![0u8; 128];
             let n = tokio::time::timeout(
@@ -4860,14 +4880,27 @@ async fn test_portmapper_listener_on_111() {
             .expect("Response timeout")
             .expect("Failed to read response");
 
-            assert!(n >= 28, "Response should contain at least an RPC reply header, got {} bytes", n);
+            assert!(
+                n >= 28,
+                "Response should contain at least an RPC reply header, got {} bytes",
+                n
+            );
 
             // The last 4 bytes of the reply body should be the port number
             // RPC reply: fragment(4) + XID(4) + msg_type(4) + reply_stat(4) + verf(8) + accept_stat(4) + port(4) = 32
             if n >= 32 {
                 let port_bytes = &response[28..32];
-                let returned_port = u32::from_be_bytes([port_bytes[0], port_bytes[1], port_bytes[2], port_bytes[3]]);
-                assert!(returned_port > 0, "Portmapper should return a non-zero port, got {}", returned_port);
+                let returned_port = u32::from_be_bytes([
+                    port_bytes[0],
+                    port_bytes[1],
+                    port_bytes[2],
+                    port_bytes[3],
+                ]);
+                assert!(
+                    returned_port > 0,
+                    "Portmapper should return a non-zero port, got {}",
+                    returned_port
+                );
                 println!("[TEST] Portmapper returned port: {}", returned_port);
             }
 
@@ -4875,7 +4908,10 @@ async fn test_portmapper_listener_on_111() {
         }
         Ok(Err(e)) => {
             // Connection refused - port 111 not bound (e.g., no root privileges)
-            println!("[SKIPPED] Cannot connect to port 111 (need root/admin): {}", e);
+            println!(
+                "[SKIPPED] Cannot connect to port 111 (need root/admin): {}",
+                e
+            );
             println!("[INFO] Run with sudo/admin to test portmapper binding");
         }
         Err(_) => {

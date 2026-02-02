@@ -3,9 +3,11 @@
 
 use arrow::datatypes::{DataType, Field, Schema};
 use posixlake::DatabaseOps;
-use posixlake::nfs::{MountGuard, NfsServer};
 #[cfg(target_os = "windows")]
-use posixlake::nfs::windows::{prepare_nfs_mount, find_free_drive, ensure_clean_nfs_state, cleanup_after_test, MOUNT_OPTIONS};
+use posixlake::nfs::windows::{
+    MOUNT_OPTIONS, cleanup_after_test, ensure_clean_nfs_state, find_free_drive, prepare_nfs_mount,
+};
+use posixlake::nfs::{MountGuard, NfsServer};
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
@@ -47,7 +49,9 @@ async fn test_aaa_init_clean_nfs_state() {
         .await
         .expect("netstat failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+    let port_2049_in_use = stdout
+        .lines()
+        .any(|l| l.contains(":2049") && l.contains("LISTENING"));
 
     let _child = if !port_2049_in_use {
         eprintln!("[TEST] Port 2049 free, spawning child listener...");
@@ -77,7 +81,10 @@ static INIT: Once = Once::new();
 fn init_logging() {
     INIT.call_once(|| {
         let log_file = std::env::temp_dir()
-            .join(format!("posixlake_nfs_rmdir_test_{}.log", std::process::id()))
+            .join(format!(
+                "posixlake_nfs_rmdir_test_{}.log",
+                std::process::id()
+            ))
             .to_string_lossy()
             .into_owned();
         let file = std::fs::File::create(&log_file).expect("Failed to create log file");
@@ -93,7 +100,10 @@ fn init_logging() {
 fn create_unique_port(base_port: u16) -> u16 {
     // Windows mount.exe only supports the standard NFS port (2049)
     #[cfg(target_os = "windows")]
-    { let _ = base_port; return 2049; }
+    {
+        let _ = base_port;
+        2049
+    }
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -115,7 +125,7 @@ fn check_can_mount() -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check if Windows NFS Client feature is installed (mount.exe exists)
-        return std::path::Path::new(r"C:\Windows\system32\mount.exe").exists();
+        std::path::Path::new(r"C:\Windows\system32\mount.exe").exists()
     }
 
     // Check if passwordless sudo works for mount command
@@ -153,7 +163,12 @@ fn require_mount_capability() {
     }
 }
 
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path, preferred_drive: Option<char>) -> Result<std::path::PathBuf, String> {
+async fn mount_nfs_os(
+    host: &str,
+    port: u16,
+    mount_point: &Path,
+    preferred_drive: Option<char>,
+) -> Result<std::path::PathBuf, String> {
     #[cfg(unix)]
     let _ = preferred_drive; // Only used on Windows
 
@@ -284,8 +299,12 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path, preferred_drive
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            Err(format!("mount failed (exit {:?}): stdout={}, stderr={}",
-                output.status.code(), stdout.trim(), stderr.trim()))
+            Err(format!(
+                "mount failed (exit {:?}): stdout={}, stderr={}",
+                output.status.code(),
+                stdout.trim(),
+                stderr.trim()
+            ))
         }
     }
 

@@ -10,9 +10,9 @@
 
 use arrow::datatypes::{DataType, Field, Schema};
 use clap::{Parser, Subcommand};
-use posixlake::nfs::NfsServer;
 #[cfg(target_os = "windows")]
 use posixlake::nfs::windows::MOUNT_OPTIONS;
+use posixlake::nfs::NfsServer;
 use posixlake::{error::Result, DatabaseOps};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -208,7 +208,7 @@ async fn main() -> Result<()> {
             let mount_status = std::process::Command::new("mount")
                 .arg("-o")
                 .arg("anon")
-                .arg(format!("\\\\localhost\\"))
+                .arg("\\\\localhost\\")
                 .arg(format!(
                     "{}:",
                     mount_point.to_string_lossy().chars().next().unwrap()

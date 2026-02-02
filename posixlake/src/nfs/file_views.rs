@@ -248,10 +248,16 @@ impl CsvFileView {
     async fn handle_csv_overwrite(&self, old_csv: &str, new_csv: &str) -> Result<()> {
         let overwrite_start = std::time::Instant::now();
         info!("Processing CSV overwrite with UPDATE/DELETE/INSERT detection (MERGE)");
-        info!("handle_csv_overwrite: old_csv ({} bytes): {:?}",
-              old_csv.len(), &old_csv[..old_csv.len().min(100)]);
-        info!("handle_csv_overwrite: new_csv ({} bytes): {:?}",
-              new_csv.len(), &new_csv[..new_csv.len().min(100)]);
+        info!(
+            "handle_csv_overwrite: old_csv ({} bytes): {:?}",
+            old_csv.len(),
+            &old_csv[..old_csv.len().min(100)]
+        );
+        info!(
+            "handle_csv_overwrite: new_csv ({} bytes): {:?}",
+            new_csv.len(),
+            &new_csv[..new_csv.len().min(100)]
+        );
 
         let schema = self.db.schema();
 

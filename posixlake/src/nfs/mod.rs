@@ -154,7 +154,10 @@ impl NfsServer {
                     l
                 }
                 Err(e) => {
-                    warn!("Failed to bind portmapper on port 111 (needs root/admin): {:?}", e);
+                    warn!(
+                        "Failed to bind portmapper on port 111 (needs root/admin): {:?}",
+                        e
+                    );
                     portmap_ready_tx.send(false).await.ok(); // Signal failure but don't block
                     return;
                 }
@@ -639,10 +642,7 @@ impl Drop for MountGuard {
 
             match status {
                 Ok(s) if s.success() => {
-                    eprintln!(
-                        "[MountGuard] Successfully unmounted: {}",
-                        drive_letter
-                    );
+                    eprintln!("[MountGuard] Successfully unmounted: {}", drive_letter);
                 }
                 _ => {
                     // Fallback to net use /delete
@@ -665,11 +665,7 @@ impl Drop for MountGuard {
                             );
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[MountGuard] Error unmounting {}: {}",
-                                drive_letter,
-                                e
-                            );
+                            eprintln!("[MountGuard] Error unmounting {}: {}", drive_letter, e);
                         }
                     }
                 }

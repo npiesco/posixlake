@@ -3,9 +3,11 @@
 
 use arrow::datatypes::{DataType, Field, Schema};
 use posixlake::DatabaseOps;
-use posixlake::nfs::{MountGuard, NfsServer};
 #[cfg(target_os = "windows")]
-use posixlake::nfs::windows::{prepare_nfs_mount, find_free_drive, ensure_clean_nfs_state, cleanup_after_test, MOUNT_OPTIONS};
+use posixlake::nfs::windows::{
+    MOUNT_OPTIONS, cleanup_after_test, ensure_clean_nfs_state, find_free_drive, prepare_nfs_mount,
+};
+use posixlake::nfs::{MountGuard, NfsServer};
 use serial_test::serial;
 use std::path::Path;
 use std::sync::Arc;
@@ -51,7 +53,9 @@ async fn test_ensure_clean_nfs_state() {
         .await
         .expect("netstat failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+    let port_2049_in_use = stdout
+        .lines()
+        .any(|l| l.contains(":2049") && l.contains("LISTENING"));
 
     // If port is free, spawn ourselves as a child process to hold the port
     let _child = if !port_2049_in_use {
@@ -76,7 +80,9 @@ async fn test_ensure_clean_nfs_state() {
         .await
         .expect("netstat failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+    let port_2049_in_use = stdout
+        .lines()
+        .any(|l| l.contains(":2049") && l.contains("LISTENING"));
     eprintln!("[TEST] Port 2049 in use before kill: {}", port_2049_in_use);
     assert!(port_2049_in_use, "Port 2049 should be in use");
 
@@ -93,10 +99,15 @@ async fn test_ensure_clean_nfs_state() {
         .await
         .expect("netstat failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let port_2049_in_use = stdout.lines().any(|l| l.contains(":2049") && l.contains("LISTENING"));
+    let port_2049_in_use = stdout
+        .lines()
+        .any(|l| l.contains(":2049") && l.contains("LISTENING"));
 
     eprintln!("[TEST] Port 2049 in use after kill: {}", port_2049_in_use);
-    assert!(!port_2049_in_use, "Port 2049 should be FREE after killing processes");
+    assert!(
+        !port_2049_in_use,
+        "Port 2049 should be FREE after killing processes"
+    );
 }
 
 /// TDD: Proves that RENAME operation is actually received by the NFS server
@@ -112,9 +123,7 @@ async fn test_single_filesystem_instance_for_all_operations() {
     let mount_point = temp_dir.path().join("mnt");
     std::fs::create_dir(&mount_point).unwrap();
 
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Int32, false),
-    ]));
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
     let db = DatabaseOps::create(&db_path, schema).await.unwrap();
 
     // Kill stale processes before starting server
@@ -131,12 +140,17 @@ async fn test_single_filesystem_instance_for_all_operations() {
 
     // Create directory
     let old_dir = mount_point.join("tdd_old_dir");
-    tokio::fs::create_dir(&old_dir).await.expect("MKDIR must succeed");
+    tokio::fs::create_dir(&old_dir)
+        .await
+        .expect("MKDIR must succeed");
 
     // Verify directory exists
     let metadata = tokio::fs::metadata(&old_dir).await;
     assert!(metadata.is_ok(), "Directory must exist after MKDIR");
-    assert!(metadata.unwrap().is_dir(), "Created path should be a directory");
+    assert!(
+        metadata.unwrap().is_dir(),
+        "Created path should be a directory"
+    );
 
     // TDD: Attempt to rename the directory
     // This will FAIL if Windows doesn't send NFS RENAME operation
@@ -168,7 +182,7 @@ async fn test_single_filesystem_instance_for_all_operations() {
 
     // Verify rename worked
     assert!(
-        !tokio::fs::metadata(&old_dir).await.is_ok(),
+        tokio::fs::metadata(&old_dir).await.is_err(),
         "Old directory should not exist after rename"
     );
     assert!(
@@ -204,7 +218,10 @@ fn init_logging() {
 fn create_unique_port(base_port: u16) -> u16 {
     // Windows mount.exe only supports the standard NFS port (2049)
     #[cfg(target_os = "windows")]
-    { let _ = base_port; return 2049; }
+    {
+        let _ = base_port;
+        2049
+    }
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -226,7 +243,7 @@ fn check_can_mount() -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check if Windows NFS Client feature is installed (mount.exe exists)
-        return std::path::Path::new(r"C:\Windows\system32\mount.exe").exists();
+        std::path::Path::new(r"C:\Windows\system32\mount.exe").exists()
     }
 
     // Check if passwordless sudo works for mount command
@@ -264,7 +281,12 @@ fn require_mount_capability() {
     }
 }
 
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path, preferred_drive: Option<char>) -> Result<std::path::PathBuf, String> {
+async fn mount_nfs_os(
+    host: &str,
+    port: u16,
+    mount_point: &Path,
+    preferred_drive: Option<char>,
+) -> Result<std::path::PathBuf, String> {
     #[cfg(not(target_os = "windows"))]
     let _ = preferred_drive; // Only used on Windows
 
@@ -396,8 +418,12 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path, preferred_drive
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            Err(format!("mount failed (exit {:?}): stdout={}, stderr={}",
-                output.status.code(), stdout.trim(), stderr.trim()))
+            Err(format!(
+                "mount failed (exit {:?}): stdout={}, stderr={}",
+                output.status.code(),
+                stdout.trim(),
+                stderr.trim()
+            ))
         }
     }
 
@@ -577,7 +603,7 @@ async fn test_nfs_mv_rename_directory() {
 
     println!("[MOUNT] Mounting NFS for directory rename test");
     // Use different drive letter (Y:) than file test (Z:) to avoid Windows NFS client cache issues
-    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('W'))  // Use W: (file test uses Z:)
+    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('W')) // Use W: (file test uses Z:)
         .await
         .expect("NFS mount must succeed");
 
