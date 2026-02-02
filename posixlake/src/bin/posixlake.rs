@@ -171,7 +171,22 @@ async fn main() -> Result<()> {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
             // Create mount point if it doesn't exist
-            if !mount_point.exists() {
+            // Skip for Windows drive letters (e.g., "Z:") which can't be created as directories
+            #[cfg(target_os = "windows")]
+            let is_drive_letter = {
+                let path_str = mount_point.to_string_lossy();
+                path_str.len() <= 3
+                    && path_str
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_alphabetic())
+                        .unwrap_or(false)
+                    && path_str.chars().nth(1) == Some(':')
+            };
+            #[cfg(not(target_os = "windows"))]
+            let is_drive_letter = false;
+
+            if !is_drive_letter && !mount_point.exists() {
                 std::fs::create_dir_all(&mount_point)?;
             }
 
@@ -205,10 +220,10 @@ async fn main() -> Result<()> {
                 .status();
 
             #[cfg(target_os = "windows")]
-            let mount_status = std::process::Command::new("mount")
+            let mount_status = std::process::Command::new("C:\\Windows\\System32\\mount.exe")
                 .arg("-o")
                 .arg("anon")
-                .arg("\\\\localhost\\")
+                .arg("\\\\localhost\\share")
                 .arg(format!(
                     "{}:",
                     mount_point.to_string_lossy().chars().next().unwrap()
@@ -326,11 +341,73 @@ async fn main() -> Result<()> {
         }
 
         Commands::Status { mount_point } => {
-            eprintln!("Status command not yet implemented.");
-            eprintln!("Use standard OS commands:");
-            eprintln!("  macOS/Linux: df | grep {}", mount_point.display());
-            eprintln!("  Windows:     net use | findstr {}", mount_point.display());
-            std::process::exit(1);
+            #[cfg(target_os = "windows")]
+            {
+                // Check Windows NFS mount status using net use
+                let output = std::process::Command::new("net").arg("use").output();
+
+                match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let mount_str = mount_point.to_string_lossy();
+                        if stdout.contains(&*mount_str) {
+                            println!("mounted: {} is an active NFS mount", mount_point.display());
+                        } else {
+                            println!(
+                                "not mounted: {} is not currently mounted",
+                                mount_point.display()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("unknown: failed to check mount status: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                Ok(())
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                // Check Linux mount status using /proc/mounts
+                let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+                let mount_str = mount_point.to_string_lossy();
+                if mounts.contains(&*mount_str) {
+                    println!("mounted: {} is an active mount", mount_point.display());
+                } else {
+                    println!(
+                        "not mounted: {} is not currently mounted",
+                        mount_point.display()
+                    );
+                }
+                Ok(())
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                // Check macOS mount status using mount command
+                let output = std::process::Command::new("mount").output();
+
+                match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let mount_str = mount_point.to_string_lossy();
+                        if stdout.contains(&*mount_str) {
+                            println!("mounted: {} is an active mount", mount_point.display());
+                        } else {
+                            println!(
+                                "not mounted: {} is not currently mounted",
+                                mount_point.display()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("unknown: failed to check mount status: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                Ok(())
+            }
         }
 
         Commands::S3Test {
