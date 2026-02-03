@@ -3,7 +3,14 @@
 //! Utilities for managing Windows NFS client state, including service restart
 //! and stale mount cleanup. Required for reliable NFS operation on Windows.
 
+#[cfg(target_os = "windows")]
 use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::time::Duration;
+#[cfg(target_os = "windows")]
+use tokio::process::Command;
+#[cfg(target_os = "windows")]
+use tracing::info;
 
 /// Mount options for Windows NFS client.
 ///
@@ -18,9 +25,6 @@ use std::path::Path;
 /// - retry=2: retry twice on failure
 pub const MOUNT_OPTIONS: &str =
     "anon,nolock,mtype=soft,fileaccess=6,lang=ansi,rsize=128,wsize=128,timeout=60,retry=2";
-use std::time::Duration;
-use tokio::process::Command;
-use tracing::info;
 
 /// Kill any processes listening on NFS-related ports.
 ///
