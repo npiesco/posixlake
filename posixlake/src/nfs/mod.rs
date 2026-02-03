@@ -7,6 +7,7 @@ pub mod cache;
 pub mod file_views;
 pub mod mmap_cache;
 pub mod server;
+pub mod windows;
 pub mod write_buffer;
 
 use crate::database_ops::DatabaseOps;
@@ -140,6 +141,7 @@ impl NfsServer {
 
         // Spawn portmapper listener on port 111
         let (portmap_shutdown_tx, mut portmap_shutdown_rx) = mpsc::channel(1);
+        let (portmap_ready_tx, portmap_ready_rx) = mpsc::channel::<bool>(1);
         let nfs_port = port; // Capture NFS port to tell portmapper
         let portmap_handle = tokio::spawn(async move {
             let addr = "127.0.0.1:111";
@@ -148,10 +150,15 @@ impl NfsServer {
             let mut listener = match NFSTcpListener::bind(addr, portmap_fs).await {
                 Ok(l) => {
                     info!("Portmapper listener bound successfully on port 111");
+                    portmap_ready_tx.send(true).await.ok();
                     l
                 }
                 Err(e) => {
-                    warn!("Failed to bind portmapper on port 111 (needs root/admin): {:?}", e);
+                    warn!(
+                        "Failed to bind portmapper on port 111 (needs root/admin): {:?}",
+                        e
+                    );
+                    portmap_ready_tx.send(false).await.ok(); // Signal failure but don't block
                     return;
                 }
             };
@@ -173,32 +180,62 @@ impl NfsServer {
             info!("Portmapper listener stopped");
         });
 
-        // Wait for server to be ready
+        // Wait for both NFS server and portmapper to be ready
         let mut ready_rx = ready_rx;
-        match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut portmap_ready_rx = portmap_ready_rx;
+
+        // Wait for NFS server first (required)
+        let nfs_ready = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             ready_rx.recv().await
         })
-        .await
-        {
+        .await;
+
+        match nfs_ready {
             Ok(Some(())) => {
                 info!("NFS server is ready");
-                Ok(Self {
-                    db,
-                    shutdown_tx: Some(shutdown_tx),
-                    portmap_shutdown_tx: Some(portmap_shutdown_tx),
-                    ready: true,
-                    filesystem: server_fs,
-                    server_handle: Some(server_handle),
-                    portmap_handle: Some(portmap_handle),
-                })
             }
-            Ok(None) => Err(Error::InvalidOperation(
-                "NFS server failed to start".to_string(),
-            )),
-            Err(_) => Err(Error::InvalidOperation(
-                "NFS server startup timeout".to_string(),
-            )),
+            Ok(None) => {
+                return Err(Error::InvalidOperation(
+                    "NFS server failed to start".to_string(),
+                ));
+            }
+            Err(_) => {
+                return Err(Error::InvalidOperation(
+                    "NFS server startup timeout".to_string(),
+                ));
+            }
         }
+
+        // Wait for portmapper (optional - may fail without admin)
+        let portmap_ready = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            portmap_ready_rx.recv().await
+        })
+        .await;
+
+        match portmap_ready {
+            Ok(Some(true)) => {
+                info!("Portmapper is ready");
+            }
+            Ok(Some(false)) => {
+                info!("Portmapper failed to bind (continuing without it)");
+            }
+            Ok(None) => {
+                warn!("Portmapper channel closed unexpectedly");
+            }
+            Err(_) => {
+                warn!("Portmapper startup timeout (continuing without it)");
+            }
+        }
+
+        Ok(Self {
+            db,
+            shutdown_tx: Some(shutdown_tx),
+            portmap_shutdown_tx: Some(portmap_shutdown_tx),
+            ready: true,
+            filesystem: server_fs,
+            server_handle: Some(server_handle),
+            portmap_handle: Some(portmap_handle),
+        })
     }
 
     /// Check if server is ready
@@ -505,6 +542,61 @@ impl NfsServer {
             writable: true,
         })
     }
+
+    /// Lookup file ID by path (for testing)
+    pub async fn lookup(&self, path: &str) -> Result<u64> {
+        let fs = &self.filesystem;
+
+        let fileid = if path == "/" {
+            1
+        } else if path == "/data" {
+            2
+        } else if path == "/data/data.csv" {
+            3
+        } else if path.starts_with("/data/") && path.ends_with(".parquet") {
+            fs.refresh_parquet_files().await.map_err(|e| {
+                Error::InvalidOperation(format!("Failed to refresh parquet files: {:?}", e))
+            })?;
+
+            let filename = path.strip_prefix("/data/").unwrap();
+            let parquet_files = fs.parquet_files.lock().await;
+            parquet_files
+                .iter()
+                .find(|(_id, file_path)| {
+                    std::path::Path::new(file_path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|basename| basename == filename)
+                        .unwrap_or(false)
+                })
+                .map(|(id, _)| *id)
+                .ok_or_else(|| {
+                    Error::InvalidOperation(format!("Parquet file not found: {}", path))
+                })?
+        } else {
+            return Err(Error::InvalidOperation(format!("Unknown path: {}", path)));
+        };
+
+        Ok(fileid)
+    }
+
+    /// Set file attributes (for testing)
+    /// This tests the setattr NFS operation which is needed for file truncation/overwrite
+    pub async fn setattr(&self, fileid: u64) -> Result<()> {
+        use nfsserve::nfs::sattr3;
+        use nfsserve::vfs::NFSFileSystem;
+
+        let fs = &self.filesystem;
+
+        // Create a minimal setattr request (no changes, just test the operation succeeds)
+        let setattr = sattr3::default();
+
+        fs.setattr(fileid, setattr)
+            .await
+            .map_err(|e| Error::InvalidOperation(format!("setattr failed: {:?}", e)))?;
+
+        Ok(())
+    }
 }
 
 /// File attributes for testing
@@ -605,10 +697,7 @@ impl Drop for MountGuard {
 
             match status {
                 Ok(s) if s.success() => {
-                    eprintln!(
-                        "[MountGuard] Successfully unmounted: {}",
-                        drive_letter
-                    );
+                    eprintln!("[MountGuard] Successfully unmounted: {}", drive_letter);
                 }
                 _ => {
                     // Fallback to net use /delete
@@ -631,11 +720,7 @@ impl Drop for MountGuard {
                             );
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[MountGuard] Error unmounting {}: {}",
-                                drive_letter,
-                                e
-                            );
+                            eprintln!("[MountGuard] Error unmounting {}: {}", drive_letter, e);
                         }
                     }
                 }

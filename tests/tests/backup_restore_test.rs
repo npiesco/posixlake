@@ -75,7 +75,9 @@ async fn test_full_backup_and_restore() {
     assert_eq!(count_before, 9, "Should have 9 rows before backup");
 
     // Create backup
-    db.backup(&backup_path).await.expect("Backup should succeed");
+    db.backup(&backup_path)
+        .await
+        .expect("Backup should succeed");
     println!("[OK] Backup created at: {}", backup_path);
 
     // Verify backup files exist (Delta Lake native format)

@@ -85,7 +85,10 @@ impl PosixLakeFilesystem {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        info!("Creating PosixLakeFilesystem instance {} with cache", instance_id);
+        info!(
+            "Creating PosixLakeFilesystem instance {} with cache",
+            instance_id
+        );
         Self {
             db,
             parquet_files: Arc::new(Mutex::new(HashMap::new())),
@@ -135,7 +138,7 @@ impl PosixLakeFilesystem {
         let now = Self::now();
         fattr3 {
             ftype: ftype3::NF3REG,
-            mode: 0o644,
+            mode: 0o666,
             nlink: 1,
             uid: 0, // Match Windows NFS client auth
             gid: 0,
@@ -218,10 +221,12 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 } else {
                     // Check created directories
                     let created_dirs = self.created_dirs.lock().await;
-                    debug!("NFS LOOKUP [inst={}]: created_dirs has {} entries: {:?}",
-                           self.instance_id,
-                           created_dirs.len(),
-                           created_dirs.keys().collect::<Vec<_>>());
+                    debug!(
+                        "NFS LOOKUP [inst={}]: created_dirs has {} entries: {:?}",
+                        self.instance_id,
+                        created_dirs.len(),
+                        created_dirs.keys().collect::<Vec<_>>()
+                    );
                     if let Some(&dir_id) = created_dirs.get(&(ROOT_ID, name.to_string())) {
                         debug!("NFS LOOKUP: found dir '{}' with id {}", name, dir_id);
                         return Ok(dir_id);
@@ -351,7 +356,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     let size = metadata.content.len() as u64;
                     let attr = fattr3 {
                         ftype: ftype3::NF3REG,
-                        mode: 0o644,
+                        mode: 0o666,
                         nlink: 1,
                         uid: 0, // Match Windows NFS client auth
                         gid: 0,
@@ -390,7 +395,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 // Return current attributes with stable timestamps
                 let attr = fattr3 {
                     ftype: ftype3::NF3REG,
-                    mode: 0o644, // Ignore mode changes for simplicity
+                    mode: 0o666, // Ignore mode changes for simplicity
                     nlink: 1,
                     uid: 0, // Match Windows NFS client auth
                     gid: 0,
@@ -413,9 +418,118 @@ impl NFSFileSystem for PosixLakeFilesystem {
             }
         }
 
-        // For other files (data.csv, directories), not supported
-        info!("SETATTR not supported for ID {}", id);
-        Err(nfsstat3::NFS3ERR_NOTSUPP)
+        // Handle existing files and directories (root, /data, data.csv, parquet files)
+        // Return current attributes - we acknowledge the setattr but don't modify
+        // This allows Windows NFS client to perform file operations that require setattr
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let now_time = nfstime3 {
+            seconds: now.as_secs() as u32,
+            nseconds: now.subsec_nanos(),
+        };
+
+        match id {
+            // Root directory
+            1 => {
+                let attr = fattr3 {
+                    ftype: ftype3::NF3DIR,
+                    mode: 0o755,
+                    nlink: 2,
+                    uid: 0,
+                    gid: 0,
+                    size: 4096,
+                    used: 4096,
+                    rdev: specdata3::default(),
+                    fsid: 0,
+                    fileid: id,
+                    atime: now_time,
+                    mtime: now_time,
+                    ctime: now_time,
+                };
+                info!("SETATTR succeeded for root directory");
+                Ok(attr)
+            }
+            // /data directory
+            2 => {
+                let attr = fattr3 {
+                    ftype: ftype3::NF3DIR,
+                    mode: 0o755,
+                    nlink: 2,
+                    uid: 0,
+                    gid: 0,
+                    size: 4096,
+                    used: 4096,
+                    rdev: specdata3::default(),
+                    fsid: 0,
+                    fileid: id,
+                    atime: now_time,
+                    mtime: now_time,
+                    ctime: now_time,
+                };
+                info!("SETATTR succeeded for /data directory");
+                Ok(attr)
+            }
+            // data.csv file
+            3 => {
+                // Get current size from the CSV view
+                let view = CsvFileView::new(self.db.clone());
+                let csv_size = view.size().await.unwrap_or(0);
+                let attr = fattr3 {
+                    ftype: ftype3::NF3REG,
+                    mode: 0o666,
+                    nlink: 1,
+                    uid: 0,
+                    gid: 0,
+                    size: csv_size,
+                    used: csv_size,
+                    rdev: specdata3::default(),
+                    fsid: 0,
+                    fileid: id,
+                    atime: now_time,
+                    mtime: now_time,
+                    ctime: now_time,
+                };
+                info!("SETATTR succeeded for data.csv (size={})", csv_size);
+                Ok(attr)
+            }
+            // Parquet files (IDs 100-999)
+            100..=999 => {
+                let parquet_files = self.parquet_files.lock().await;
+                if let Some(path) = parquet_files.get(&id) {
+                    let full_path = self.db.base_path().join(path);
+                    let metadata = std::fs::metadata(&full_path).ok();
+                    let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                    let attr = fattr3 {
+                        ftype: ftype3::NF3REG,
+                        mode: 0o644,
+                        nlink: 1,
+                        uid: 0,
+                        gid: 0,
+                        size,
+                        used: size,
+                        rdev: specdata3::default(),
+                        fsid: 0,
+                        fileid: id,
+                        atime: now_time,
+                        mtime: now_time,
+                        ctime: now_time,
+                    };
+                    info!(
+                        "SETATTR succeeded for parquet file ID {} (size={})",
+                        id, size
+                    );
+                    Ok(attr)
+                } else {
+                    info!("SETATTR failed: parquet file ID {} not found", id);
+                    Err(nfsstat3::NFS3ERR_NOENT)
+                }
+            }
+            _ => {
+                info!("SETATTR failed: unknown file ID {}", id);
+                Err(nfsstat3::NFS3ERR_NOENT)
+            }
+        }
     }
 
     async fn read(
@@ -532,10 +646,19 @@ impl NFSFileSystem for PosixLakeFilesystem {
     async fn write(
         &self,
         id: fileid3,
-        _offset: u64,
+        offset: u64,
         data: &[u8],
     ) -> std::result::Result<fattr3, nfsstat3> {
-        info!("NFS WRITE: id={}, data_len={}", id, data.len());
+        info!(
+            "NFS WRITE: id={}, offset={}, data_len={}",
+            id,
+            offset,
+            data.len()
+        );
+        debug!(
+            "NFS WRITE data preview: {:?}",
+            String::from_utf8_lossy(&data[..data.len().min(100)])
+        );
 
         match id {
             DATA_CSV_ID => {
@@ -559,10 +682,54 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 let db = self.db.clone();
                 let view = CsvFileView::new(db);
 
-                view.apply_write(data, cached_content).await.map_err(|e| {
-                    error!("Write error: {}", e);
-                    nfsstat3::NFS3ERR_IO
-                })?;
+                // Handle partial writes (append) by combining with existing content
+                let write_data = if offset > 0 {
+                    // Get current content
+                    let current = match &cached_content {
+                        Some(c) => c.clone(),
+                        None => view.generate_csv().await.map_err(|e| {
+                            error!("Failed to get current content for append: {}", e);
+                            nfsstat3::NFS3ERR_IO
+                        })?,
+                    };
+
+                    let offset_usize = offset as usize;
+                    if offset_usize <= current.len() {
+                        // Combine: content before offset + new data
+                        let mut combined = current[..offset_usize].to_vec();
+                        combined.extend_from_slice(data);
+                        info!(
+                            "Append write: existing {} bytes + {} new bytes at offset {}",
+                            current.len(),
+                            data.len(),
+                            offset
+                        );
+                        combined
+                    } else {
+                        // Offset beyond current content - pad with zeros (unusual case)
+                        let mut combined = current.clone();
+                        combined.resize(offset_usize, 0);
+                        combined.extend_from_slice(data);
+                        combined
+                    }
+                } else {
+                    // Offset 0 - treat as complete write
+                    data.to_vec()
+                };
+
+                info!(
+                    "NFS WRITE: final write_data size={}, preview={:?}",
+                    write_data.len(),
+                    String::from_utf8_lossy(&write_data[..write_data.len().min(100)])
+                );
+
+                view.apply_write(&write_data, cached_content)
+                    .await
+                    .map_err(|e| {
+                        error!("Write error: {}", e);
+                        nfsstat3::NFS3ERR_IO
+                    })?;
+                info!("NFS WRITE: apply_write completed successfully");
 
                 // UPDATE content cache after write (don't invalidate!)
                 // This keeps subsequent reads fast by avoiding CSV regeneration
@@ -573,6 +740,11 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         nfsstat3::NFS3ERR_IO
                     })?;
                     let fresh_size = fresh_csv.len();
+                    info!(
+                        "NFS WRITE: fresh CSV after write ({} bytes): {:?}",
+                        fresh_size,
+                        String::from_utf8_lossy(&fresh_csv[..fresh_csv.len().min(200)])
+                    );
 
                     // Update cache with new content
                     if let Err(e) = cache.insert("csv:data".to_string(), fresh_csv).await {
@@ -612,7 +784,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     // Create attributes with stable timestamps
                     let attr = fattr3 {
                         ftype: ftype3::NF3REG,
-                        mode: 0o644,
+                        mode: 0o666,
                         nlink: 1,
                         uid: 0, // Match Windows NFS client auth
                         gid: 0,
@@ -697,7 +869,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
         // Create file attributes using stored timestamps
         let attr = fattr3 {
             ftype: ftype3::NF3REG,
-            mode: 0o644,
+            mode: 0o666,
             nlink: 1,
             uid: 0, // Match Windows NFS client auth
             gid: 0,
@@ -763,7 +935,11 @@ impl NFSFileSystem for PosixLakeFilesystem {
         created_dirs.insert((dirid, name.to_string()), new_dir_id);
         debug!(
             "NFS MKDIR [inst={}]: inserted ({}, {}) -> {}, created_dirs now has {} entries",
-            self.instance_id, dirid, name, new_dir_id, created_dirs.len()
+            self.instance_id,
+            dirid,
+            name,
+            new_dir_id,
+            created_dirs.len()
         );
         drop(created_dirs);
 
@@ -925,7 +1101,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     file_metadata.file_id,
                     fattr3 {
                         ftype: ftype3::NF3REG,
-                        mode: 0o644,
+                        mode: 0o666,
                         nlink: 1,
                         uid: 0, // Match Windows NFS client auth
                         gid: 0,
@@ -1040,7 +1216,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                             name: file_name.as_bytes().into(),
                             attr: fattr3 {
                                 ftype: ftype3::NF3REG,
-                                mode: 0o644,
+                                mode: 0o666,
                                 nlink: 1,
                                 uid: 0, // Match Windows NFS client auth
                                 gid: 0,
@@ -1130,7 +1306,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                             name: file_name.as_bytes().into(),
                             attr: fattr3 {
                                 ftype: ftype3::NF3REG,
-                                mode: 0o644,
+                                mode: 0o666,
                                 nlink: 1,
                                 uid: 0, // Match Windows NFS client auth
                                 gid: 0,
@@ -1172,7 +1348,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                             name: file_name.as_bytes().into(),
                             attr: fattr3 {
                                 ftype: ftype3::NF3REG,
-                                mode: 0o644,
+                                mode: 0o666,
                                 nlink: 1,
                                 uid: 0, // Match Windows NFS client auth
                                 gid: 0,
@@ -1230,7 +1406,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
             if component.is_empty() {
                 continue;
             }
-            info!("NFS PATH_TO_ID: looking up '{}' in dir {}", component, current_id);
+            info!(
+                "NFS PATH_TO_ID: looking up '{}' in dir {}",
+                component, current_id
+            );
             match self.lookup(current_id, &component.as_bytes().into()).await {
                 Ok(id) => {
                     info!("NFS PATH_TO_ID: found '{}' -> id {}", component, id);
@@ -1243,7 +1422,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
             }
         }
 
-        info!("NFS PATH_TO_ID: resolved path '{}' to id {}", path_str, current_id);
+        info!(
+            "NFS PATH_TO_ID: resolved path '{}' to id {}",
+            path_str, current_id
+        );
         Ok(current_id)
     }
 }

@@ -8,6 +8,7 @@
 
 use crate::database_ops::DatabaseOps;
 use crate::error::Result;
+use crate::nfs::file_views::sanitize_csv;
 use arrow::csv::ReaderBuilder as CsvReaderBuilder;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -187,6 +188,9 @@ impl WriteBuffer {
         let csv_str = String::from_utf8_lossy(csv_data);
         debug!("Parsing buffered CSV data: {} bytes", csv_data.len());
 
+        // Sanitize CSV content (strip BOM, normalize line endings, trim whitespace)
+        let sanitized = sanitize_csv(&csv_str);
+
         // Add schema header for CSV parsing
         let schema = self.db.schema();
         let column_names: Vec<String> = schema
@@ -195,7 +199,7 @@ impl WriteBuffer {
             .map(|f| f.name().to_string())
             .collect();
         let header = column_names.join(",");
-        let csv_with_header = format!("{}\n{}", header, csv_str);
+        let csv_with_header = format!("{}\n{}", header, sanitized);
 
         // Parse CSV into RecordBatch
         let mut reader = CsvReaderBuilder::new(schema.clone())

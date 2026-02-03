@@ -7,6 +7,24 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
+/// Sanitize CSV content for parsing:
+/// - Strip UTF-8 BOM (0xEF 0xBB 0xBF) if present
+/// - Normalize CRLF to LF
+/// - Trim trailing whitespace from each line
+/// - Remove empty lines
+pub(crate) fn sanitize_csv(content: &str) -> String {
+    // Strip UTF-8 BOM if present
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+
+    // Normalize line endings and clean up each line
+    content
+        .lines()
+        .map(|line| line.trim_end()) // Trim trailing whitespace (including \r)
+        .filter(|line| !line.is_empty()) // Remove empty lines
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// CSV file view that generates CSV content from database query results
 /// With lazy loading: content is generated on-demand, not cached internally.
 /// Caching is handled by the NFS cache layer for better performance.
@@ -141,9 +159,11 @@ impl CsvFileView {
         let _start_time = std::time::Instant::now();
         info!("Applying write: {} bytes", data.len());
 
-        let new_csv_str = String::from_utf8_lossy(data);
+        // Sanitize CSV content (strip BOM, normalize line endings, trim whitespace)
+        let raw_csv_str = String::from_utf8_lossy(data);
+        let new_csv_str = sanitize_csv(&raw_csv_str);
         debug!(
-            "Write data preview: {}",
+            "Write data preview (sanitized): {}",
             &new_csv_str.chars().take(200).collect::<String>()
         );
 
@@ -199,7 +219,9 @@ impl CsvFileView {
 
     /// Handle CSV append (original logic)
     async fn handle_csv_append(&self, data: &[u8]) -> Result<()> {
-        let csv_str = String::from_utf8_lossy(data);
+        // Sanitize CSV content (strip BOM, normalize line endings, trim whitespace)
+        let raw_csv_str = String::from_utf8_lossy(data);
+        let csv_str = sanitize_csv(&raw_csv_str);
 
         // Parse CSV - we need to add headers to make it valid CSV
         let schema = self.db.schema();
@@ -211,7 +233,7 @@ impl CsvFileView {
             .join(",");
 
         // Combine header + new data
-        let full_csv = format!("{}\n{}", header_line, csv_str.trim());
+        let full_csv = format!("{}\n{}", header_line, csv_str);
 
         // Parse CSV using Arrow CSV reader
         let cursor = std::io::Cursor::new(full_csv.as_bytes());
@@ -248,6 +270,16 @@ impl CsvFileView {
     async fn handle_csv_overwrite(&self, old_csv: &str, new_csv: &str) -> Result<()> {
         let overwrite_start = std::time::Instant::now();
         info!("Processing CSV overwrite with UPDATE/DELETE/INSERT detection (MERGE)");
+        info!(
+            "handle_csv_overwrite: old_csv ({} bytes): {:?}",
+            old_csv.len(),
+            &old_csv[..old_csv.len().min(100)]
+        );
+        info!(
+            "handle_csv_overwrite: new_csv ({} bytes): {:?}",
+            new_csv.len(),
+            &new_csv[..new_csv.len().min(100)]
+        );
 
         let schema = self.db.schema();
 
@@ -394,7 +426,9 @@ impl CsvFileView {
     fn parse_csv_to_batch(&self, csv_content: &str) -> Result<RecordBatch> {
         use std::io::Cursor;
 
-        let cursor = Cursor::new(csv_content.as_bytes());
+        // Sanitize CSV content (strip BOM, normalize line endings, trim whitespace)
+        let sanitized = sanitize_csv(csv_content);
+        let cursor = Cursor::new(sanitized.as_bytes());
         let csv_reader = CsvReaderBuilder::new(self.db.schema())
             .with_header(true)
             .build(cursor)?;

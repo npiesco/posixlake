@@ -4,6 +4,7 @@ use arrow::record_batch::RecordBatch;
 use posixlake::Result;
 use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tracing::info;
 
 fn setup_tracing() {
@@ -40,8 +41,9 @@ fn count_parquet_files(db_path: &str) -> Result<usize> {
 async fn test_vacuum_basic() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_vacuum_basic";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake VACUUM Basic Test ===");
 
@@ -52,7 +54,7 @@ async fn test_vacuum_basic() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
     info!("  Created database");
 
     // Insert 10 small batches (creates 10 small Parquet files)
@@ -68,7 +70,7 @@ async fn test_vacuum_basic() -> Result<()> {
     }
     info!("  Inserted 10 small batches");
 
-    let files_after_insert = count_parquet_files(db_path)?;
+    let files_after_insert = count_parquet_files(db_path_str)?;
     info!("  Parquet files after insert: {}", files_after_insert);
     assert_eq!(files_after_insert, 10, "Should have 10 small files");
 
@@ -76,7 +78,7 @@ async fn test_vacuum_basic() -> Result<()> {
     info!("  Running OPTIMIZE...");
     db.optimize().await?;
 
-    let files_after_optimize = count_parquet_files(db_path)?;
+    let files_after_optimize = count_parquet_files(db_path_str)?;
     info!("  Parquet files after OPTIMIZE: {}", files_after_optimize);
     assert_eq!(
         files_after_optimize, 11,
@@ -87,7 +89,7 @@ async fn test_vacuum_basic() -> Result<()> {
     info!("  Running VACUUM with 0 hour retention...");
     db.vacuum(0).await?;
 
-    let files_after_vacuum = count_parquet_files(db_path)?;
+    let files_after_vacuum = count_parquet_files(db_path_str)?;
     info!("  Parquet files after VACUUM: {}", files_after_vacuum);
     assert_eq!(
         files_after_vacuum, 1,
@@ -106,9 +108,7 @@ async fn test_vacuum_basic() -> Result<()> {
 
     info!("  Data integrity verified: all 10 rows present");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }
 
@@ -120,8 +120,9 @@ async fn test_vacuum_basic() -> Result<()> {
 async fn test_vacuum_with_retention() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_vacuum_retention";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake VACUUM with Retention Test ===");
 
@@ -132,7 +133,7 @@ async fn test_vacuum_with_retention() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
     info!("  Created database");
 
     // Insert 5 small batches
@@ -148,14 +149,14 @@ async fn test_vacuum_with_retention() -> Result<()> {
     }
     info!("  Inserted 5 small batches");
 
-    let files_before = count_parquet_files(db_path)?;
+    let files_before = count_parquet_files(db_path_str)?;
     info!("  Parquet files before OPTIMIZE: {}", files_before);
 
     // Run OPTIMIZE
     info!("  Running OPTIMIZE...");
     db.optimize().await?;
 
-    let files_after_optimize = count_parquet_files(db_path)?;
+    let files_after_optimize = count_parquet_files(db_path_str)?;
     info!("  Parquet files after OPTIMIZE: {}", files_after_optimize);
     assert_eq!(
         files_after_optimize,
@@ -168,7 +169,7 @@ async fn test_vacuum_with_retention() -> Result<()> {
     info!("  Running VACUUM with 168 hour (7 day) retention...");
     db.vacuum(168).await?;
 
-    let files_after_vacuum = count_parquet_files(db_path)?;
+    let files_after_vacuum = count_parquet_files(db_path_str)?;
     info!(
         "  Parquet files after VACUUM with retention: {}",
         files_after_vacuum
@@ -190,9 +191,7 @@ async fn test_vacuum_with_retention() -> Result<()> {
 
     info!("  Data integrity verified: all 5 rows present");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }
 
@@ -203,8 +202,9 @@ async fn test_vacuum_with_retention() -> Result<()> {
 async fn test_vacuum_dry_run() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_vacuum_dry_run";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake VACUUM Dry Run Test ===");
 
@@ -215,7 +215,7 @@ async fn test_vacuum_dry_run() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
     info!("  Created database");
 
     // Insert 10 small batches
@@ -235,7 +235,7 @@ async fn test_vacuum_dry_run() -> Result<()> {
     info!("  Running OPTIMIZE...");
     db.optimize().await?;
 
-    let files_before_vacuum = count_parquet_files(db_path)?;
+    let files_before_vacuum = count_parquet_files(db_path_str)?;
     info!("  Parquet files before VACUUM: {}", files_before_vacuum);
 
     // Run VACUUM dry run with 0 retention
@@ -249,7 +249,7 @@ async fn test_vacuum_dry_run() -> Result<()> {
     );
 
     // Verify no files were actually deleted
-    let files_after_dry_run = count_parquet_files(db_path)?;
+    let files_after_dry_run = count_parquet_files(db_path_str)?;
     info!("  Parquet files after dry run: {}", files_after_dry_run);
     assert_eq!(
         files_after_dry_run, files_before_vacuum,
@@ -260,7 +260,7 @@ async fn test_vacuum_dry_run() -> Result<()> {
     info!("  Running actual VACUUM...");
     db.vacuum(0).await?;
 
-    let files_after_vacuum = count_parquet_files(db_path)?;
+    let files_after_vacuum = count_parquet_files(db_path_str)?;
     info!("  Parquet files after real VACUUM: {}", files_after_vacuum);
     assert!(
         files_after_vacuum < files_before_vacuum,
@@ -279,8 +279,6 @@ async fn test_vacuum_dry_run() -> Result<()> {
 
     info!("  Data integrity verified: all 10 rows present");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }

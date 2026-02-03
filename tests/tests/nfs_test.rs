@@ -4,6 +4,10 @@
 use arrow::array::{Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use posixlake::DatabaseOps;
+#[cfg(target_os = "windows")]
+use posixlake::nfs::windows::{
+    MOUNT_OPTIONS, ensure_clean_nfs_state, find_free_drive, prepare_nfs_mount,
+};
 use posixlake::nfs::{MountGuard, NfsServer};
 use serial_test::serial;
 use std::path::Path;
@@ -12,6 +16,19 @@ use std::sync::Once;
 use tempfile::TempDir;
 #[cfg(target_os = "linux")]
 use tracing::debug;
+
+/// Clears NFS client state before other tests run.
+/// Name starts with 'a' to ensure it runs first alphabetically.
+#[tokio::test]
+#[serial(nfs)]
+#[cfg(target_os = "windows")]
+async fn test_aaa_init_clean_nfs_state() {
+    eprintln!("[TEST] Initializing clean NFS state for nfs tests...");
+    ensure_clean_nfs_state().await;
+    // Give Windows time to fully process the cleanup
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    eprintln!("[TEST] NFS state cleared");
+}
 
 static INIT: Once = Once::new();
 
@@ -39,7 +56,10 @@ fn init_logging() {
 fn create_unique_port(base_port: u16) -> u16 {
     // Windows mount.exe only supports the standard NFS port (2049)
     #[cfg(target_os = "windows")]
-    { let _ = base_port; return 2049; }
+    {
+        let _ = base_port;
+        2049
+    }
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -65,7 +85,7 @@ fn check_can_mount() -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check if Windows NFS Client feature is installed (mount.exe exists)
-        return std::path::Path::new(r"C:\Windows\system32\mount.exe").exists();
+        std::path::Path::new(r"C:\Windows\system32\mount.exe").exists()
     }
 
     // Check if passwordless sudo works for mount command
@@ -109,7 +129,7 @@ fn require_mount_capability() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_server_starts_and_stops() {
     init_logging();
     // TDD: This test should fail because NFS server doesn't exist yet
@@ -144,7 +164,7 @@ async fn test_nfs_server_starts_and_stops() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_server_exports_database() {
     // TDD: Test that NFS server exports the database path
 
@@ -183,7 +203,7 @@ async fn test_nfs_server_exports_database() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_directory_structure() {
     // TDD: Test that NFS exports proper directory structure
 
@@ -220,7 +240,7 @@ async fn test_nfs_directory_structure() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_read_csv_file() {
     // TDD: Test reading data.csv through NFS
 
@@ -264,7 +284,7 @@ async fn test_nfs_read_csv_file() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_write_to_csv() {
     // TDD: Test writing data via NFS (append operation)
 
@@ -316,7 +336,7 @@ async fn test_nfs_write_to_csv() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_file_attributes() {
     // TDD: Test getting file attributes (size, permissions, etc.)
 
@@ -365,7 +385,11 @@ async fn test_nfs_file_attributes() {
 
 /// Helper to mount NFS using OS command
 /// Requires passwordless sudo (configured via scripts/setup_nfs_sudo.py)
-async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::path::PathBuf, String> {
+async fn mount_nfs_os(
+    host: &str,
+    port: u16,
+    mount_point: &Path,
+) -> Result<std::path::PathBuf, String> {
     // Check if we're running as root
     #[cfg(unix)]
     let is_root = unsafe { libc::geteuid() } == 0;
@@ -492,16 +516,19 @@ async fn mount_nfs_os(host: &str, port: u16, mount_point: &Path) -> Result<std::
     #[cfg(target_os = "windows")]
     {
         let _ = (port, mount_point);
-        // Find a free drive letter (Z down to D)
-        let letter = ('D'..='Z')
-            .rev()
-            .find(|c| !Path::new(&format!("{}:\\", c)).exists())
-            .ok_or_else(|| "No free drive letter found".to_string())?;
+
+        // Find drive letter using prod helper
+        let letter =
+            find_free_drive(None).ok_or_else(|| "No free drive letter found".to_string())?;
+        eprintln!("[MOUNT] Selected drive letter: {}:", letter);
+
+        // Use prod helper to restart services and cleanup stale mount
+        prepare_nfs_mount(letter).await;
 
         let status = tokio::process::Command::new("mount")
             .arg("-o")
-            .arg("anon,nolock")
-            .arg(format!("\\\\{}\\/", host))
+            .arg(MOUNT_OPTIONS)
+            .arg(format!("\\\\{}\\share", host))
             .arg(format!("{}:", letter))
             .status()
             .await
@@ -603,7 +630,7 @@ async fn unmount_nfs_os(mount_point: &Path) -> Result<(), String> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_real_os_mount_and_posix_commands() {
     // Test using actual OS NFS mount commands
     // Requires passwordless sudo - will fail with setup instructions if not configured
@@ -633,6 +660,8 @@ async fn test_real_os_mount_and_posix_commands() {
     db.insert(batch).await.unwrap();
 
     let port = create_unique_port(12049);
+    #[cfg(target_os = "windows")]
+    ensure_clean_nfs_state().await;
     let server = posixlake::nfs::NfsServer::new(Arc::new(db), port)
         .await
         .unwrap();
@@ -652,13 +681,22 @@ async fn test_real_os_mount_and_posix_commands() {
     // Test POSIX commands
     let data_csv = mount_point.join("data").join("data.csv");
 
-    // Test reading with cat
+    // Test reading with cat/type
     println!("[TEST] Testing 'cat' command...");
+    #[cfg(not(windows))]
     let output = tokio::process::Command::new("cat")
         .arg(&data_csv)
         .output()
         .await
         .expect("Failed to execute cat");
+
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "type"])
+        .arg(&data_csv)
+        .output()
+        .await
+        .expect("Failed to execute type");
 
     let content = String::from_utf8_lossy(&output.stdout);
     println!("  CSV content:\n{}", content);
@@ -666,17 +704,32 @@ async fn test_real_os_mount_and_posix_commands() {
     assert!(content.contains("Alice"), "CSV should contain Alice");
     assert!(content.contains("Bob"), "CSV should contain Bob");
 
-    // Test ls
+    // Test ls/dir
     println!("[TEST] Testing 'ls' command...");
+    #[cfg(not(windows))]
     let output = tokio::process::Command::new("ls")
         .arg(mount_point.join("data"))
         .output()
         .await
         .expect("Failed to execute ls");
 
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "dir"])
+        .arg(mount_point.join("data"))
+        .output()
+        .await
+        .expect("Failed to execute dir");
+
     let listing = String::from_utf8_lossy(&output.stdout);
     println!("  Directory listing: {}", listing);
+    #[cfg(not(windows))]
     assert!(listing.contains("data.csv"), "Should list data.csv");
+    #[cfg(windows)]
+    assert!(
+        listing.to_lowercase().contains("data.csv"),
+        "Should list data.csv"
+    );
 
     println!("[SUCCESS] All POSIX commands working through NFS mount!");
 
@@ -689,7 +742,7 @@ async fn test_real_os_mount_and_posix_commands() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_real_os_write_through_mount() {
     // Test writing data through real OS mount
     // Requires passwordless sudo - will fail with setup instructions if not configured
@@ -719,6 +772,8 @@ async fn test_real_os_write_through_mount() {
     db.insert(batch).await.unwrap();
 
     let port = create_unique_port(12049);
+    #[cfg(target_os = "windows")]
+    ensure_clean_nfs_state().await;
     let server = posixlake::nfs::NfsServer::new(Arc::new(db), port)
         .await
         .unwrap();
@@ -735,32 +790,93 @@ async fn test_real_os_write_through_mount() {
 
     let data_csv = mount_point.join("data").join("data.csv");
 
-    // Write new row with echo
-    println!("[TEST] Testing 'echo >>' command (write through mount)...");
-    let status = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("echo '2,Bob' >> {:?}", data_csv))
-        .status()
-        .await
-        .expect("Failed to execute echo");
+    // Write new row - use explicit read+write with offset to ensure proper append
+    println!("[TEST] Testing write through mount...");
+    {
+        use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
-    assert!(status.success(), "echo command should succeed");
+        // First, read current content and size
+        let current_content = tokio::fs::read_to_string(&data_csv)
+            .await
+            .expect("Failed to read current content");
+        println!(
+            "[DEBUG] Current content before write ({} bytes):\n{}",
+            current_content.len(),
+            current_content
+        );
 
-    // Read back and verify
+        // Open file for write (not append - we'll seek explicitly)
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&data_csv)
+            .await
+            .expect("Failed to open file for read/write");
+
+        // Seek to end
+        let pos = file
+            .seek(std::io::SeekFrom::End(0))
+            .await
+            .expect("Failed to seek");
+        println!("[DEBUG] Seeked to position {} for append", pos);
+
+        // Write new row
+        file.write_all(b"\n2,Bob").await.expect("Failed to write");
+        println!("[DEBUG] Write completed");
+
+        // Force sync to NFS server
+        file.flush().await.expect("Failed to flush");
+        println!("[DEBUG] Flush completed");
+        file.sync_all().await.expect("Failed to sync");
+        println!("[DEBUG] Sync completed");
+    }
+    println!("[SUCCESS] Write completed");
+
+    // Small delay to allow Windows NFS cache to settle
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Read back and verify using multiple methods
     println!("[TEST] Testing read-after-write consistency...");
+
+    // Method 1: Direct tokio::fs read
+    let direct_content = tokio::fs::read_to_string(&data_csv)
+        .await
+        .expect("Failed to read file directly");
+    println!(
+        "[DEBUG] Direct tokio::fs read ({} bytes):\n{}",
+        direct_content.len(),
+        direct_content
+    );
+
+    // Method 2: OS command (type on Windows, cat on Unix)
+    #[cfg(not(windows))]
     let output = tokio::process::Command::new("cat")
         .arg(&data_csv)
         .output()
         .await
         .expect("Failed to execute cat");
 
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "type"])
+        .arg(&data_csv)
+        .output()
+        .await
+        .expect("Failed to execute type");
+
     let content = String::from_utf8_lossy(&output.stdout);
-    println!("  Content after write:\n{}", content);
+    println!(
+        "[DEBUG] OS command read ({} bytes):\n{}",
+        content.len(),
+        content
+    );
+
+    // Use the direct content for assertion (more reliable)
     assert!(
-        content.contains("Alice"),
+        direct_content.contains("Alice"),
         "Original data should still be there"
     );
-    assert!(content.contains("Bob"), "New data should be written");
+    assert!(direct_content.contains("Bob"), "New data should be written");
 
     println!("[SUCCESS] Write operations working through NFS mount!");
 
@@ -772,7 +888,7 @@ async fn test_real_os_write_through_mount() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_list_individual_parquet_files() {
     init_logging();
 
@@ -856,7 +972,7 @@ async fn test_nfs_list_individual_parquet_files() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_read_individual_parquet_file() {
     init_logging();
 
@@ -914,7 +1030,7 @@ async fn test_nfs_read_individual_parquet_file() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_parquet_file_accurate_sizes() {
     init_logging();
 
@@ -986,7 +1102,7 @@ async fn test_nfs_parquet_file_accurate_sizes() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_parquet_file_modification_times() {
     init_logging();
 
@@ -1076,7 +1192,7 @@ async fn test_nfs_parquet_file_modification_times() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_parquet_file_row_count_metadata() {
     init_logging();
 
@@ -1153,7 +1269,7 @@ async fn test_nfs_parquet_file_row_count_metadata() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_json_view_read() {
     init_logging();
 
@@ -1214,7 +1330,7 @@ async fn test_nfs_json_view_read() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_jsonl_view_read() {
     init_logging();
 
@@ -1271,7 +1387,7 @@ async fn test_nfs_jsonl_view_read() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_special_query_file() {
     init_logging();
 
@@ -1335,7 +1451,7 @@ async fn test_nfs_special_query_file() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_special_schema_file() {
     init_logging();
 
@@ -1385,7 +1501,7 @@ async fn test_nfs_special_schema_file() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_special_stats_file() {
     init_logging();
 
@@ -1443,7 +1559,7 @@ async fn test_nfs_special_stats_file() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_metadata_directory() {
     init_logging();
 
@@ -1499,7 +1615,7 @@ async fn test_nfs_metadata_directory() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_concurrent_multiprocess_access() {
     use std::time::Duration;
 
@@ -1538,6 +1654,8 @@ async fn test_nfs_concurrent_multiprocess_access() {
 
     // Start NFS server
     let port = create_unique_port(11049);
+    #[cfg(target_os = "windows")]
+    ensure_clean_nfs_state().await;
     let server = posixlake::nfs::NfsServer::new(Arc::new(db), port)
         .await
         .unwrap();
@@ -1568,20 +1686,36 @@ async fn test_nfs_concurrent_multiprocess_access() {
     let data_path = mount_dir.join("data").join("data.csv");
     println!("[TEST] Verifying mount at {:?}", data_path);
 
-    // Try ls first
+    // Try ls/dir first
+    #[cfg(not(windows))]
     let ls_output = tokio::process::Command::new("ls")
         .arg(mount_dir.join("data"))
         .output()
         .await
         .expect("ls should work");
+    #[cfg(windows)]
+    let ls_output = tokio::process::Command::new("cmd")
+        .args(["/C", "dir"])
+        .arg(mount_dir.join("data"))
+        .output()
+        .await
+        .expect("dir should work");
     println!("[LS] {}", String::from_utf8_lossy(&ls_output.stdout));
 
-    // Now try cat
+    // Now try cat/type
+    #[cfg(not(windows))]
     let cat_output = tokio::process::Command::new("cat")
         .arg(&data_path)
         .output()
         .await
         .expect("cat should work");
+    #[cfg(windows)]
+    let cat_output = tokio::process::Command::new("cmd")
+        .args(["/C", "type"])
+        .arg(&data_path)
+        .output()
+        .await
+        .expect("type should work");
 
     let content = String::from_utf8_lossy(&cat_output.stdout);
     println!("[CAT] Read {} bytes", content.len());
@@ -1592,14 +1726,21 @@ async fn test_nfs_concurrent_multiprocess_access() {
     );
     println!("[VERIFY] Initial verification successful");
 
-    // Spawn multiple concurrent cat commands (reduced to 3 for stability)
+    // Spawn multiple concurrent cat/type commands (reduced to 3 for stability)
     println!("[TEST] Starting concurrent reads...");
     let mut handles = vec![];
     for i in 0..3 {
         let path = data_path.clone();
         let handle = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(i * 100)).await; // Stagger starts
+            #[cfg(not(windows))]
             let output = tokio::process::Command::new("cat")
+                .arg(&path)
+                .output()
+                .await;
+            #[cfg(windows)]
+            let output = tokio::process::Command::new("cmd")
+                .args(["/C", "type"])
                 .arg(&path)
                 .output()
                 .await;
@@ -1662,7 +1803,7 @@ async fn test_nfs_concurrent_multiprocess_access() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_concurrent_readers_and_writer() {
     init_logging();
 
@@ -1792,7 +1933,7 @@ async fn test_nfs_concurrent_readers_and_writer() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_file_deletion_truncates_table() {
     init_logging();
     println!("\n[TEST] test_nfs_file_deletion_truncates_table");
@@ -1871,7 +2012,7 @@ async fn test_nfs_file_deletion_truncates_table() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_row_deletion_via_overwrite() {
     init_logging();
     println!("\n[TEST] test_nfs_row_deletion_via_overwrite");
@@ -2012,7 +2153,7 @@ async fn test_nfs_row_deletion_via_overwrite() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_deletion_vectors_and_optimize() {
     init_logging();
     println!("\n[TEST] test_nfs_deletion_vectors_and_optimize");
@@ -2281,7 +2422,7 @@ async fn test_nfs_deletion_vectors_and_optimize() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_row_deletion_performance() {
     init_logging();
     println!("\n[TEST] test_nfs_row_deletion_performance");
@@ -2542,7 +2683,7 @@ async fn test_nfs_row_deletion_performance() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_cache_hit_after_write() {
     init_logging();
     println!("\n[TEST] test_nfs_cache_hit_after_write");
@@ -2656,7 +2797,7 @@ async fn test_nfs_cache_hit_after_write() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_delete_performance_isolated() {
     init_logging();
     println!("\n[TEST] test_delete_performance_isolated");
@@ -2788,7 +2929,7 @@ async fn test_delete_performance_isolated() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_concurrent_row_deletion() {
     init_logging();
     println!("\n[TEST] test_concurrent_row_deletion");
@@ -3029,7 +3170,7 @@ async fn test_concurrent_row_deletion() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_large_dataset_row_deletion() {
     init_logging();
     println!("\n[TEST] test_large_dataset_row_deletion");
@@ -3275,7 +3416,7 @@ async fn test_large_dataset_row_deletion() {
 /// Test: CSV row UPDATE via overwrite (edit values, same IDs)
 /// This tests MERGE operation with UPDATE detection
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_csv_update_via_overwrite() {
     init_logging();
     println!("\n[TEST] test_nfs_csv_update_via_overwrite - UPDATE rows via CSV edit");
@@ -3444,7 +3585,7 @@ async fn test_nfs_csv_update_via_overwrite() {
 /// NOTE: This test is IGNORED by default due to longer runtime (~1-2 minutes)
 /// To run: cargo test test_stress_100k_rows -- --ignored --nocapture
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 #[ignore = "Stress test: 100K rows, takes ~1-2 minutes. Run with: cargo test -- --ignored"]
 async fn test_stress_100k_rows() {
     init_logging();
@@ -3639,7 +3780,7 @@ async fn test_stress_100k_rows() {
 /// NOTE: This test is IGNORED by default due to long runtime (~5-10 minutes)
 /// To run: cargo test test_stress_1m_rows -- --ignored --nocapture
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 #[ignore = "Stress test: 1M rows, takes ~5-10 minutes. Run with: cargo test -- --ignored"]
 async fn test_stress_1m_rows() {
     init_logging();
@@ -3857,7 +3998,7 @@ async fn test_stress_1m_rows() {
 /// NOTE: This test is IGNORED by default due to longer runtime (~2-3 minutes)
 /// To run: cargo test test_stress_large_batch_delete -- --ignored --nocapture
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 #[ignore = "Stress test: 50K row batch delete, takes ~2-3 minutes. Run with: cargo test -- --ignored"]
 async fn test_stress_large_batch_delete() {
     init_logging();
@@ -4034,7 +4175,7 @@ async fn test_stress_large_batch_delete() {
 /// NOTE: This test is IGNORED by default due to long runtime (~30 minutes)
 /// To run: cargo test test_1gb_csv_stress -- --ignored --nocapture
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 #[ignore = "Stress test: 30M rows, takes ~30 minutes. Run with: cargo test -- --ignored"]
 async fn test_1gb_csv_stress() {
     init_logging();
@@ -4303,7 +4444,7 @@ async fn test_1gb_csv_stress() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_mkdir_creates_directory() {
     init_logging();
     println!("\n[TEST] test_nfs_mkdir_creates_directory");
@@ -4326,6 +4467,8 @@ async fn test_nfs_mkdir_creates_directory() {
     let db = DatabaseOps::create(&db_path, schema).await.unwrap();
 
     let port = create_unique_port(12049);
+    #[cfg(target_os = "windows")]
+    ensure_clean_nfs_state().await;
     let server = posixlake::nfs::NfsServer::new(Arc::new(db), port)
         .await
         .unwrap();
@@ -4342,7 +4485,16 @@ async fn test_nfs_mkdir_creates_directory() {
     let test_dir = mount_point.join("testdir");
 
     // TDD: This should fail because mkdir is not implemented yet
+    #[cfg(not(windows))]
     let output = tokio::process::Command::new("mkdir")
+        .arg(&test_dir)
+        .output()
+        .await
+        .expect("Failed to execute mkdir");
+
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "mkdir"])
         .arg(&test_dir)
         .output()
         .await
@@ -4357,12 +4509,21 @@ async fn test_nfs_mkdir_creates_directory() {
 
     println!("[VERIFY] Checking directory was created");
     // Verify directory exists by listing parent directory
+    #[cfg(not(windows))]
     let output = tokio::process::Command::new("ls")
         .arg("-la")
         .arg(&mount_point)
         .output()
         .await
         .expect("Failed to execute ls");
+
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "dir"])
+        .arg(&mount_point)
+        .output()
+        .await
+        .expect("Failed to execute dir");
 
     let listing = String::from_utf8_lossy(&output.stdout);
     println!("  Directory listing: {}", listing);
@@ -4398,7 +4559,7 @@ async fn test_nfs_mkdir_creates_directory() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_nfs_cp_creates_file() {
     init_logging();
     println!("\n[TEST] test_nfs_cp_creates_file");
@@ -4421,6 +4582,8 @@ async fn test_nfs_cp_creates_file() {
     let db = DatabaseOps::create(&db_path, schema).await.unwrap();
 
     let port = create_unique_port(12049);
+    #[cfg(target_os = "windows")]
+    ensure_clean_nfs_state().await;
     // new() already waits for server readiness with event-based channel (see mod.rs:94-113)
     let server = posixlake::nfs::NfsServer::new(Arc::new(db), port)
         .await
@@ -4444,20 +4607,31 @@ async fn test_nfs_cp_creates_file() {
     // macOS cp tries to copy extended attributes which NFS doesn't support
     // Use -X flag to not copy extended attributes
     #[cfg(target_os = "macos")]
-    let cp_args = vec![
-        "-X",
-        source_file.to_str().unwrap(),
-        dest_file.to_str().unwrap(),
-    ];
-
-    #[cfg(not(target_os = "macos"))]
-    let cp_args = vec![source_file.to_str().unwrap(), dest_file.to_str().unwrap()];
-
     let output = tokio::process::Command::new("cp")
-        .args(&cp_args)
+        .args([
+            "-X",
+            source_file.to_str().unwrap(),
+            dest_file.to_str().unwrap(),
+        ])
         .output()
         .await
         .expect("Failed to execute cp");
+
+    #[cfg(target_os = "linux")]
+    let output = tokio::process::Command::new("cp")
+        .args([source_file.to_str().unwrap(), dest_file.to_str().unwrap()])
+        .output()
+        .await
+        .expect("Failed to execute cp");
+
+    #[cfg(windows)]
+    let output = tokio::process::Command::new("cmd")
+        .args(["/C", "copy"])
+        .arg(&source_file)
+        .arg(&dest_file)
+        .output()
+        .await
+        .expect("Failed to execute copy");
 
     assert!(
         output.status.success(),
@@ -4504,7 +4678,7 @@ async fn test_nfs_cp_creates_file() {
 // MountGuard is now imported from posixlake::nfs::MountGuard
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_mount_guard_cleans_up_on_drop() {
     // TDD: Test that MountGuard automatically unmounts when dropped
     // This ensures stale mounts don't accumulate from failed/panicked tests
@@ -4577,7 +4751,7 @@ async fn test_mount_guard_cleans_up_on_drop() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_mount_guard_skips_if_already_unmounted() {
     // TDD: Test that MountGuard doesn't error if mount was already cleaned up manually
     init_logging();
@@ -4638,7 +4812,7 @@ async fn test_mount_guard_skips_if_already_unmounted() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(nfs)]
 async fn test_portmapper_listener_on_111() {
     init_logging();
 
@@ -4676,36 +4850,26 @@ async fn test_portmapper_listener_on_111() {
             //   target_prog(100003) + target_vers(3) + proto(6/TCP) + port(0)
             let rpc_call: Vec<u8> = vec![
                 // Fragment header: last fragment (0x80) | length (56 bytes)
-                0x80, 0x00, 0x00, 0x38,
-                // XID
-                0x00, 0x00, 0x00, 0x01,
-                // Message type: CALL (0)
-                0x00, 0x00, 0x00, 0x00,
-                // RPC version: 2
-                0x00, 0x00, 0x00, 0x02,
-                // Program: PMAP (100000)
-                0x00, 0x01, 0x86, 0xa0,
-                // Version: 2
-                0x00, 0x00, 0x00, 0x02,
-                // Procedure: GETPORT (3)
-                0x00, 0x00, 0x00, 0x03,
-                // Auth: AUTH_NULL
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
-                // Verifier: AUTH_NULL
-                0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00,
+                0x80, 0x00, 0x00, 0x38, // XID
+                0x00, 0x00, 0x00, 0x01, // Message type: CALL (0)
+                0x00, 0x00, 0x00, 0x00, // RPC version: 2
+                0x00, 0x00, 0x00, 0x02, // Program: PMAP (100000)
+                0x00, 0x01, 0x86, 0xa0, // Version: 2
+                0x00, 0x00, 0x00, 0x02, // Procedure: GETPORT (3)
+                0x00, 0x00, 0x00, 0x03, // Auth: AUTH_NULL
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Verifier: AUTH_NULL
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 // Target program: NFS (100003)
-                0x00, 0x01, 0x86, 0xa3,
-                // Target version: 3
-                0x00, 0x00, 0x00, 0x03,
-                // Protocol: TCP (6)
-                0x00, 0x00, 0x00, 0x06,
-                // Port: 0 (asking for it)
+                0x00, 0x01, 0x86, 0xa3, // Target version: 3
+                0x00, 0x00, 0x00, 0x03, // Protocol: TCP (6)
+                0x00, 0x00, 0x00, 0x06, // Port: 0 (asking for it)
                 0x00, 0x00, 0x00, 0x00,
             ];
 
-            stream.write_all(&rpc_call).await.expect("Failed to send RPC");
+            stream
+                .write_all(&rpc_call)
+                .await
+                .expect("Failed to send RPC");
 
             let mut response = vec![0u8; 128];
             let n = tokio::time::timeout(
@@ -4716,14 +4880,27 @@ async fn test_portmapper_listener_on_111() {
             .expect("Response timeout")
             .expect("Failed to read response");
 
-            assert!(n >= 28, "Response should contain at least an RPC reply header, got {} bytes", n);
+            assert!(
+                n >= 28,
+                "Response should contain at least an RPC reply header, got {} bytes",
+                n
+            );
 
             // The last 4 bytes of the reply body should be the port number
             // RPC reply: fragment(4) + XID(4) + msg_type(4) + reply_stat(4) + verf(8) + accept_stat(4) + port(4) = 32
             if n >= 32 {
                 let port_bytes = &response[28..32];
-                let returned_port = u32::from_be_bytes([port_bytes[0], port_bytes[1], port_bytes[2], port_bytes[3]]);
-                assert!(returned_port > 0, "Portmapper should return a non-zero port, got {}", returned_port);
+                let returned_port = u32::from_be_bytes([
+                    port_bytes[0],
+                    port_bytes[1],
+                    port_bytes[2],
+                    port_bytes[3],
+                ]);
+                assert!(
+                    returned_port > 0,
+                    "Portmapper should return a non-zero port, got {}",
+                    returned_port
+                );
                 println!("[TEST] Portmapper returned port: {}", returned_port);
             }
 
@@ -4731,13 +4908,157 @@ async fn test_portmapper_listener_on_111() {
         }
         Ok(Err(e)) => {
             // Connection refused - port 111 not bound (e.g., no root privileges)
-            println!("[SKIPPED] Cannot connect to port 111 (need root/admin): {}", e);
+            println!(
+                "[SKIPPED] Cannot connect to port 111 (need root/admin): {}",
+                e
+            );
             println!("[INFO] Run with sudo/admin to test portmapper binding");
         }
         Err(_) => {
             println!("[SKIPPED] Connection to port 111 timed out");
         }
     }
+
+    server.shutdown().await.unwrap();
+}
+
+/// TDD RED: Test that setattr works on existing files (data.csv)
+/// Currently fails with NFS3ERR_NOTSUPP because setattr only handles created files
+#[tokio::test]
+#[serial(nfs)]
+async fn test_setattr_on_existing_csv_file() {
+    init_logging();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_setattr");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+
+    // Insert test data
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie"])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.unwrap();
+
+    let db = Arc::new(db);
+    let port = create_unique_port(12049);
+    let server = NfsServer::new(db.clone(), port).await.unwrap();
+
+    // Get the file ID for data.csv
+    let data_csv_id = server.lookup("/data/data.csv").await.unwrap();
+    println!("[TEST] data.csv file ID: {}", data_csv_id);
+
+    // Try to call setattr on data.csv - this should succeed
+    // Currently fails with NFS3ERR_NOTSUPP
+    let result = server.setattr(data_csv_id).await;
+
+    assert!(
+        result.is_ok(),
+        "setattr on existing data.csv should succeed, got: {:?}",
+        result.err()
+    );
+
+    println!("[SUCCESS] setattr on existing file works!");
+
+    server.shutdown().await.unwrap();
+}
+
+/// TDD RED: Test that file overwrite works on existing files via Windows NFS mount
+/// This tests the full flow: Windows client calls setattr to truncate, then writes
+#[tokio::test]
+#[serial(nfs)]
+#[cfg(target_os = "windows")]
+async fn test_windows_file_overwrite_on_existing_csv() {
+    use posixlake::nfs::windows::{ensure_clean_nfs_state, find_free_drive, prepare_nfs_mount};
+
+    init_logging();
+    require_mount_capability();
+
+    // Clean up any stale NFS state
+    ensure_clean_nfs_state().await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_overwrite");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+
+    // Insert initial data
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.unwrap();
+
+    let db = Arc::new(db);
+    let server = NfsServer::new(db.clone(), 2049).await.unwrap();
+
+    // Find a free drive letter and mount
+    let drive = find_free_drive(None).expect("No free drive letter");
+    let temp_mount = std::path::PathBuf::from(format!("{}:\\", drive));
+
+    println!("[TEST] Mounting NFS to {}", drive);
+    prepare_nfs_mount(drive).await;
+
+    // Actually mount using mount_nfs_os
+    let mount_point = mount_nfs_os("localhost", 2049, &temp_mount)
+        .await
+        .expect("NFS mount must succeed");
+
+    let _guard = MountGuard::new(mount_point.clone());
+
+    let data_csv = mount_point.join("data").join("data.csv");
+
+    // Read original content
+    let original = tokio::fs::read_to_string(&data_csv)
+        .await
+        .expect("Should read original data.csv");
+    println!("[TEST] Original content:\n{}", original);
+    assert!(original.contains("Alice"), "Should have Alice");
+    assert!(original.contains("Bob"), "Should have Bob");
+
+    // Try to OVERWRITE the file with new content (this triggers setattr for truncate)
+    let new_content = "id,name\n100,NewPerson\n";
+    let write_result = tokio::fs::write(&data_csv, new_content).await;
+
+    assert!(
+        write_result.is_ok(),
+        "File overwrite should succeed, got: {:?}",
+        write_result.err()
+    );
+
+    // Read back and verify
+    let updated = tokio::fs::read_to_string(&data_csv)
+        .await
+        .expect("Should read updated data.csv");
+    println!("[TEST] Updated content:\n{}", updated);
+
+    assert!(
+        updated.contains("NewPerson"),
+        "Should have new content after overwrite"
+    );
+    assert!(!updated.contains("Alice"), "Old content should be replaced");
+
+    println!("[SUCCESS] File overwrite on existing CSV works!");
 
     server.shutdown().await.unwrap();
 }

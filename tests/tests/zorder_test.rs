@@ -4,6 +4,7 @@ use arrow::record_batch::RecordBatch;
 use posixlake::Result;
 use posixlake::database_ops::DatabaseOps;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tracing::info;
 
 fn setup_tracing() {
@@ -39,8 +40,9 @@ fn count_parquet_files(db_path: &str) -> Result<usize> {
 async fn test_zorder_basic() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_zorder_basic";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake Z-ORDER Basic Test ===");
 
@@ -53,7 +55,7 @@ async fn test_zorder_basic() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
     info!("  Created database");
 
     // Insert data across multiple files with different category/region combinations
@@ -81,14 +83,14 @@ async fn test_zorder_basic() -> Result<()> {
 
     info!("  Inserted {} rows across multiple files", id_counter);
 
-    let files_before = count_parquet_files(db_path)?;
+    let files_before = count_parquet_files(db_path_str)?;
     info!("  Parquet files before Z-ORDER: {}", files_before);
 
     // Run Z-ORDER on category and region columns
     info!("  Running Z-ORDER on [category, region]...");
     db.zorder(&["category", "region"]).await?;
 
-    let files_after = count_parquet_files(db_path)?;
+    let files_after = count_parquet_files(db_path_str)?;
     info!("  Parquet files after Z-ORDER: {}", files_after);
 
     // Z-ORDER creates new clustered files and marks old files as removed (like OPTIMIZE)
@@ -131,9 +133,7 @@ async fn test_zorder_basic() -> Result<()> {
     info!("  Data integrity verified: all {} rows present", id_counter);
     info!("  Z-ORDER successfully clustered data by [category, region]");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }
 
@@ -142,8 +142,9 @@ async fn test_zorder_basic() -> Result<()> {
 async fn test_zorder_single_column() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_zorder_single";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake Z-ORDER Single Column Test ===");
 
@@ -155,7 +156,7 @@ async fn test_zorder_single_column() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
     info!("  Created database");
 
     // Insert data with varying timestamps
@@ -172,14 +173,14 @@ async fn test_zorder_single_column() -> Result<()> {
     }
     info!("  Inserted 20 rows");
 
-    let files_before = count_parquet_files(db_path)?;
+    let files_before = count_parquet_files(db_path_str)?;
     info!("  Parquet files before Z-ORDER: {}", files_before);
 
     // Run Z-ORDER on single column (timestamp)
     info!("  Running Z-ORDER on [timestamp]...");
     db.zorder(&["timestamp"]).await?;
 
-    let files_after = count_parquet_files(db_path)?;
+    let files_after = count_parquet_files(db_path_str)?;
     info!("  Parquet files after Z-ORDER: {}", files_after);
 
     // Verify data integrity
@@ -194,9 +195,7 @@ async fn test_zorder_single_column() -> Result<()> {
 
     info!("  Data integrity verified: all 20 rows present");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }
 
@@ -209,8 +208,9 @@ async fn test_zorder_single_column() -> Result<()> {
 async fn test_zorder_after_optimize() -> Result<()> {
     setup_tracing();
 
-    let db_path = "/tmp/posixlake_test_zorder_optimize";
-    let _ = std::fs::remove_dir_all(db_path);
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+    let db_path_str = db_path.to_str().unwrap();
 
     info!("=== Delta Lake OPTIMIZE + Z-ORDER Combined Test ===");
 
@@ -222,7 +222,7 @@ async fn test_zorder_after_optimize() -> Result<()> {
     ]));
 
     // Create database
-    let db = DatabaseOps::create(db_path, schema.clone()).await?;
+    let db = DatabaseOps::create(db_path_str, schema.clone()).await?;
     info!("  Created database");
 
     // Insert many small files
@@ -245,21 +245,21 @@ async fn test_zorder_after_optimize() -> Result<()> {
     }
     info!("  Inserted 30 rows across many small files");
 
-    let files_after_insert = count_parquet_files(db_path)?;
+    let files_after_insert = count_parquet_files(db_path_str)?;
     info!("  Files after insert: {}", files_after_insert);
 
     // First OPTIMIZE to compact files
     info!("  Running OPTIMIZE...");
     db.optimize().await?;
 
-    let files_after_optimize = count_parquet_files(db_path)?;
+    let files_after_optimize = count_parquet_files(db_path_str)?;
     info!("  Files after OPTIMIZE: {}", files_after_optimize);
 
     // Then Z-ORDER to cluster by category and priority
     info!("  Running Z-ORDER on [category, priority]...");
     db.zorder(&["category", "priority"]).await?;
 
-    let files_after_zorder = count_parquet_files(db_path)?;
+    let files_after_zorder = count_parquet_files(db_path_str)?;
     info!("  Files after Z-ORDER: {}", files_after_zorder);
 
     // Verify data integrity
@@ -286,8 +286,6 @@ async fn test_zorder_after_optimize() -> Result<()> {
 
     info!("  Data integrity verified: OPTIMIZE + Z-ORDER successful");
 
-    // Cleanup
-    std::fs::remove_dir_all(db_path)?;
-
+    // TempDir handles cleanup automatically
     Ok(())
 }

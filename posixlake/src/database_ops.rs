@@ -141,14 +141,22 @@ impl DatabaseOps {
         path: P,
         schema: SchemaRef,
     ) -> Result<Self> {
-        let base_path = path.as_ref().to_path_buf();
+        // Create base directory first (works with relative paths)
+        std::fs::create_dir_all(path.as_ref())?;
+
+        // Canonicalize to absolute path (required for Url::from_directory_path)
+        let base_path = path.as_ref().canonicalize().map_err(|e| {
+            Error::Other(format!(
+                "Failed to canonicalize path '{}': {}",
+                path.as_ref().display(),
+                e
+            ))
+        })?;
+
         info!(
             "Creating database in Delta Lake native mode at: {}",
             base_path.display()
         );
-
-        // Create base directory
-        std::fs::create_dir_all(&base_path)?;
 
         // Initialize Delta Lake table using delta-rs
         let _delta_table = {
@@ -227,7 +235,14 @@ impl DatabaseOps {
     /// Open an existing Delta Lake table with posixlake
     /// Allows posixlake to read and write to existing Delta Lake tables
     pub async fn open_delta_native<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let base_path = path.as_ref().to_path_buf();
+        // Canonicalize to absolute path (required for Url::from_directory_path)
+        let base_path = path.as_ref().canonicalize().map_err(|e| {
+            Error::Other(format!(
+                "Failed to canonicalize path '{}': {}",
+                path.as_ref().display(),
+                e
+            ))
+        })?;
         info!("Opening Delta Lake table at: {}", base_path.display());
 
         // Open Delta Lake table
