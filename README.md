@@ -543,6 +543,41 @@ echo "id,name,value" >> /mnt/data/data/data.csv  # Append
 
 All writes persist to Delta Lake with full ACID guarantees. No special tools needed - just standard UNIX commands.
 
+### Windows Usage
+
+On Windows, mount to a drive letter and use PowerShell or cmd.exe for CRUD operations:
+
+```powershell
+# 1. Create database from CSV
+.\posixlake.exe create --from-csv data.csv test_db
+
+# 2. Mount to drive letter
+.\posixlake.exe mount test_db T:
+
+# 3. READ - view data
+Get-Content T:\data\data.csv
+Get-Content T:\data\data.csv | Select-Object -First 10
+
+# 4. INSERT - append new row
+Add-Content -Path T:\data\data.csv -Value "26,New Person,new@example.com,30,Sales,70000"
+
+# 5. UPDATE - overwrite with modified content (triggers MERGE)
+Get-Content T:\data\data.csv | ForEach-Object { $_ -replace 'OldValue','NewValue' } | Out-File temp.csv -Encoding ascii
+cmd /c "copy /Y temp.csv T:\data\data.csv"
+
+# 6. DELETE - overwrite without the row (triggers MERGE with DELETE)
+Get-Content T:\data\data.csv | Where-Object { $_ -notmatch 'RowToDelete' } | Out-File temp.csv -Encoding ascii
+cmd /c "copy /Y temp.csv T:\data\data.csv"
+
+# 7. Unmount
+.\posixlake.exe unmount T:
+
+# 8. Check status
+.\posixlake.exe status T:
+```
+
+**Note:** Use `-Encoding ascii` with `Out-File` and `cmd /c copy` for overwrites to ensure proper CSV formatting. PowerShell's default encoding can cause issues with CSV parsing.
+
 ### What Happens on Unmount
 
 When you unmount the NFS filesystem, **your data persists** because it's stored in the Delta Lake directory, not in the mount:
