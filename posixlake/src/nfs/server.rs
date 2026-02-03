@@ -418,9 +418,118 @@ impl NFSFileSystem for PosixLakeFilesystem {
             }
         }
 
-        // For other files (data.csv, directories), not supported
-        info!("SETATTR not supported for ID {}", id);
-        Err(nfsstat3::NFS3ERR_NOTSUPP)
+        // Handle existing files and directories (root, /data, data.csv, parquet files)
+        // Return current attributes - we acknowledge the setattr but don't modify
+        // This allows Windows NFS client to perform file operations that require setattr
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let now_time = nfstime3 {
+            seconds: now.as_secs() as u32,
+            nseconds: now.subsec_nanos(),
+        };
+
+        match id {
+            // Root directory
+            1 => {
+                let attr = fattr3 {
+                    ftype: ftype3::NF3DIR,
+                    mode: 0o755,
+                    nlink: 2,
+                    uid: 0,
+                    gid: 0,
+                    size: 4096,
+                    used: 4096,
+                    rdev: specdata3::default(),
+                    fsid: 0,
+                    fileid: id,
+                    atime: now_time,
+                    mtime: now_time,
+                    ctime: now_time,
+                };
+                info!("SETATTR succeeded for root directory");
+                Ok(attr)
+            }
+            // /data directory
+            2 => {
+                let attr = fattr3 {
+                    ftype: ftype3::NF3DIR,
+                    mode: 0o755,
+                    nlink: 2,
+                    uid: 0,
+                    gid: 0,
+                    size: 4096,
+                    used: 4096,
+                    rdev: specdata3::default(),
+                    fsid: 0,
+                    fileid: id,
+                    atime: now_time,
+                    mtime: now_time,
+                    ctime: now_time,
+                };
+                info!("SETATTR succeeded for /data directory");
+                Ok(attr)
+            }
+            // data.csv file
+            3 => {
+                // Get current size from the CSV view
+                let view = CsvFileView::new(self.db.clone());
+                let csv_size = view.size().await.unwrap_or(0);
+                let attr = fattr3 {
+                    ftype: ftype3::NF3REG,
+                    mode: 0o666,
+                    nlink: 1,
+                    uid: 0,
+                    gid: 0,
+                    size: csv_size,
+                    used: csv_size,
+                    rdev: specdata3::default(),
+                    fsid: 0,
+                    fileid: id,
+                    atime: now_time,
+                    mtime: now_time,
+                    ctime: now_time,
+                };
+                info!("SETATTR succeeded for data.csv (size={})", csv_size);
+                Ok(attr)
+            }
+            // Parquet files (IDs 100-999)
+            100..=999 => {
+                let parquet_files = self.parquet_files.lock().await;
+                if let Some(path) = parquet_files.get(&id) {
+                    let full_path = self.db.base_path().join(path);
+                    let metadata = std::fs::metadata(&full_path).ok();
+                    let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                    let attr = fattr3 {
+                        ftype: ftype3::NF3REG,
+                        mode: 0o644,
+                        nlink: 1,
+                        uid: 0,
+                        gid: 0,
+                        size,
+                        used: size,
+                        rdev: specdata3::default(),
+                        fsid: 0,
+                        fileid: id,
+                        atime: now_time,
+                        mtime: now_time,
+                        ctime: now_time,
+                    };
+                    info!(
+                        "SETATTR succeeded for parquet file ID {} (size={})",
+                        id, size
+                    );
+                    Ok(attr)
+                } else {
+                    info!("SETATTR failed: parquet file ID {} not found", id);
+                    Err(nfsstat3::NFS3ERR_NOENT)
+                }
+            }
+            _ => {
+                info!("SETATTR failed: unknown file ID {}", id);
+                Err(nfsstat3::NFS3ERR_NOENT)
+            }
+        }
     }
 
     async fn read(

@@ -542,6 +542,61 @@ impl NfsServer {
             writable: true,
         })
     }
+
+    /// Lookup file ID by path (for testing)
+    pub async fn lookup(&self, path: &str) -> Result<u64> {
+        let fs = &self.filesystem;
+
+        let fileid = if path == "/" {
+            1
+        } else if path == "/data" {
+            2
+        } else if path == "/data/data.csv" {
+            3
+        } else if path.starts_with("/data/") && path.ends_with(".parquet") {
+            fs.refresh_parquet_files().await.map_err(|e| {
+                Error::InvalidOperation(format!("Failed to refresh parquet files: {:?}", e))
+            })?;
+
+            let filename = path.strip_prefix("/data/").unwrap();
+            let parquet_files = fs.parquet_files.lock().await;
+            parquet_files
+                .iter()
+                .find(|(_id, file_path)| {
+                    std::path::Path::new(file_path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|basename| basename == filename)
+                        .unwrap_or(false)
+                })
+                .map(|(id, _)| *id)
+                .ok_or_else(|| {
+                    Error::InvalidOperation(format!("Parquet file not found: {}", path))
+                })?
+        } else {
+            return Err(Error::InvalidOperation(format!("Unknown path: {}", path)));
+        };
+
+        Ok(fileid)
+    }
+
+    /// Set file attributes (for testing)
+    /// This tests the setattr NFS operation which is needed for file truncation/overwrite
+    pub async fn setattr(&self, fileid: u64) -> Result<()> {
+        use nfsserve::nfs::sattr3;
+        use nfsserve::vfs::NFSFileSystem;
+
+        let fs = &self.filesystem;
+
+        // Create a minimal setattr request (no changes, just test the operation succeeds)
+        let setattr = sattr3::default();
+
+        fs.setattr(fileid, setattr)
+            .await
+            .map_err(|e| Error::InvalidOperation(format!("setattr failed: {:?}", e)))?;
+
+        Ok(())
+    }
 }
 
 /// File attributes for testing

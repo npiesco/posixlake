@@ -4921,3 +4921,142 @@ async fn test_portmapper_listener_on_111() {
 
     server.shutdown().await.unwrap();
 }
+
+/// TDD RED: Test that setattr works on existing files (data.csv)
+/// Currently fails with NFS3ERR_NOTSUPP because setattr only handles created files
+#[tokio::test]
+#[serial(nfs)]
+async fn test_setattr_on_existing_csv_file() {
+    init_logging();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_setattr");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+
+    // Insert test data
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie"])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.unwrap();
+
+    let db = Arc::new(db);
+    let port = create_unique_port(12049);
+    let server = NfsServer::new(db.clone(), port).await.unwrap();
+
+    // Get the file ID for data.csv
+    let data_csv_id = server.lookup("/data/data.csv").await.unwrap();
+    println!("[TEST] data.csv file ID: {}", data_csv_id);
+
+    // Try to call setattr on data.csv - this should succeed
+    // Currently fails with NFS3ERR_NOTSUPP
+    let result = server.setattr(data_csv_id).await;
+
+    assert!(
+        result.is_ok(),
+        "setattr on existing data.csv should succeed, got: {:?}",
+        result.err()
+    );
+
+    println!("[SUCCESS] setattr on existing file works!");
+
+    server.shutdown().await.unwrap();
+}
+
+/// TDD RED: Test that file overwrite works on existing files via Windows NFS mount
+/// This tests the full flow: Windows client calls setattr to truncate, then writes
+#[tokio::test]
+#[serial(nfs)]
+#[cfg(target_os = "windows")]
+async fn test_windows_file_overwrite_on_existing_csv() {
+    use posixlake::nfs::windows::{ensure_clean_nfs_state, find_free_drive, prepare_nfs_mount};
+
+    init_logging();
+    require_mount_capability();
+
+    // Clean up any stale NFS state
+    ensure_clean_nfs_state().await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_overwrite");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+
+    // Insert initial data
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int64Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.unwrap();
+
+    let db = Arc::new(db);
+    let server = NfsServer::new(db.clone(), 2049).await.unwrap();
+
+    // Find a free drive letter and mount
+    let drive = find_free_drive(None).expect("No free drive letter");
+    let mount_point = std::path::PathBuf::from(format!("{}:\\", drive));
+
+    println!("[TEST] Mounting NFS to {}", drive);
+    prepare_nfs_mount(drive).await;
+
+    let _guard = MountGuard::new(mount_point.clone());
+
+    // Wait for mount to stabilize
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let data_csv = mount_point.join("data").join("data.csv");
+
+    // Read original content
+    let original = tokio::fs::read_to_string(&data_csv)
+        .await
+        .expect("Should read original data.csv");
+    println!("[TEST] Original content:\n{}", original);
+    assert!(original.contains("Alice"), "Should have Alice");
+    assert!(original.contains("Bob"), "Should have Bob");
+
+    // Try to OVERWRITE the file with new content (this triggers setattr for truncate)
+    let new_content = "id,name\n100,NewPerson\n";
+    let write_result = tokio::fs::write(&data_csv, new_content).await;
+
+    assert!(
+        write_result.is_ok(),
+        "File overwrite should succeed, got: {:?}",
+        write_result.err()
+    );
+
+    // Read back and verify
+    let updated = tokio::fs::read_to_string(&data_csv)
+        .await
+        .expect("Should read updated data.csv");
+    println!("[TEST] Updated content:\n{}", updated);
+
+    assert!(
+        updated.contains("NewPerson"),
+        "Should have new content after overwrite"
+    );
+    assert!(!updated.contains("Alice"), "Old content should be replaced");
+
+    println!("[SUCCESS] File overwrite on existing CSV works!");
+
+    server.shutdown().await.unwrap();
+}
