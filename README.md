@@ -1,7 +1,7 @@
 <div align="center">
   <img src="posixlake-logo.png" alt="posixlake Logo" width="200"/>
   <h1>posixlake</h1>
-  <p><strong>Posix and ACID compliant directory based database built with Rust</strong></p>
+  <p><strong>Cross-platform POSIX and ACID compliant directory-based database built with Rust</strong></p>
   
   <p><em>A columnar database engine where UNIX tools (cat, grep, awk, wc, head, tail, sort, cut, echo >>, sed -i, vim, mkdir, mv, cp, rmdir, rm) trigger Delta Lake operations including MERGE (UPSERT), ACID transactions, and native format storage. Works with local filesystem directories and object storage/S3. Built on Apache Arrow, Parquet, and DataFusion for high-performance analytics workloads.</em></p>
 
@@ -9,6 +9,9 @@
 [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-Native%20Format-00ADD8?logo=delta&logoColor=white)](https://delta.io)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md)
 [![Python](https://img.shields.io/badge/Python-Bindings-3776AB?logo=python&logoColor=white)](bindings/python/)
+[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](.)
+[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](.)
+[![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)](.)
 
 [![Tech Stack](https://img.shields.io/badge/Arrow-56.2-red?logo=apache)](https://arrow.apache.org)
 [![Parquet](https://img.shields.io/badge/Parquet-56.2-blue?logo=apache)](https://parquet.apache.org)
@@ -21,7 +24,7 @@
 
 ## What is posixlake?
 
-posixlake is a **file-system database** where **POSIX commands trigger Delta Lake operations**. Works with **local filesystem directories** (`/path/to/database`) and **object storage/S3** (`s3://bucket/path`) - same unified API for both. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, and Athena. **Start fresh, or with existing Delta Tables, raw Parquet files, or CSVs with schema inference.**
+posixlake is a **cross-platform file-system database** where **POSIX commands trigger Delta Lake operations**. Runs natively on **Linux, macOS, and Windows**. Works with **local filesystem directories** (`/path/to/database` or `C:\path\to\database`) and **object storage/S3** (`s3://bucket/path`) - same unified API for both. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, and Athena. **Start fresh, or with existing Delta Tables, raw Parquet files, or CSVs with schema inference.**
 
 ### Mount as Filesystem - Query with UNIX Tools
 
