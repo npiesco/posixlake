@@ -5014,15 +5014,17 @@ async fn test_windows_file_overwrite_on_existing_csv() {
 
     // Find a free drive letter and mount
     let drive = find_free_drive(None).expect("No free drive letter");
-    let mount_point = std::path::PathBuf::from(format!("{}:\\", drive));
+    let temp_mount = std::path::PathBuf::from(format!("{}:\\", drive));
 
     println!("[TEST] Mounting NFS to {}", drive);
     prepare_nfs_mount(drive).await;
 
-    let _guard = MountGuard::new(mount_point.clone());
+    // Actually mount using mount_nfs_os
+    let mount_point = mount_nfs_os("localhost", 2049, &temp_mount)
+        .await
+        .expect("NFS mount must succeed");
 
-    // Wait for mount to stabilize
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let _guard = MountGuard::new(mount_point.clone());
 
     let data_csv = mount_point.join("data").join("data.csv");
 
