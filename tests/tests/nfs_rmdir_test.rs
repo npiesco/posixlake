@@ -192,7 +192,7 @@ async fn mount_nfs_os(
                 "nolocks,vers=3,tcp,port={},mountport={}",
                 port, port
             ))
-            .arg(format!("{}:/", host))
+            .arg(format!("{}:/share", host))
             .arg(mount_point.as_os_str())
             .status()
             .await
@@ -227,7 +227,7 @@ async fn mount_nfs_os(
                     "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                     port, port
                 ))
-                .arg(format!("{}:/", host))
+                .arg(format!("{}:/share", host))
                 .arg(mount_point.as_os_str())
                 .status()
                 .await
@@ -260,7 +260,7 @@ async fn mount_nfs_os(
                 "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                 port, port
             ))
-            .arg(format!("{}:/", host))
+            .arg(format!("{}:/share", host))
             .arg(mount_point.as_os_str())
             .status()
             .await
