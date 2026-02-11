@@ -124,6 +124,9 @@ cat temp.csv > data.csv
 
 **Performance for Large Tables:**
 - **Two-tier cache**: Memory (moka, microsecond) + Disk (sled, millisecond) for generated CSV
+  - Incremental cache: Efficient append-only writes without full CSV regeneration
+  - Byte-range diffing: Detects only changed rows for targeted MERGE operations
+- **Chunked reads**: Request-based byte-range reads avoid generating full CSV on each access
 - **Memory-mapped I/O**: Cached files ≥1MB use `mmap` for zero-copy reads
 - **grep optimization**: First read caches full CSV, subsequent reads (as grep scans) hit cache with byte-range requests
 - **Trade-off**: Initial read generates full CSV (expensive), but all subsequent operations are cache-only (fast)
@@ -262,8 +265,9 @@ posixlake create /path/to/database
 │  │   /schema.sql       (schema definition)      │      │
 │  │   /.query           (SQL interface)          │      │
 │  └──────────────────────────────────────────────┘      │
-│  • Reads: Query Parquet → generate CSV on-demand       │
-│  • Writes: Parse CSV → Delta Lake transaction          │
+│  • Reads: Query Parquet → generate/cache CSV (chunked) │
+│  • Writes: Parse CSV → MERGE or INSERT transactions    │
+│  • Cache: Two-tier (memory → disk), incremental        │
 └─────────────────────┬──────────────────────────────────┘
                       │
 ┌─────────────────────▼──────────────────────────────────┐
@@ -922,6 +926,9 @@ For detailed testing documentation, see [tests/POSIX_TEST_SETUP.md](tests/POSIX_
 
 - Full SQL support via DataFusion
 - **MERGE (UPSERT)** operations - INSERT/UPDATE/DELETE in single transaction
+  - Explicit primary key support (string or integer columns)
+  - Automatic primary key detection if not specified
+- Primary key metadata - set and retrieve via `set_primary_key()` / `primary_key()`
 - Column statistics for query pruning
 - Predicate pushdown optimization
 - Deletion vectors for efficient row-level deletes
@@ -959,6 +966,12 @@ from posixlake import DatabaseOps
 import json
 
 db = DatabaseOps.open("my_delta_table")
+
+# Set primary key for automatic MERGE behavior
+db.set_primary_key("id")
+pk = db.primary_key()  # Returns: "id"
+
+# Explicit MERGE with specified primary key
 merge_data = [
     {"id": 1, "name": "Alice", "age": 31, "_op": "UPDATE"},
     {"id": 2, "name": "Bob", "age": 35, "_op": "DELETE"},
@@ -966,6 +979,10 @@ merge_data = [
 ]
 result = db.merge_json(json.dumps(merge_data), "id")
 metrics = json.loads(result)  # {"rows_inserted": 1, "rows_updated": 1, "rows_deleted": 1}
+
+# List underlying Parquet files
+files = db.list_parquet_files()
+print(f"Data files: {files}")
 ```
 
 See [bindings/python/](bindings/python/) for documentation and [PYTHON_BINDINGS_COMPLETE.md](bindings/python/PYTHON_BINDINGS_COMPLETE.md) for implementation details.
