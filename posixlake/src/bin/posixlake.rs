@@ -627,7 +627,7 @@ fn is_program_not_found(err: &Error) -> bool {
     }
 }
 
-fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
+fn run_wsl_command(_engine: S3Engine, _args: &[String]) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         let distro = std::env::var("WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
