@@ -627,79 +627,77 @@ fn is_program_not_found(err: &Error) -> bool {
     }
 }
 
-fn run_wsl_command(_engine: S3Engine, _args: &[String]) -> Result<()> {
-    #[cfg(target_os = "windows")]
+#[cfg(target_os = "windows")]
+fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
+    let distro = std::env::var("WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+    let wsl_full_path = preferred_wsl_path();
+    let cmd_candidates = [
+        "C:\\Windows\\System32\\cmd.exe",
+        "C:\\Windows\\Sysnative\\cmd.exe",
+        "cmd.exe",
+    ];
+
+    if engine == S3Engine::Podman
+        && args.first().map(|a| a == "compose").unwrap_or(false)
+        && !wsl_podman_has_compose(&distro)
     {
-        let distro = std::env::var("WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
-        let wsl_full_path = preferred_wsl_path();
-        let cmd_candidates = [
-            "C:\\Windows\\System32\\cmd.exe",
-            "C:\\Windows\\Sysnative\\cmd.exe",
-            "cmd.exe",
-        ];
-
-        if engine == S3Engine::Podman
-            && args.first().map(|a| a == "compose").unwrap_or(false)
-            && !wsl_podman_has_compose(&distro)
-        {
-            if args.iter().any(|arg| arg == "up") {
-                return wsl_podman_direct_start(&distro, engine);
-            }
-            if args.iter().any(|arg| arg == "down") {
-                return wsl_podman_direct_stop(&distro, engine);
-            }
+        if args.iter().any(|arg| arg == "up") {
+            return wsl_podman_direct_start(&distro, engine);
         }
+        if args.iter().any(|arg| arg == "down") {
+            return wsl_podman_direct_stop(&distro, engine);
+        }
+    }
 
-        let mut wsl_args = vec![
-            "-d".to_string(),
-            distro.clone(),
-            "sh".to_string(),
-            "-lc".to_string(),
-        ];
-        let command = build_wsl_command(engine, args)?;
-        wsl_args.push(command.clone());
+    let mut wsl_args = vec![
+        "-d".to_string(),
+        distro.clone(),
+        "sh".to_string(),
+        "-lc".to_string(),
+    ];
+    let command = build_wsl_command(engine, args)?;
+    wsl_args.push(command.clone());
 
-        match run_command(&wsl_full_path, &wsl_args) {
+    match run_command(&wsl_full_path, &wsl_args) {
+        Ok(()) => return Ok(()),
+        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+
+    for candidate in ["wsl.exe"] {
+        match run_command(candidate, &wsl_args) {
             Ok(()) => return Ok(()),
-            Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => return Err(err),
         }
-
-        for candidate in ["wsl.exe"] {
-            match run_command(candidate, &wsl_args) {
-                Ok(()) => return Ok(()),
-                Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(err),
-            }
-        }
-
-        let wsl_cmd = format!(
-            "{} -d {} sh -lc {}",
-            shell_escape(&wsl_full_path),
-            shell_escape(&distro),
-            shell_escape(&command)
-        );
-
-        for candidate in cmd_candidates {
-            let cmd_args = ["/c".to_string(), wsl_cmd.clone()];
-            match run_command(candidate, &cmd_args) {
-                Ok(()) => return Ok(()),
-                Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(err),
-            }
-        }
-
-        Err(Error::Other(
-            "WSL not available on PATH or System32".to_string(),
-        ))
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err(Error::Other(
-            "WSL fallback is only supported on Windows".to_string(),
-        ))
+    let wsl_cmd = format!(
+        "{} -d {} sh -lc {}",
+        shell_escape(&wsl_full_path),
+        shell_escape(&distro),
+        shell_escape(&command)
+    );
+
+    for candidate in cmd_candidates {
+        let cmd_args = ["/c".to_string(), wsl_cmd.clone()];
+        match run_command(candidate, &cmd_args) {
+            Ok(()) => return Ok(()),
+            Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err),
+        }
     }
+
+    Err(Error::Other(
+        "WSL not available on PATH or System32".to_string(),
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_wsl_command(_engine: S3Engine, _args: &[String]) -> Result<()> {
+    Err(Error::Other(
+        "WSL fallback is only supported on Windows".to_string(),
+    ))
 }
 
 #[cfg(target_os = "windows")]
