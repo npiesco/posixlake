@@ -14,6 +14,7 @@ Features Covered:
 - Backup and restore (full and incremental)
 - S3 backend support
 - NFS server with POSIX filesystem access
+- Primary key metadata and parquet file listing
 
 Installation:
   pip install posixlake
@@ -74,7 +75,8 @@ def main():
                 Field(name="email", data_type="String", nullable=True),
                 Field(name="age", data_type="Int32", nullable=True),
                 Field(name="salary", data_type="Float64", nullable=True),
-            ]
+            ],
+            primary_key=None,
         )
 
         print(f"Creating database at: {db_path}")
@@ -171,7 +173,8 @@ def main():
                 Field(name="tags", data_type="List<String>", nullable=True),
                 Field(name="metadata", data_type="Map<String,Int64>", nullable=True),
                 Field(name="address", data_type="Struct<city:String,zip:Int32>", nullable=True),
-            ]
+            ],
+            primary_key=None,
         )
 
         try:
@@ -913,7 +916,111 @@ def main():
         except PosixLakeError as e:
             print(f"✗ NFS server failed: {e}")
 
-        print_section("✓ All 13 Examples Completed Successfully!")
+        # Example 14: Primary Key Metadata & Parquet File Listing
+        print_section("Example 14: Primary Key Metadata & Parquet Files")
+
+        print("\n1. Schema primary_key field on creation...")
+        pk_db_path = str(Path(temp_dir) / "pk_db")
+        pk_schema = Schema(
+            fields=[
+                Field(name="user_id", data_type="Int32", nullable=False),
+                Field(name="username", data_type="String", nullable=False),
+                Field(name="score", data_type="Float64", nullable=True),
+            ],
+            primary_key="user_id",
+        )
+        assert pk_schema.primary_key == "user_id", f"Expected 'user_id', got {pk_schema.primary_key}"
+        print(f"  ✓ Schema primary_key = '{pk_schema.primary_key}'")
+
+        print("\n2. Schema without primary_key (None)...")
+        no_pk_schema = Schema(
+            fields=[
+                Field(name="x", data_type="Int32", nullable=False),
+            ],
+            primary_key=None,
+        )
+        assert no_pk_schema.primary_key is None, f"Expected None, got {no_pk_schema.primary_key}"
+        print("  ✓ Schema primary_key = None (default)")
+
+        print("\n3. Create database and set primary key...")
+        try:
+            pk_db = DatabaseOps.create(pk_db_path, pk_schema)
+            print(f"  ✓ Database created at: {pk_db_path}")
+
+            # Check primary_key() accessor
+            pk_val = pk_db.primary_key()
+            print(f"  ✓ primary_key() = {pk_val!r}")
+
+            # Set primary key explicitly
+            pk_db.set_primary_key("user_id")
+            pk_val = pk_db.primary_key()
+            assert pk_val == "user_id", f"Expected 'user_id', got {pk_val}"
+            print(f"  ✓ set_primary_key('user_id') → primary_key() = '{pk_val}'")
+
+        except PosixLakeError as e:
+            print(f"  ✗ Primary key operations failed: {e}")
+
+        print("\n4. Insert data and list parquet files...")
+        try:
+            pk_data = [
+                {"user_id": 1, "username": "alice", "score": 95.0},
+                {"user_id": 2, "username": "bob", "score": 87.5},
+                {"user_id": 3, "username": "charlie", "score": 72.0},
+            ]
+            pk_db.insert_json(json.dumps(pk_data))
+            print(f"  ✓ Inserted {len(pk_data)} rows")
+
+            files = pk_db.list_parquet_files()
+            assert len(files) > 0, "Expected at least one parquet file"
+            assert all(f.endswith(".parquet") for f in files), "All files should be .parquet"
+            print(f"  ✓ list_parquet_files() returned {len(files)} file(s):")
+            for f in files:
+                print(f"    - {f}")
+
+        except PosixLakeError as e:
+            print(f"  ✗ Parquet file listing failed: {e}")
+
+        print("\n5. Primary key persists on reopen...")
+        try:
+            pk_db2 = DatabaseOps.open(pk_db_path)
+            pk_val2 = pk_db2.primary_key()
+            assert pk_val2 == "user_id", f"Expected 'user_id' after reopen, got {pk_val2}"
+            print(f"  ✓ After reopen: primary_key() = '{pk_val2}'")
+        except PosixLakeError as e:
+            print(f"  ✗ Reopen primary key check failed: {e}")
+
+        print("\n6. MERGE uses schema primary key...")
+        try:
+            merge_pk_data = [
+                {"user_id": 2, "username": "bob_updated", "score": 90.0, "_op": "UPDATE"},
+                {"user_id": 4, "username": "diana", "score": 88.0, "_op": "INSERT"},
+            ]
+            result = pk_db.merge_json(json.dumps(merge_pk_data), "user_id")
+            metrics = json.loads(result)
+            print(f"  ✓ MERGE with PK 'user_id': inserted={metrics['rows_inserted']}, updated={metrics['rows_updated']}")
+
+            # Verify
+            results = pk_db.query_json("SELECT user_id, username FROM data ORDER BY user_id")
+            parsed = json.loads(results)
+            assert len(parsed) == 4, f"Expected 4 rows, got {len(parsed)}"
+            bob_row = [r for r in parsed if r['user_id'] == 2][0]
+            assert bob_row['username'] == 'bob_updated', f"Expected 'bob_updated', got {bob_row['username']}"
+            print(f"  ✓ Verified: {len(parsed)} rows, bob updated to '{bob_row['username']}'")
+
+        except PosixLakeError as e:
+            print(f"  ✗ MERGE with PK failed: {e}")
+
+        print("\n7. get_schema() includes primary_key...")
+        try:
+            schema_out = pk_db.get_schema()
+            assert schema_out.primary_key == "user_id", f"Expected 'user_id', got {schema_out.primary_key}"
+            print(f"  ✓ get_schema().primary_key = '{schema_out.primary_key}'")
+        except Exception as e:
+            print(f"  ✗ get_schema primary_key failed: {e}")
+
+        print("\n✓ Example 14 complete - Primary Key Metadata & Parquet Files")
+
+        print_section("✓ All 14 Examples Completed Successfully!")
         print("\nFeatures Demonstrated:")
         print("  1. Create Database - Delta Lake native format")
         print("  2. Insert Data - JSON format with Arrow conversion")
@@ -928,6 +1035,7 @@ def main():
         print(" 11. Backup & Restore - Full and incremental backups")
         print(" 12. S3 Backend - Cloud storage support")
         print(" 13. NFS Server - POSIX filesystem access")
+        print(" 14. Primary Key Metadata & Parquet Files")
         print(f"\nDatabase location: {db_path}")
         print("You can inspect the Delta Lake files at this location.")
 

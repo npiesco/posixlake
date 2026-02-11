@@ -132,6 +132,338 @@ impl CsvFileView {
         self.generate_csv().await
     }
 
+    /// Generate CSV incrementally: reuse cached data for existing Parquet files,
+    /// only generate CSV for new/changed files.
+    pub async fn generate_csv_incremental(
+        &self,
+        cache: &crate::nfs::cache::NfsCache,
+    ) -> Result<Vec<u8>> {
+        use arrow::csv::Writer as CsvWriter;
+
+        let parquet_files = self.db.list_parquet_files()?;
+        if parquet_files.is_empty() {
+            return self.generate_csv().await;
+        }
+
+        let schema = self.db.schema();
+        let mut all_csv_rows: Vec<u8> = Vec::new();
+        let mut header_written = false;
+
+        for file in &parquet_files {
+            let chunk_key = format!("csv:chunk:{}", file);
+
+            // Try to get cached chunk
+            if let Some(cached_chunk) = cache.get(&chunk_key).await? {
+                if !header_written {
+                    all_csv_rows.extend_from_slice(&cached_chunk);
+                    header_written = true;
+                } else {
+                    // Skip header line from cached chunk
+                    let chunk_str = String::from_utf8_lossy(&cached_chunk);
+                    if let Some(newline_pos) = chunk_str.find('\n') {
+                        all_csv_rows.extend_from_slice(chunk_str[newline_pos + 1..].as_bytes());
+                    }
+                }
+                continue;
+            }
+
+            // Cache miss — generate CSV for this file and cache it
+            let batches = self.db.query_file(file).await?;
+            if batches.is_empty() {
+                continue;
+            }
+
+            let mut chunk_buf = Vec::new();
+            {
+                let mut writer = CsvWriter::new(&mut chunk_buf);
+                // Rebuild with canonical schema
+                for batch in &batches {
+                    let mut columns = Vec::new();
+                    for field in schema.fields() {
+                        let col = batch.column_by_name(field.name()).ok_or_else(|| {
+                            crate::error::Error::InvalidOperation(format!(
+                                "Missing column: {}",
+                                field.name()
+                            ))
+                        })?;
+                        columns.push(col.clone());
+                    }
+                    let casted = arrow::array::RecordBatch::try_new(schema.clone(), columns)?;
+                    writer.write(&casted)?;
+                }
+            }
+
+            // Cache the chunk
+            cache.insert(chunk_key, chunk_buf.clone()).await?;
+
+            if !header_written {
+                all_csv_rows.extend_from_slice(&chunk_buf);
+                header_written = true;
+            } else {
+                let chunk_str = String::from_utf8_lossy(&chunk_buf);
+                if let Some(newline_pos) = chunk_str.find('\n') {
+                    all_csv_rows.extend_from_slice(chunk_str[newline_pos + 1..].as_bytes());
+                }
+            }
+        }
+
+        // Update the full cache entry too
+        cache
+            .insert("csv:data".to_string(), all_csv_rows.clone())
+            .await?;
+
+        Ok(all_csv_rows)
+    }
+
+    /// Populate per-Parquet-file chunk cache. Returns list of cache keys.
+    pub async fn populate_chunk_cache(
+        &self,
+        cache: &crate::nfs::cache::NfsCache,
+    ) -> Result<Vec<String>> {
+        use arrow::csv::Writer as CsvWriter;
+
+        let parquet_files = self.db.list_parquet_files()?;
+        let schema = self.db.schema();
+        let mut keys = Vec::new();
+
+        for file in &parquet_files {
+            let chunk_key = format!("csv:chunk:{}", file);
+
+            let batches = self.db.query_file(file).await?;
+            if batches.is_empty() {
+                continue;
+            }
+
+            let mut chunk_buf = Vec::new();
+            {
+                let mut writer = CsvWriter::new(&mut chunk_buf);
+                for batch in &batches {
+                    let mut columns = Vec::new();
+                    for field in schema.fields() {
+                        let col = batch.column_by_name(field.name()).ok_or_else(|| {
+                            crate::error::Error::InvalidOperation(format!(
+                                "Missing column: {}",
+                                field.name()
+                            ))
+                        })?;
+                        columns.push(col.clone());
+                    }
+                    let casted = arrow::array::RecordBatch::try_new(schema.clone(), columns)?;
+                    writer.write(&casted)?;
+                }
+            }
+
+            cache.insert(chunk_key.clone(), chunk_buf).await?;
+            keys.push(chunk_key);
+        }
+
+        Ok(keys)
+    }
+
+    /// Refresh chunk cache: only generate chunks for new/changed Parquet files.
+    /// Returns list of cache keys that were newly generated.
+    pub async fn refresh_chunk_cache(
+        &self,
+        cache: &crate::nfs::cache::NfsCache,
+    ) -> Result<Vec<String>> {
+        use arrow::csv::Writer as CsvWriter;
+
+        let parquet_files = self.db.list_parquet_files()?;
+        let schema = self.db.schema();
+        let mut new_keys = Vec::new();
+
+        for file in &parquet_files {
+            let chunk_key = format!("csv:chunk:{}", file);
+
+            // Skip if already cached
+            if cache.get(&chunk_key).await?.is_some() {
+                continue;
+            }
+
+            let batches = self.db.query_file(file).await?;
+            if batches.is_empty() {
+                continue;
+            }
+
+            let mut chunk_buf = Vec::new();
+            {
+                let mut writer = CsvWriter::new(&mut chunk_buf);
+                for batch in &batches {
+                    let mut columns = Vec::new();
+                    for field in schema.fields() {
+                        let col = batch.column_by_name(field.name()).ok_or_else(|| {
+                            crate::error::Error::InvalidOperation(format!(
+                                "Missing column: {}",
+                                field.name()
+                            ))
+                        })?;
+                        columns.push(col.clone());
+                    }
+                    let casted = arrow::array::RecordBatch::try_new(schema.clone(), columns)?;
+                    writer.write(&casted)?;
+                }
+            }
+
+            cache.insert(chunk_key.clone(), chunk_buf).await?;
+            new_keys.push(chunk_key);
+        }
+
+        Ok(new_keys)
+    }
+
+    /// List all chunk cache keys for the current Parquet files.
+    pub async fn list_chunk_keys(
+        &self,
+        cache: &crate::nfs::cache::NfsCache,
+    ) -> Result<Vec<String>> {
+        let parquet_files = self.db.list_parquet_files()?;
+        let mut keys = Vec::new();
+
+        for file in &parquet_files {
+            let chunk_key = format!("csv:chunk:{}", file);
+            if cache.get(&chunk_key).await?.is_some() {
+                keys.push(chunk_key);
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Append-only write: parse raw CSV rows (no header) and insert directly.
+    /// Skips full CSV generation/diff — O(new rows) not O(total rows).
+    pub async fn apply_write_append_only(&self, data: &[u8]) -> Result<()> {
+        info!("Applying append-only write: {} bytes", data.len());
+        self.handle_csv_append(data).await
+    }
+
+    /// Compare old and new CSV bytes to find changed rows.
+    /// Returns Some((old_changed_rows, new_changed_rows)) or None if identical.
+    pub fn diff_csv_bytes(old: &[u8], new: &[u8]) -> Option<(Vec<String>, Vec<String>)> {
+        let old_str = String::from_utf8_lossy(old);
+        let new_str = String::from_utf8_lossy(new);
+
+        let old_lines: Vec<&str> = old_str.lines().collect();
+        let new_lines: Vec<&str> = new_str.lines().collect();
+
+        // Skip header (first line)
+        let old_data = if old_lines.len() > 1 {
+            &old_lines[1..]
+        } else {
+            &[]
+        };
+        let new_data = if new_lines.len() > 1 {
+            &new_lines[1..]
+        } else {
+            &[]
+        };
+
+        let mut old_changed = Vec::new();
+        let mut new_changed = Vec::new();
+
+        let max_len = old_data.len().max(new_data.len());
+        for i in 0..max_len {
+            let old_row = old_data.get(i).copied();
+            let new_row = new_data.get(i).copied();
+
+            match (old_row, new_row) {
+                (Some(o), Some(n)) if o != n => {
+                    old_changed.push(o.to_string());
+                    new_changed.push(n.to_string());
+                }
+                (Some(o), None) => {
+                    old_changed.push(o.to_string());
+                }
+                (None, Some(n)) => {
+                    new_changed.push(n.to_string());
+                }
+                _ => {}
+            }
+        }
+
+        if old_changed.is_empty() && new_changed.is_empty() {
+            None
+        } else {
+            Some((old_changed, new_changed))
+        }
+    }
+
+    /// Chunk-aware read: generate CSV only for Parquet files needed to serve the offset+size range.
+    /// Caches each chunk individually for reuse.
+    pub async fn read_chunked(
+        &self,
+        offset: u64,
+        size: u32,
+        cache: &crate::nfs::cache::NfsCache,
+    ) -> Result<Vec<u8>> {
+        use arrow::csv::Writer as CsvWriter;
+
+        let parquet_files = self.db.list_parquet_files()?;
+        if parquet_files.is_empty() {
+            return self.read(offset, size).await;
+        }
+
+        let schema = self.db.schema();
+        let offset = offset as usize;
+        let size = size as usize;
+        let mut assembled = Vec::new();
+        let mut header_written = false;
+
+        for file in &parquet_files {
+            let chunk_key = format!("csv:chunk:{}", file);
+
+            let chunk_data = if let Some(cached) = cache.get(&chunk_key).await? {
+                cached
+            } else {
+                let batches = self.db.query_file(file).await?;
+                if batches.is_empty() {
+                    continue;
+                }
+
+                let mut chunk_buf = Vec::new();
+                {
+                    let mut writer = CsvWriter::new(&mut chunk_buf);
+                    for batch in &batches {
+                        let mut columns = Vec::new();
+                        for field in schema.fields() {
+                            let col = batch.column_by_name(field.name()).ok_or_else(|| {
+                                crate::error::Error::InvalidOperation(format!(
+                                    "Missing column: {}",
+                                    field.name()
+                                ))
+                            })?;
+                            columns.push(col.clone());
+                        }
+                        let casted = arrow::array::RecordBatch::try_new(schema.clone(), columns)?;
+                        writer.write(&casted)?;
+                    }
+                }
+                cache.insert(chunk_key, chunk_buf.clone()).await?;
+                chunk_buf
+            };
+
+            if !header_written {
+                assembled.extend_from_slice(&chunk_data);
+                header_written = true;
+            } else {
+                let chunk_str = String::from_utf8_lossy(&chunk_data);
+                if let Some(nl) = chunk_str.find('\n') {
+                    assembled.extend_from_slice(chunk_str[nl + 1..].as_bytes());
+                }
+            }
+
+            // Stop if we have enough data
+            if assembled.len() >= offset + size {
+                break;
+            }
+        }
+
+        if offset >= assembled.len() {
+            return Ok(Vec::new());
+        }
+        let end = std::cmp::min(offset + size, assembled.len());
+        Ok(assembled[offset..end].to_vec())
+    }
+
     /// Read a portion of the CSV content at the given offset (lazy loading)
     /// Content is generated fresh on each read. NFS cache layer handles caching.
     pub async fn read(&self, offset: u64, size: u32) -> Result<Vec<u8>> {

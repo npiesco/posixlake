@@ -527,3 +527,233 @@ async fn test_merge_full_upsert() {
 
     println!("[SUCCESS] Full MERGE test passed");
 }
+
+// =============================================================================
+// Track 2: Merge uses explicit primary key from schema metadata
+// =============================================================================
+
+/// RED TEST 2a: MERGE should use schema primary_key, not first Int32 column
+/// Schema: rank(Int32), user_id(Int32, PK), name(Utf8)
+/// The heuristic picks "rank" (first Int32) but the PK is "user_id"
+#[tokio::test]
+async fn test_merge_uses_schema_primary_key() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_merge_pk");
+
+    // rank is first Int32 — but user_id is the primary key
+    let schema = Arc::new(ArrowSchema::new(vec![
+        Field::new("rank", DataType::Int32, false),
+        Field::new("user_id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_delta_native(db_path.clone(), schema.clone())
+        .await
+        .unwrap();
+    db.set_primary_key("user_id").unwrap();
+
+    // Insert: rank=10, user_id=1, name=Alice; rank=20, user_id=2, name=Bob
+    let initial = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![10, 20])),
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+        ],
+    )
+    .unwrap();
+    db.insert(initial).await.unwrap();
+
+    // MERGE: update user_id=1 name to "Alice Updated", join on user_id
+    let source_schema = Arc::new(ArrowSchema::new(vec![
+        Field::new("rank", DataType::Int32, false),
+        Field::new("user_id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+    let source = RecordBatch::try_new(
+        source_schema,
+        vec![
+            Arc::new(Int32Array::from(vec![10])),
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice Updated"])),
+        ],
+    )
+    .unwrap();
+
+    let metrics = db
+        .merge()
+        .await
+        .unwrap()
+        .with_source(source, "source")
+        .on("target.user_id = source.user_id")
+        .when_matched_update()
+        .set_all()
+        .execute()
+        .await
+        .unwrap();
+
+    assert_eq!(metrics.rows_updated, 1);
+    assert_eq!(metrics.rows_deleted, 0);
+
+    // Verify Alice was updated, Bob unchanged
+    let results = db
+        .query("SELECT name FROM data WHERE user_id = 1")
+        .await
+        .unwrap();
+    let name = results[0]
+        .column_by_name("name")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .value(0);
+    assert_eq!(name, "Alice Updated");
+
+    let results = db
+        .query("SELECT name FROM data WHERE user_id = 2")
+        .await
+        .unwrap();
+    assert_eq!(results[0].num_rows(), 1, "Bob should still exist");
+    let name = results[0]
+        .column_by_name("name")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .value(0);
+    assert_eq!(name, "Bob", "Bob should be unchanged");
+}
+
+/// RED TEST 2c: MERGE should support string primary keys (e.g., email)
+#[tokio::test]
+async fn test_merge_string_primary_key() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_merge_string_pk");
+
+    let schema = Arc::new(ArrowSchema::new(vec![
+        Field::new("email", DataType::Utf8, false),
+        Field::new("name", DataType::Utf8, false),
+        Field::new("age", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_delta_native(db_path.clone(), schema.clone())
+        .await
+        .unwrap();
+    db.set_primary_key("email").unwrap();
+
+    let initial = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(vec!["alice@test.com", "bob@test.com"])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+            Arc::new(Int32Array::from(vec![25, 30])),
+        ],
+    )
+    .unwrap();
+    db.insert(initial).await.unwrap();
+
+    // Update Alice's age via MERGE keyed on email
+    let source = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(vec!["alice@test.com"])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+            Arc::new(Int32Array::from(vec![26])),
+        ],
+    )
+    .unwrap();
+
+    let metrics = db
+        .merge()
+        .await
+        .unwrap()
+        .with_source(source, "source")
+        .on("target.email = source.email")
+        .when_matched_update()
+        .set_all()
+        .execute()
+        .await
+        .unwrap();
+
+    assert_eq!(metrics.rows_updated, 1);
+
+    let results = db
+        .query("SELECT age FROM data WHERE email = 'alice@test.com'")
+        .await
+        .unwrap();
+    let age = results[0]
+        .column_by_name("age")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(age, 26);
+}
+
+/// RED TEST 2e: MERGE fallback heuristic — no primary_key set, first Int32 used
+/// This is a regression guard: existing behavior must still work
+#[tokio::test]
+async fn test_merge_fallback_heuristic() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_merge_fallback");
+
+    let schema = Arc::new(ArrowSchema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+        Field::new("age", DataType::Int32, false),
+    ]));
+
+    // No primary key set — should fall back to heuristic
+    let db = DatabaseOps::create_with_delta_native(db_path.clone(), schema.clone())
+        .await
+        .unwrap();
+
+    let initial = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+            Arc::new(Int32Array::from(vec![25, 30])),
+        ],
+    )
+    .unwrap();
+    db.insert(initial).await.unwrap();
+
+    let source = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice Updated"])),
+            Arc::new(Int32Array::from(vec![26])),
+        ],
+    )
+    .unwrap();
+
+    let metrics = db
+        .merge()
+        .await
+        .unwrap()
+        .with_source(source, "source")
+        .on("target.id = source.id")
+        .when_matched_update()
+        .set_all()
+        .execute()
+        .await
+        .unwrap();
+
+    assert_eq!(metrics.rows_updated, 1);
+
+    let results = db
+        .query("SELECT name FROM data WHERE id = 1")
+        .await
+        .unwrap();
+    let name = results[0]
+        .column_by_name("name")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .value(0);
+    assert_eq!(name, "Alice Updated");
+}

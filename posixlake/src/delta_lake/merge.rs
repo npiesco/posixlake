@@ -53,6 +53,7 @@ pub struct MergeBuilder {
     matched_updates: Vec<MatchedUpdateClause>,
     matched_deletes: Vec<MatchedDeleteClause>,
     not_matched_inserts: Vec<NotMatchedInsertClause>,
+    primary_key: Option<String>,
 }
 
 /// Clause for WHEN MATCHED UPDATE
@@ -85,7 +86,14 @@ impl MergeBuilder {
             matched_updates: Vec::new(),
             matched_deletes: Vec::new(),
             not_matched_inserts: Vec::new(),
+            primary_key: None,
         }
+    }
+
+    /// Set the primary key column name for ID extraction
+    pub fn with_primary_key(mut self, pk: Option<String>) -> Self {
+        self.primary_key = pk;
+        self
     }
 
     /// Set the source data for the MERGE
@@ -174,7 +182,7 @@ impl MergeBuilder {
         let mut metrics = MergeMetrics::default();
 
         // PHASE 1: Collect all IDs to delete and all batches to insert
-        let mut all_ids_to_delete: Vec<i64> = Vec::new();
+        let mut all_ids_to_delete: Vec<String> = Vec::new();
         let mut all_batches_to_insert: Vec<RecordBatch> = Vec::new();
 
         // Process WHEN MATCHED DELETE clauses
@@ -232,12 +240,37 @@ impl MergeBuilder {
             all_ids_to_delete.sort_unstable();
             all_ids_to_delete.dedup();
 
-            let id_list = all_ids_to_delete
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            let delete_predicate = format!("id IN ({})", id_list);
+            // Get the actual ID column name and check if it's a string type
+            let target_schema = {
+                let snapshot = table_ref.snapshot().map_err(Error::DeltaTable)?;
+                let delta_schema = snapshot.schema();
+                let arrow_fields: Result<Vec<_>> = delta_schema
+                    .fields()
+                    .map(|f| {
+                        let arrow_type =
+                            crate::database_ops::DatabaseOps::delta_to_arrow_type(f.data_type())?;
+                        Ok(arrow::datatypes::Field::new(
+                            f.name(),
+                            arrow_type,
+                            f.is_nullable(),
+                        ))
+                    })
+                    .collect();
+                arrow::datatypes::Schema::new(arrow_fields?)
+            };
+            let id_col_name = self.id_column_name(&target_schema)?;
+            let is_string = self.id_column_is_string(&target_schema);
+
+            let id_list = if is_string {
+                all_ids_to_delete
+                    .iter()
+                    .map(|id| format!("'{}'", id.replace('\'', "''")))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                all_ids_to_delete.join(", ")
+            };
+            let delete_predicate = format!("{} IN ({})", id_col_name, id_list);
 
             // DELETE returns the updated table - use it for subsequent operations
             let (updated_table, _metrics) = DeltaOps(table_ref)
@@ -284,7 +317,7 @@ impl MergeBuilder {
         source_alias: &str,
         join_condition: &str,
         clause: &MatchedDeleteClause,
-    ) -> Result<(Vec<i64>, usize)> {
+    ) -> Result<(Vec<String>, usize)> {
         debug!("Collecting MATCHED DELETE IDs");
 
         // Build SQL to find matching rows to delete
@@ -330,7 +363,7 @@ impl MergeBuilder {
         join_condition: &str,
         clause: &MatchedUpdateClause,
         source_data: &RecordBatch,
-    ) -> Result<(Vec<i64>, Vec<RecordBatch>, usize)> {
+    ) -> Result<(Vec<String>, Vec<RecordBatch>, usize)> {
         debug!("Executing MATCHED UPDATE clause");
 
         // Build SQL to find matching rows with updated values
@@ -450,8 +483,8 @@ impl MergeBuilder {
         Ok((batches, row_count))
     }
 
-    /// Extract IDs from batches (assumes first Int32/Int64 column is ID)
-    fn extract_ids_from_batches(&self, batches: &[RecordBatch]) -> Result<Vec<i64>> {
+    /// Extract IDs from batches using primary_key or first Int32/Int64 column heuristic
+    fn extract_ids_from_batches(&self, batches: &[RecordBatch]) -> Result<Vec<String>> {
         use arrow::array::*;
         use arrow::datatypes::DataType;
 
@@ -460,15 +493,25 @@ impl MergeBuilder {
         for batch in batches {
             let schema = batch.schema();
 
-            // Find first integer column
-            let id_column = schema
-                .fields()
-                .iter()
-                .find(|f| matches!(f.data_type(), DataType::Int32 | DataType::Int64))
-                .ok_or_else(|| Error::Other("No integer column found for ID".to_string()))?;
+            // Use primary key if set, otherwise fall back to first integer column
+            let id_field = if let Some(pk) = &self.primary_key {
+                schema
+                    .fields()
+                    .iter()
+                    .find(|f| f.name() == pk)
+                    .ok_or_else(|| {
+                        Error::Other(format!("Primary key column '{}' not found in batch", pk))
+                    })?
+            } else {
+                schema
+                    .fields()
+                    .iter()
+                    .find(|f| matches!(f.data_type(), DataType::Int32 | DataType::Int64))
+                    .ok_or_else(|| Error::Other("No integer column found for ID".to_string()))?
+            };
 
             let id_array = batch
-                .column_by_name(id_column.name())
+                .column_by_name(id_field.name())
                 .ok_or_else(|| Error::Other("ID column not found in batch".to_string()))?;
 
             match id_array.data_type() {
@@ -482,7 +525,7 @@ impl MergeBuilder {
                             })?;
                     for i in 0..int_array.len() {
                         if !int_array.is_null(i) {
-                            ids.push(int_array.value(i) as i64);
+                            ids.push(int_array.value(i).to_string());
                         }
                     }
                 }
@@ -496,7 +539,34 @@ impl MergeBuilder {
                             })?;
                     for i in 0..int_array.len() {
                         if !int_array.is_null(i) {
-                            ids.push(int_array.value(i));
+                            ids.push(int_array.value(i).to_string());
+                        }
+                    }
+                }
+                DataType::Utf8 => {
+                    let str_array =
+                        id_array
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .ok_or_else(|| {
+                                Error::Other("Failed to downcast to StringArray".to_string())
+                            })?;
+                    for i in 0..str_array.len() {
+                        if !str_array.is_null(i) {
+                            ids.push(str_array.value(i).to_string());
+                        }
+                    }
+                }
+                DataType::LargeUtf8 => {
+                    let str_array = id_array
+                        .as_any()
+                        .downcast_ref::<LargeStringArray>()
+                        .ok_or_else(|| {
+                            Error::Other("Failed to downcast to LargeStringArray".to_string())
+                        })?;
+                    for i in 0..str_array.len() {
+                        if !str_array.is_null(i) {
+                            ids.push(str_array.value(i).to_string());
                         }
                     }
                 }
@@ -505,6 +575,40 @@ impl MergeBuilder {
         }
 
         Ok(ids)
+    }
+
+    /// Get the name of the ID column (primary_key or first integer column heuristic)
+    fn id_column_name(&self, schema: &arrow::datatypes::Schema) -> Result<String> {
+        use arrow::datatypes::DataType;
+
+        if let Some(pk) = &self.primary_key {
+            return Ok(pk.clone());
+        }
+
+        schema
+            .fields()
+            .iter()
+            .find(|f| matches!(f.data_type(), DataType::Int32 | DataType::Int64))
+            .map(|f| f.name().clone())
+            .ok_or_else(|| Error::Other("No integer column found for ID".to_string()))
+    }
+
+    /// Check if the ID column is a string type (needs quoting in predicates)
+    fn id_column_is_string(&self, schema: &arrow::datatypes::Schema) -> bool {
+        use arrow::datatypes::DataType;
+
+        let col_name = if let Some(pk) = &self.primary_key {
+            pk.as_str()
+        } else {
+            return false; // heuristic always picks integers
+        };
+
+        schema
+            .fields()
+            .iter()
+            .find(|f| f.name() == col_name)
+            .map(|f| matches!(f.data_type(), DataType::Utf8 | DataType::LargeUtf8))
+            .unwrap_or(false)
     }
 }
 

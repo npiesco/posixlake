@@ -1,8 +1,12 @@
 use arrow::array::{Array, ArrayRef, Int32Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use posixlake::DatabaseOps;
+use posixlake::metadata::schema::{
+    DataTypeRepr, Schema as PosixSchema, SchemaField, SchemaManager,
+};
 use std::fs;
 use std::sync::Arc;
+use tempfile::TempDir;
 
 fn setup_logging() {
     let _ = tracing_subscriber::fmt()
@@ -212,7 +216,98 @@ async fn test_query_projection_with_evolved_schema() {
     cleanup_test_db(&db_path);
 }
 
-/// Test: Backward and forward schema compatibility
+// =============================================================================
+// Track 1: Schema Primary Key Metadata
+// =============================================================================
+
+/// RED TEST 1a: Schema should support primary_key metadata
+/// Fails because Schema has no primary_key field yet
+#[test]
+fn test_schema_primary_key_metadata() {
+    // Schema with a primary key designated
+    let schema = PosixSchema::new(vec![
+        SchemaField {
+            name: "id".to_string(),
+            data_type: DataTypeRepr::Int32,
+            nullable: false,
+        },
+        SchemaField {
+            name: "name".to_string(),
+            data_type: DataTypeRepr::Utf8,
+            nullable: false,
+        },
+    ])
+    .with_primary_key("id");
+
+    assert_eq!(schema.primary_key(), Some("id"));
+
+    // Schema without primary key should return None
+    let schema_no_pk = PosixSchema::new(vec![SchemaField {
+        name: "id".to_string(),
+        data_type: DataTypeRepr::Int32,
+        nullable: false,
+    }]);
+    assert_eq!(schema_no_pk.primary_key(), None);
+}
+
+/// RED TEST 1a (continued): primary_key survives serde round-trip
+#[test]
+fn test_schema_primary_key_serde_roundtrip() {
+    let schema = PosixSchema::new(vec![
+        SchemaField {
+            name: "user_id".to_string(),
+            data_type: DataTypeRepr::Int64,
+            nullable: false,
+        },
+        SchemaField {
+            name: "email".to_string(),
+            data_type: DataTypeRepr::Utf8,
+            nullable: false,
+        },
+    ])
+    .with_primary_key("user_id");
+
+    let json = serde_json::to_string(&schema).unwrap();
+    let deserialized: PosixSchema = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.primary_key(), Some("user_id"));
+}
+
+/// RED TEST 1a (continued): primary_key survives SchemaManager write/read
+#[test]
+fn test_schema_primary_key_persistence() {
+    let temp_dir = TempDir::new().unwrap();
+    let metadata_dir = temp_dir.path().join("_metadata");
+
+    let manager = SchemaManager::new(&metadata_dir).unwrap();
+
+    let schema = PosixSchema::new(vec![
+        SchemaField {
+            name: "id".to_string(),
+            data_type: DataTypeRepr::Int32,
+            nullable: false,
+        },
+        SchemaField {
+            name: "name".to_string(),
+            data_type: DataTypeRepr::Utf8,
+            nullable: false,
+        },
+    ])
+    .with_primary_key("id");
+
+    manager.write_schema(&schema).unwrap();
+    let read_back = manager.read_schema().unwrap().unwrap();
+    assert_eq!(read_back.primary_key(), Some("id"));
+}
+
+/// RED TEST 1a (continued): legacy schemas without primary_key deserialize with None
+#[test]
+fn test_schema_primary_key_backward_compat() {
+    // Simulate a legacy schema JSON (no primary_key field)
+    let legacy_json =
+        r#"{"version":1,"fields":[{"name":"id","data_type":"Int32","nullable":false}]}"#;
+    let schema: PosixSchema = serde_json::from_str(legacy_json).unwrap();
+    assert_eq!(schema.primary_key(), None);
+}
 #[tokio::test]
 async fn test_schema_compatibility() {
     setup_logging();
@@ -316,4 +411,44 @@ async fn test_schema_compatibility() {
     println!("✓ Successfully queried across 3 schema versions with correct NULL handling");
 
     cleanup_test_db(&db_path);
+}
+
+/// RED TEST 1c: DatabaseOps should persist and recover primary_key
+/// Fails because DatabaseOps has no primary_key support yet
+#[tokio::test]
+async fn test_create_db_with_primary_key() {
+    setup_logging();
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_pk");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("user_id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    // Create database and set primary key
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+    db.set_primary_key("user_id").unwrap();
+    assert_eq!(db.primary_key(), Some("user_id".to_string()));
+
+    // Re-open and verify primary key persists
+    drop(db);
+    let db2 = DatabaseOps::open(&db_path).await.unwrap();
+    assert_eq!(db2.primary_key(), Some("user_id".to_string()));
+}
+
+/// RED TEST 1c (continued): DatabaseOps without primary_key returns None
+#[tokio::test]
+async fn test_db_without_primary_key() {
+    setup_logging();
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db_no_pk");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+    assert_eq!(db.primary_key(), None);
 }

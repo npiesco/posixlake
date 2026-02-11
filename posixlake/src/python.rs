@@ -292,6 +292,7 @@ pub struct Field {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Schema {
     pub fields: Vec<Field>,
+    pub primary_key: Option<String>,
 }
 
 impl Schema {
@@ -456,7 +457,16 @@ impl Schema {
             })
             .collect();
 
-        Schema { fields }
+        Schema {
+            fields,
+            primary_key: None,
+        }
+    }
+
+    fn from_arrow_schema_with_pk(schema: &ArrowSchema, primary_key: Option<String>) -> Self {
+        let mut s = Self::from_arrow_schema(schema);
+        s.primary_key = primary_key;
+        s
     }
 }
 
@@ -1020,7 +1030,24 @@ impl DatabaseOps {
 
     /// Get database schema
     pub fn get_schema(&self) -> Schema {
-        Schema::from_arrow_schema(&self.inner.schema)
+        Schema::from_arrow_schema_with_pk(&self.inner.schema, self.inner.primary_key())
+    }
+
+    /// Get the primary key column name, if set
+    pub fn primary_key(&self) -> Option<String> {
+        self.inner.primary_key()
+    }
+
+    /// Set the primary key column name and persist to metadata
+    pub fn set_primary_key(&self, column_name: String) -> Result<(), PosixLakeError> {
+        self.inner.set_primary_key(&column_name)?;
+        Ok(())
+    }
+
+    /// List all Parquet files in the database directory
+    pub fn list_parquet_files(&self) -> Result<Vec<String>, PosixLakeError> {
+        let files = self.inner.list_parquet_files()?;
+        Ok(files)
     }
 
     /// Get database base path

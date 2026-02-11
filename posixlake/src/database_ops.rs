@@ -102,6 +102,9 @@ pub struct DatabaseOps {
 
     /// Batch buffer for reducing transaction overhead
     batch_buffer: Arc<crate::batch_buffer::BatchBuffer>,
+
+    /// Primary key column name (persisted to _metadata/schema.json)
+    primary_key: std::sync::Mutex<Option<String>>,
 }
 
 impl MetricsTracker {
@@ -209,6 +212,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            primary_key: std::sync::Mutex::new(None),
         })
     }
 
@@ -281,6 +285,24 @@ impl DatabaseOps {
         let metrics = Arc::new(MetricsTracker::new());
         let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
 
+        // Load primary key from metadata if available
+        let primary_key = {
+            let metadata_dir = base_path.join("_metadata");
+            if metadata_dir.exists() {
+                if let Ok(manager) = crate::metadata::SchemaManager::new(&metadata_dir) {
+                    manager
+                        .read_schema()
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.primary_key.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
         Ok(Self {
             base_path,
             s3_url: None,
@@ -293,6 +315,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            primary_key: std::sync::Mutex::new(primary_key),
         })
     }
 
@@ -361,6 +384,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            primary_key: std::sync::Mutex::new(None),
         })
     }
 
@@ -428,6 +452,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            primary_key: std::sync::Mutex::new(None),
         })
     }
 
@@ -506,7 +531,7 @@ impl DatabaseOps {
     }
 
     /// Helper: Convert Delta Lake DataType to Arrow DataType
-    fn delta_to_arrow_type(
+    pub(crate) fn delta_to_arrow_type(
         delta_type: &deltalake::kernel::DataType,
     ) -> Result<arrow::datatypes::DataType> {
         use arrow::datatypes::{DataType as ArrowDataType, TimeUnit};
@@ -742,6 +767,49 @@ impl DatabaseOps {
     /// Get the base path of the database
     pub fn base_path(&self) -> &std::path::Path {
         &self.base_path
+    }
+
+    /// List Parquet data files in the database directory
+    pub fn list_parquet_files(&self) -> Result<Vec<String>> {
+        let mut files = Vec::new();
+        let entries = std::fs::read_dir(&self.base_path)?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                if let Some(name) = path.file_name() {
+                    files.push(name.to_string_lossy().to_string());
+                }
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    /// Get the primary key column name, if set
+    pub fn primary_key(&self) -> Option<String> {
+        self.primary_key.lock().unwrap().clone()
+    }
+
+    /// Set the primary key column name and persist to _metadata/schema.json
+    pub fn set_primary_key(&self, column_name: &str) -> Result<()> {
+        // Verify the column exists in the schema
+        if self.schema.field_with_name(column_name).is_err() {
+            return Err(Error::InvalidOperation(format!(
+                "Column '{}' not found in schema",
+                column_name
+            )));
+        }
+
+        *self.primary_key.lock().unwrap() = Some(column_name.to_string());
+
+        // Persist to _metadata/schema.json
+        let metadata_dir = self.base_path.join("_metadata");
+        let manager = crate::metadata::SchemaManager::new(&metadata_dir)?;
+        let posix_schema =
+            crate::metadata::Schema::from_arrow(&self.schema).with_primary_key(column_name);
+        manager.write_schema(&posix_schema)?;
+
+        Ok(())
     }
 
     /// Log audit entry
@@ -1626,7 +1694,8 @@ impl DatabaseOps {
             open_table(table_url).await.map_err(Error::DeltaTable)?
         };
 
-        Ok(crate::delta_lake::merge::MergeBuilder::new(table))
+        Ok(crate::delta_lake::merge::MergeBuilder::new(table)
+            .with_primary_key(self.primary_key.lock().unwrap().clone()))
     }
 
     /// Compact database files using Delta Lake OPTIMIZE

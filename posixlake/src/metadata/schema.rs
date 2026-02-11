@@ -20,6 +20,8 @@ use std::sync::Arc;
 pub struct Schema {
     pub version: u64,
     pub fields: Vec<SchemaField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_key: Option<String>,
 }
 
 /// Schema field definition with complex type support
@@ -528,7 +530,22 @@ fn parse_dictionary(input: &str) -> IResult<&str, DataTypeRepr> {
 
 impl Schema {
     pub fn new(fields: Vec<SchemaField>) -> Self {
-        Self { version: 1, fields }
+        Self {
+            version: 1,
+            fields,
+            primary_key: None,
+        }
+    }
+
+    /// Set the primary key column name (builder pattern)
+    pub fn with_primary_key(mut self, field_name: &str) -> Self {
+        self.primary_key = Some(field_name.to_string());
+        self
+    }
+
+    /// Get the primary key column name, if set
+    pub fn primary_key(&self) -> Option<&str> {
+        self.primary_key.as_deref()
     }
 
     /// Convert Arrow schema to our Schema type
@@ -539,7 +556,11 @@ impl Schema {
             .map(|field| SchemaField::from_arrow(field.as_ref()))
             .collect();
 
-        Self { version: 1, fields }
+        Self {
+            version: 1,
+            fields,
+            primary_key: None,
+        }
     }
 
     pub fn to_arrow(&self) -> Arc<ArrowSchema> {
