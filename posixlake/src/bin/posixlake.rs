@@ -9,12 +9,13 @@
 //!   posixlake status <MOUNT_POINT>
 
 use arrow::datatypes::{DataType, Field, Schema};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use posixlake::error::{Error, Result};
 #[cfg(target_os = "windows")]
 use posixlake::nfs::windows::MOUNT_OPTIONS;
 use posixlake::nfs::NfsServer;
-use posixlake::{error::Result, DatabaseOps};
-use std::path::PathBuf;
+use posixlake::DatabaseOps;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::signal;
 
@@ -97,6 +98,56 @@ enum Commands {
         #[arg(long, default_value = "minioadmin")]
         secret_key: String,
     },
+
+    /// Manage S3/MinIO local test environment
+    S3 {
+        #[command(subcommand)]
+        command: S3Commands,
+    },
+}
+
+#[derive(Subcommand)]
+enum S3Commands {
+    /// Start local S3/MinIO for testing
+    Start {
+        /// Container engine to use
+        #[arg(long, value_enum, default_value = "docker")]
+        engine: S3Engine,
+
+        /// Start mode: compose (docker-compose.yml)
+        #[arg(long, value_enum, default_value = "compose")]
+        mode: S3Mode,
+
+        /// Compose file path
+        #[arg(long, default_value = "docker-compose.yml")]
+        compose_file: PathBuf,
+    },
+
+    /// Stop local S3/MinIO
+    Stop {
+        /// Container engine to use
+        #[arg(long, value_enum, default_value = "docker")]
+        engine: S3Engine,
+
+        /// Stop mode: compose (docker-compose.yml)
+        #[arg(long, value_enum, default_value = "compose")]
+        mode: S3Mode,
+
+        /// Compose file path
+        #[arg(long, default_value = "docker-compose.yml")]
+        compose_file: PathBuf,
+    },
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum S3Engine {
+    Docker,
+    Podman,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum S3Mode {
+    Compose,
 }
 
 #[tokio::main]
@@ -502,6 +553,345 @@ async fn main() -> Result<()> {
             eprintln!("=== S3/MinIO backend test PASSED ===");
             Ok(())
         }
+
+        Commands::S3 { command } => match command {
+            S3Commands::Start {
+                engine,
+                mode: S3Mode::Compose,
+                compose_file,
+            } => {
+                eprintln!("Starting S3/MinIO via compose...");
+                let (program, args) = build_compose_up_command(engine, &compose_file);
+                run_command_with_fallback(engine, &program, &args)?;
+                eprintln!("S3/MinIO started.");
+                Ok(())
+            }
+            S3Commands::Stop {
+                engine,
+                mode: S3Mode::Compose,
+                compose_file,
+            } => {
+                eprintln!("Stopping S3/MinIO via compose...");
+                let (program, args) = build_compose_down_command(engine, &compose_file);
+                run_command_with_fallback(engine, &program, &args)?;
+                eprintln!("S3/MinIO stopped.");
+                Ok(())
+            }
+        },
+    }
+}
+
+fn run_command(program: &str, args: &[String]) -> Result<()> {
+    let status = match std::process::Command::new(program).args(args).status() {
+        Ok(status) => status,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Error::Other(format!("Program not found: {}", program)))
+        }
+        Err(err) => return Err(Error::Io(err)),
+    };
+    if status.success() {
+        Ok(())
+    } else {
+        Err(Error::Other(format!(
+            "Command failed: {} {:?}",
+            program,
+            status.code()
+        )))
+    }
+}
+
+fn run_command_with_fallback(engine: S3Engine, program: &str, args: &[String]) -> Result<()> {
+    match run_command(program, args) {
+        Ok(()) => Ok(()),
+        Err(err) if is_program_not_found(&err) => {
+            let fallback_engine = match engine {
+                S3Engine::Docker => S3Engine::Podman,
+                S3Engine::Podman => S3Engine::Docker,
+            };
+            let fallback_program = engine_program(fallback_engine);
+            match run_command(&fallback_program, args) {
+                Ok(()) => Ok(()),
+                Err(err) if is_program_not_found(&err) => run_wsl_command(engine, args),
+                Err(err) => Err(err),
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn is_program_not_found(err: &Error) -> bool {
+    match err {
+        Error::Io(err) => err.kind() == std::io::ErrorKind::NotFound,
+        Error::Other(message) => message.starts_with("Program not found:"),
+        _ => false,
+    }
+}
+
+fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        let distro = std::env::var("WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
+        let wsl_full_path = preferred_wsl_path();
+        let cmd_candidates = [
+            "C:\\Windows\\System32\\cmd.exe",
+            "C:\\Windows\\Sysnative\\cmd.exe",
+            "cmd.exe",
+        ];
+
+        if engine == S3Engine::Podman
+            && args.first().map(|a| a == "compose").unwrap_or(false)
+            && !wsl_podman_has_compose(&distro)
+        {
+            if args.iter().any(|arg| arg == "up") {
+                return wsl_podman_direct_start(&distro, engine);
+            }
+            if args.iter().any(|arg| arg == "down") {
+                return wsl_podman_direct_stop(&distro, engine);
+            }
+        }
+
+        let mut wsl_args = vec![
+            "-d".to_string(),
+            distro.clone(),
+            "sh".to_string(),
+            "-lc".to_string(),
+        ];
+        let command = build_wsl_command(engine, args)?;
+        wsl_args.push(command.clone());
+
+        match run_command(&wsl_full_path, &wsl_args) {
+            Ok(()) => return Ok(()),
+            Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+
+        for candidate in ["wsl.exe"] {
+            match run_command(candidate, &wsl_args) {
+                Ok(()) => return Ok(()),
+                Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err),
+            }
+        }
+
+        let wsl_cmd = format!(
+            "{} -d {} sh -lc {}",
+            shell_escape(&wsl_full_path),
+            shell_escape(&distro),
+            shell_escape(&command)
+        );
+
+        for candidate in cmd_candidates {
+            let cmd_args = ["/c".to_string(), wsl_cmd.clone()];
+            match run_command(candidate, &cmd_args) {
+                Ok(()) => return Ok(()),
+                Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(Error::Other(
+            "WSL not available on PATH or System32".to_string(),
+        ))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(Error::Other(
+            "WSL fallback is only supported on Windows".to_string(),
+        ))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn preferred_wsl_path() -> String {
+    let is_32_bit =
+        cfg!(target_pointer_width = "32") || std::env::var_os("PROCESSOR_ARCHITEW6432").is_some();
+
+    if is_32_bit {
+        "C:\\Windows\\Sysnative\\wsl.exe".to_string()
+    } else {
+        "C:\\Windows\\System32\\wsl.exe".to_string()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_podman_has_compose(distro: &str) -> bool {
+    wsl_shell_success(distro, "podman compose version")
+        || wsl_shell_success(distro, "podman-compose --version")
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_podman_direct_start(distro: &str, engine: S3Engine) -> Result<()> {
+    let engine = engine_program(engine);
+    let _ = wsl_shell_success(distro, &format!("{} rm -f posixlake-minio", engine));
+
+    wsl_shell(distro, &format!(
+        "{} run -d --name posixlake-minio -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin docker.io/minio/minio:latest server /data --console-address ':9001'",
+        engine
+    ))?;
+
+    let mut alias_ok = false;
+    for _ in 0..15 {
+        if wsl_shell_success(
+            distro,
+            &format!(
+                "{} run --rm --network=host docker.io/minio/mc:latest alias set myminio http://localhost:9000 minioadmin minioadmin",
+                engine
+            ),
+        ) {
+            alias_ok = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    if !alias_ok {
+        eprintln!("MinIO not ready for mc alias set; continuing...");
+    }
+
+    if wsl_shell(
+        distro,
+        &format!(
+            "{} run --rm --network=host docker.io/minio/mc:latest mb myminio/posixlake-test",
+            engine
+        ),
+    )
+    .is_err()
+    {
+        eprintln!("Bucket already exists or could not be created; continuing...");
+    }
+
+    if wsl_shell(
+        distro,
+        &format!(
+            "{} run --rm --network=host docker.io/minio/mc:latest anonymous set download myminio/posixlake-test",
+            engine
+        ),
+    )
+    .is_err()
+    {
+        eprintln!("Unable to set anonymous download; continuing...");
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_podman_direct_stop(distro: &str, engine: S3Engine) -> Result<()> {
+    let engine = engine_program(engine);
+    wsl_shell(distro, &format!("{} rm -f posixlake-minio", engine))
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_shell_success(distro: &str, command: &str) -> bool {
+    wsl_shell(distro, command).is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_shell(distro: &str, command: &str) -> Result<()> {
+    let wsl_full_path = preferred_wsl_path();
+    let args = vec![
+        "-d".to_string(),
+        distro.to_string(),
+        "sh".to_string(),
+        "-lc".to_string(),
+        command.to_string(),
+    ];
+    run_command(&wsl_full_path, &args)
+}
+
+#[cfg(target_os = "windows")]
+fn build_wsl_command(engine: S3Engine, args: &[String]) -> Result<String> {
+    let mut args = args.to_vec();
+
+    if let Some(index) = args.iter().position(|arg| arg == "-f") {
+        if let Some(path_arg) = args.get(index + 1).cloned() {
+            let path = PathBuf::from(path_arg);
+            let abs = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir()?.join(path)
+            };
+            args[index + 1] = windows_path_to_wsl(abs)?;
+        }
+    }
+
+    let cwd = windows_path_to_wsl(std::env::current_dir()?)?;
+    let mut cmd_parts = vec![engine_program(engine)];
+    cmd_parts.extend(args);
+
+    let cmd = cmd_parts
+        .iter()
+        .map(|part| shell_escape(part))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    Ok(format!("cd {} && {}", shell_escape(&cwd), cmd))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_path_to_wsl(path: PathBuf) -> Result<String> {
+    let path_str = path.to_string_lossy();
+    let mut chars = path_str.chars();
+    let drive = chars
+        .next()
+        .ok_or_else(|| Error::Other("Invalid path".to_string()))?;
+    if chars.next() != Some(':') {
+        return Err(Error::Other(format!("Unsupported path: {}", path_str)));
+    }
+    let rest: String = chars.collect();
+    let rest = rest.replace('\\', "/");
+    Ok(format!(
+        "/mnt/{}/{}",
+        drive.to_ascii_lowercase(),
+        rest.trim_start_matches('/')
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn shell_escape(value: &str) -> String {
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-._/:".contains(c))
+    {
+        return value.to_string();
+    }
+
+    let escaped = value.replace('"', "\\\"");
+    format!("\"{}\"", escaped)
+}
+
+fn build_compose_up_command(engine: S3Engine, compose_file: &Path) -> (String, Vec<String>) {
+    (
+        engine_program(engine),
+        vec![
+            "compose".to_string(),
+            "-f".to_string(),
+            compose_file.to_string_lossy().to_string(),
+            "up".to_string(),
+            "-d".to_string(),
+            "minio".to_string(),
+            "minio-init".to_string(),
+        ],
+    )
+}
+
+fn build_compose_down_command(engine: S3Engine, compose_file: &Path) -> (String, Vec<String>) {
+    (
+        engine_program(engine),
+        vec![
+            "compose".to_string(),
+            "-f".to_string(),
+            compose_file.to_string_lossy().to_string(),
+            "down".to_string(),
+        ],
+    )
+}
+
+fn engine_program(engine: S3Engine) -> String {
+    match engine {
+        S3Engine::Docker => "docker".to_string(),
+        S3Engine::Podman => "podman".to_string(),
     }
 }
 
