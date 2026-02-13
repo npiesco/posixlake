@@ -14,7 +14,9 @@ use posixlake::error::{Error, Result};
 #[cfg(target_os = "windows")]
 use posixlake::nfs::windows::MOUNT_OPTIONS;
 use posixlake::nfs::NfsServer;
+use posixlake::storage::s3::parse_s3_uri;
 use posixlake::DatabaseOps;
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::signal;
@@ -485,14 +487,64 @@ async fn main() -> Result<()> {
 
             // Create database in S3
             eprintln!("[1/4] Creating database in S3...");
-            let db = DatabaseOps::create_with_s3(
+            if is_local_endpoint(&endpoint)
+                && !wait_for_endpoint(&endpoint, std::time::Duration::from_secs(2))
+            {
+                eprintln!("      MinIO not reachable; starting local MinIO...");
+                start_local_minio_for_test()?;
+                if !wait_for_endpoint(&endpoint, std::time::Duration::from_secs(30)) {
+                    return Err(Error::Other(format!(
+                        "MinIO did not become ready at {}",
+                        endpoint
+                    )));
+                }
+            }
+            let db = match DatabaseOps::create_with_s3(
                 &s3_path,
                 schema.clone(),
                 &endpoint,
                 &access_key,
                 &secret_key,
             )
-            .await?;
+            .await
+            {
+                Ok(db) => db,
+                Err(err) if should_open_existing_db(&err) => {
+                    eprintln!("      Database already exists; opening...");
+                    DatabaseOps::open_with_s3(&s3_path, &endpoint, &access_key, &secret_key).await?
+                }
+                Err(err) if should_auto_start_minio(&err) => {
+                    eprintln!("      MinIO not ready or bucket missing; starting local MinIO...");
+                    start_local_minio_for_test()?;
+                    if !wait_for_endpoint(&endpoint, std::time::Duration::from_secs(30)) {
+                        return Err(Error::Other(format!(
+                            "MinIO did not become ready at {}",
+                            endpoint
+                        )));
+                    }
+                    if is_local_endpoint(&endpoint) {
+                        ensure_bucket_for_test(&s3_path, &endpoint, &access_key, &secret_key)?;
+                    }
+                    match DatabaseOps::create_with_s3(
+                        &s3_path,
+                        schema.clone(),
+                        &endpoint,
+                        &access_key,
+                        &secret_key,
+                    )
+                    .await
+                    {
+                        Ok(db) => db,
+                        Err(err) if should_open_existing_db(&err) => {
+                            eprintln!("      Database already exists after startup; opening...");
+                            DatabaseOps::open_with_s3(&s3_path, &endpoint, &access_key, &secret_key)
+                                .await?
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+                Err(err) => return Err(err),
+            };
             eprintln!("      ✓ Database created");
             eprintln!();
 
@@ -562,6 +614,14 @@ async fn main() -> Result<()> {
             } => {
                 eprintln!("Starting S3/MinIO via compose...");
                 let (program, args) = build_compose_up_command(engine, &compose_file);
+                #[cfg(target_os = "windows")]
+                {
+                    if engine == S3Engine::Podman {
+                        run_wsl_command(engine, &args)?;
+                        eprintln!("S3/MinIO started.");
+                        return Ok(());
+                    }
+                }
                 run_command_with_fallback(engine, &program, &args)?;
                 eprintln!("S3/MinIO started.");
                 Ok(())
@@ -573,6 +633,14 @@ async fn main() -> Result<()> {
             } => {
                 eprintln!("Stopping S3/MinIO via compose...");
                 let (program, args) = build_compose_down_command(engine, &compose_file);
+                #[cfg(target_os = "windows")]
+                {
+                    if engine == S3Engine::Podman {
+                        run_wsl_command(engine, &args)?;
+                        eprintln!("S3/MinIO stopped.");
+                        return Ok(());
+                    }
+                }
                 run_command_with_fallback(engine, &program, &args)?;
                 eprintln!("S3/MinIO stopped.");
                 Ok(())
@@ -582,20 +650,29 @@ async fn main() -> Result<()> {
 }
 
 fn run_command(program: &str, args: &[String]) -> Result<()> {
-    let status = match std::process::Command::new(program).args(args).status() {
-        Ok(status) => status,
+    let output = match std::process::Command::new(program).args(args).output() {
+        Ok(output) => output,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Err(Error::Other(format!("Program not found: {}", program)))
         }
         Err(err) => return Err(Error::Io(err)),
     };
-    if status.success() {
+
+    if output.status.success() {
         Ok(())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let details = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
         Err(Error::Other(format!(
-            "Command failed: {} {:?}",
+            "Command failed: {} {:?}: {}",
             program,
-            status.code()
+            output.status.code(),
+            details
         )))
     }
 }
@@ -603,20 +680,152 @@ fn run_command(program: &str, args: &[String]) -> Result<()> {
 fn run_command_with_fallback(engine: S3Engine, program: &str, args: &[String]) -> Result<()> {
     match run_command(program, args) {
         Ok(()) => Ok(()),
-        Err(err) if is_program_not_found(&err) => {
-            let fallback_engine = match engine {
-                S3Engine::Docker => S3Engine::Podman,
-                S3Engine::Podman => S3Engine::Docker,
-            };
-            let fallback_program = engine_program(fallback_engine);
-            match run_command(&fallback_program, args) {
-                Ok(()) => Ok(()),
-                Err(err) if is_program_not_found(&err) => run_wsl_command(engine, args),
-                Err(err) => Err(err),
+        Err(err) => {
+            if should_try_wsl_fallback(engine, args) {
+                return run_wsl_command(engine, args);
+            }
+
+            if is_program_not_found(&err) {
+                let fallback_engine = match engine {
+                    S3Engine::Docker => S3Engine::Podman,
+                    S3Engine::Podman => S3Engine::Docker,
+                };
+                let fallback_program = engine_program(fallback_engine);
+                match run_command(&fallback_program, args) {
+                    Ok(()) => Ok(()),
+                    Err(err) if is_program_not_found(&err) => run_wsl_command(engine, args),
+                    Err(err) => Err(err),
+                }
+            } else {
+                Err(err)
             }
         }
-        Err(err) => Err(err),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn should_try_wsl_fallback(engine: S3Engine, args: &[String]) -> bool {
+    engine == S3Engine::Podman && args.first().map(|a| a == "compose").unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn should_try_wsl_fallback(_engine: S3Engine, _args: &[String]) -> bool {
+    false
+}
+
+fn should_auto_start_minio(err: &Error) -> bool {
+    let message = err.to_string().to_lowercase();
+    message.contains("nosuchbucket")
+        || message.contains("connection refused")
+        || message.contains("connectionrefused")
+        || message.contains("refused")
+        || message.contains("failed to connect")
+        || message.contains("connection reset")
+        || message.contains("connect error")
+}
+
+fn should_open_existing_db(err: &Error) -> bool {
+    let message = err.to_string().to_lowercase();
+    message.contains("tablealreadyexists")
+        || (message.contains("already") && message.contains("exist"))
+}
+
+fn start_local_minio_for_test() -> Result<()> {
+    let compose_file = PathBuf::from("docker-compose.yml");
+    let (program, args) = build_compose_up_command(S3Engine::Podman, &compose_file);
+    run_command_with_fallback(S3Engine::Podman, &program, &args)
+}
+
+fn ensure_bucket_for_test(
+    s3_path: &str,
+    endpoint: &str,
+    access_key: &str,
+    secret_key: &str,
+) -> Result<()> {
+    let (bucket, _) = parse_s3_uri(s3_path)?;
+    let engine = S3Engine::Podman;
+    let program = engine_program(engine);
+
+    let run_engine = |args: &[String]| -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            if engine == S3Engine::Podman {
+                return run_wsl_command(engine, args);
+            }
+        }
+        run_command_with_fallback(engine, &program, args)
+    };
+
+    let setup_args = vec![
+        "run".to_string(),
+        "--rm".to_string(),
+        "--network=host".to_string(),
+        "--entrypoint".to_string(),
+        "/bin/sh".to_string(),
+        "docker.io/minio/mc:latest".to_string(),
+        "-c".to_string(),
+        format!(
+            "mc alias set myminio {} {} {} && mc mb myminio/{} || true && mc anonymous set download myminio/{} || true",
+            endpoint, access_key, secret_key, bucket, bucket
+        ),
+    ];
+
+    let mut setup_ok = false;
+    for _ in 0..15 {
+        if run_engine(&setup_args).is_ok() {
+            setup_ok = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    if !setup_ok {
+        return Err(Error::Other("Unable to configure MinIO bucket".to_string()));
+    }
+
+    Ok(())
+}
+
+fn wait_for_endpoint(endpoint: &str, max_wait: std::time::Duration) -> bool {
+    let url = match url::Url::parse(endpoint) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+    let host = match url.host_str() {
+        Some(host) => host,
+        None => return false,
+    };
+    let port = url.port_or_known_default().unwrap_or(80);
+    let deadline = std::time::Instant::now() + max_wait;
+
+    while std::time::Instant::now() < deadline {
+        if let Ok(mut addrs) = (host, port).to_socket_addrs() {
+            for addr in addrs.by_ref() {
+                if std::net::TcpStream::connect_timeout(
+                    &addr,
+                    std::time::Duration::from_millis(500),
+                )
+                .is_ok()
+                {
+                    return true;
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    false
+}
+
+fn is_local_endpoint(endpoint: &str) -> bool {
+    let url = match url::Url::parse(endpoint) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+    matches!(
+        url.host_str(),
+        Some("localhost") | Some("127.0.0.1") | Some("::1")
+    )
 }
 
 fn is_program_not_found(err: &Error) -> bool {
@@ -637,14 +846,15 @@ fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
         "cmd.exe",
     ];
 
-    if engine == S3Engine::Podman
-        && args.first().map(|a| a == "compose").unwrap_or(false)
-        && !wsl_podman_has_compose(&distro)
-    {
-        if args.iter().any(|arg| arg == "up") {
+    let is_compose = args.first().map(|a| a == "compose").unwrap_or(false);
+    let is_up = args.iter().any(|arg| arg == "up");
+    let is_down = args.iter().any(|arg| arg == "down");
+
+    if engine == S3Engine::Podman && is_compose {
+        if is_up {
             return wsl_podman_direct_start(&distro, engine);
         }
-        if args.iter().any(|arg| arg == "down") {
+        if is_down {
             return wsl_podman_direct_stop(&distro, engine);
         }
     }
@@ -661,6 +871,13 @@ fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
     match run_command(&wsl_full_path, &wsl_args) {
         Ok(()) => return Ok(()),
         Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
+            return if is_up {
+                wsl_podman_direct_start(&distro, engine)
+            } else {
+                wsl_podman_direct_stop(&distro, engine)
+            };
+        }
         Err(err) => return Err(err),
     }
 
@@ -668,6 +885,13 @@ fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
         match run_command(candidate, &wsl_args) {
             Ok(()) => return Ok(()),
             Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
+                return if is_up {
+                    wsl_podman_direct_start(&distro, engine)
+                } else {
+                    wsl_podman_direct_stop(&distro, engine)
+                };
+            }
             Err(err) => return Err(err),
         }
     }
@@ -684,6 +908,13 @@ fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
         match run_command(candidate, &cmd_args) {
             Ok(()) => return Ok(()),
             Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
+                return if is_up {
+                    wsl_podman_direct_start(&distro, engine)
+                } else {
+                    wsl_podman_direct_stop(&distro, engine)
+                };
+            }
             Err(err) => return Err(err),
         }
     }
@@ -713,62 +944,40 @@ fn preferred_wsl_path() -> String {
 }
 
 #[cfg(target_os = "windows")]
-fn wsl_podman_has_compose(distro: &str) -> bool {
-    wsl_shell_success(distro, "podman compose version")
-        || wsl_shell_success(distro, "podman-compose --version")
-}
-
-#[cfg(target_os = "windows")]
 fn wsl_podman_direct_start(distro: &str, engine: S3Engine) -> Result<()> {
     let engine = engine_program(engine);
     let _ = wsl_shell_success(distro, &format!("{} rm -f posixlake-minio", engine));
 
-    wsl_shell(distro, &format!(
-        "{} run -d --name posixlake-minio -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin docker.io/minio/minio:latest server /data --console-address ':9001'",
-        engine
-    ))?;
+    if let Err(err) = wsl_shell(
+        distro,
+        &format!(
+            "{} run -d --name posixlake-minio -p 9000:9000 -p 9001:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin docker.io/minio/minio:latest server /data --console-address ':9001'",
+            engine
+        ),
+    ) {
+        let message = err.to_string().to_lowercase();
+        if message.contains("address already in use") || message.contains("port is already allocated") {
+            eprintln!("MinIO already running on port 9000; continuing...");
+        } else {
+            return Err(err);
+        }
+    }
 
-    let mut alias_ok = false;
+    let setup_cmd = format!(
+        "{} run --rm --network=host --entrypoint /bin/sh docker.io/minio/mc:latest -c \"mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb myminio/posixlake-test || true && mc anonymous set download myminio/posixlake-test || true\"",
+        engine
+    );
+    let mut setup_ok = false;
     for _ in 0..15 {
-        if wsl_shell_success(
-            distro,
-            &format!(
-                "{} run --rm --network=host docker.io/minio/mc:latest alias set myminio http://localhost:9000 minioadmin minioadmin",
-                engine
-            ),
-        ) {
-            alias_ok = true;
+        if wsl_shell_success(distro, &setup_cmd) {
+            setup_ok = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
-    if !alias_ok {
-        eprintln!("MinIO not ready for mc alias set; continuing...");
-    }
-
-    if wsl_shell(
-        distro,
-        &format!(
-            "{} run --rm --network=host docker.io/minio/mc:latest mb myminio/posixlake-test",
-            engine
-        ),
-    )
-    .is_err()
-    {
-        eprintln!("Bucket already exists or could not be created; continuing...");
-    }
-
-    if wsl_shell(
-        distro,
-        &format!(
-            "{} run --rm --network=host docker.io/minio/mc:latest anonymous set download myminio/posixlake-test",
-            engine
-        ),
-    )
-    .is_err()
-    {
-        eprintln!("Unable to set anonymous download; continuing...");
+    if !setup_ok {
+        eprintln!("MinIO not ready for bucket setup; continuing...");
     }
 
     Ok(())

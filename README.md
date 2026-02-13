@@ -352,12 +352,23 @@ pip install posixlake
 cd posixlake
 cargo build --release
 cargo run --bin uniffi-bindgen -- generate \
-    --library target/release/libposixlake.dylib \
+    --library target/release/<platform-library> \
     --language python \
     --out-dir ../bindings/python/posixlake
-cp target/release/libposixlake.dylib ../bindings/python/posixlake/
+cp target/release/<platform-library> ../bindings/python/posixlake/
 pip install -e ../bindings/python/
 ```
+
+Use the correct library name for your OS:
+- Linux: `libposixlake.so`
+- macOS: `libposixlake.dylib`
+- Windows: `posixlake.dll`
+
+Both `x86_64` and `arm64` are supported.
+As with any native extension, Python and the native library must use the same architecture (`x86_64` ↔ `x86_64`, `arm64` ↔ `arm64`).
+If you need to target a specific architecture, build Rust explicitly for that target:
+- Windows x86_64 Python: `cargo build --release --target x86_64-pc-windows-msvc -p posixlake`
+- Windows ARM64 Python: `cargo build --release --target aarch64-pc-windows-msvc -p posixlake`
 
 **Requirements:**
 - **Python 3.11+** for prebuilt wheels with native library

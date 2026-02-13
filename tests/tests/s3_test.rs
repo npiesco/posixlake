@@ -38,6 +38,31 @@ async fn is_minio_available() -> bool {
     }
 }
 
+async fn is_bucket_available(
+    endpoint: &str,
+    access_key: &str,
+    secret_key: &str,
+    bucket: &str,
+) -> bool {
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+    let probe_path = format!("s3://{}/bucket_probe_{}", bucket, uuid::Uuid::new_v4());
+    match DatabaseOps::create_with_s3(&probe_path, schema, endpoint, access_key, secret_key).await {
+        Ok(_) => true,
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("NoSuchBucket") {
+                eprintln!(
+                    "Skipping S3 test: bucket '{}' does not exist at {}",
+                    bucket, endpoint
+                );
+                false
+            } else {
+                true
+            }
+        }
+    }
+}
+
 /// Helper to get MinIO configuration from environment
 fn get_minio_config() -> (String, String, String, String) {
     let endpoint =
@@ -81,6 +106,9 @@ async fn test_s3_create_database() {
     }
 
     let (endpoint, access_key, secret_key, bucket) = get_minio_config();
+    if !is_bucket_available(&endpoint, &access_key, &secret_key, &bucket).await {
+        return;
+    }
 
     // S3 URI format: s3://bucket/prefix
     let s3_path = format!("s3://{}/test_db_{}", bucket, uuid::Uuid::new_v4());
@@ -123,6 +151,9 @@ async fn test_s3_insert_and_query() {
     }
 
     let (endpoint, access_key, secret_key, bucket) = get_minio_config();
+    if !is_bucket_available(&endpoint, &access_key, &secret_key, &bucket).await {
+        return;
+    }
     let s3_path = format!("s3://{}/test_db_{}", bucket, uuid::Uuid::new_v4());
 
     let schema = create_test_schema();
@@ -175,6 +206,9 @@ async fn test_s3_reopen_database() {
     }
 
     let (endpoint, access_key, secret_key, bucket) = get_minio_config();
+    if !is_bucket_available(&endpoint, &access_key, &secret_key, &bucket).await {
+        return;
+    }
     let s3_path = format!("s3://{}/test_db_{}", bucket, uuid::Uuid::new_v4());
 
     let schema = create_test_schema();
@@ -232,6 +266,9 @@ async fn test_s3_multiple_inserts() {
     }
 
     let (endpoint, access_key, secret_key, bucket) = get_minio_config();
+    if !is_bucket_available(&endpoint, &access_key, &secret_key, &bucket).await {
+        return;
+    }
     let s3_path = format!("s3://{}/test_db_{}", bucket, uuid::Uuid::new_v4());
 
     let schema = create_test_schema();

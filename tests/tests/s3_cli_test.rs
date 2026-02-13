@@ -6,10 +6,25 @@
 use std::process::Command;
 
 fn posixlake_binary() -> std::path::PathBuf {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_posixlake_cli") {
+        return std::path::PathBuf::from(path);
+    }
     let mut path = std::env::current_exe().unwrap();
     path.pop(); // Remove test binary name
     path.pop(); // Remove deps
-    path.push("posixlake");
+    path.push("posixlake-cli");
+    if cfg!(windows) && !path.exists() {
+        let mut exe_path = path.clone();
+        exe_path.set_extension("exe");
+        if exe_path.exists() {
+            return exe_path;
+        }
+    }
+    assert!(
+        path.exists(),
+        "posixlake-cli binary not found at {:?}. Build it first or set CARGO_BIN_EXE_posixlake_cli.",
+        path
+    );
     path
 }
 
@@ -55,6 +70,17 @@ fn test_cli_s3_start_stop_compose() {
         return;
     }
 
+    let _ = Command::new(posixlake_binary())
+        .arg("s3")
+        .arg("stop")
+        .arg("--engine")
+        .arg("podman")
+        .arg("--mode")
+        .arg("compose")
+        .arg("--compose-file")
+        .arg("docker-compose.yml")
+        .output();
+
     let output = Command::new(posixlake_binary())
         .arg("s3")
         .arg("start")
@@ -88,6 +114,38 @@ fn test_cli_s3_start_stop_compose() {
     assert!(
         output.status.success(),
         "s3 stop failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// s3-test should auto-start MinIO and create bucket if needed
+#[test]
+fn test_cli_s3_test_auto_start() {
+    if !has_native_engine() && !has_wsl_engine() {
+        eprintln!("Skipping: no container engine found (native PATH or WSL)");
+        return;
+    }
+
+    let _ = Command::new(posixlake_binary())
+        .arg("s3")
+        .arg("stop")
+        .arg("--engine")
+        .arg("podman")
+        .arg("--mode")
+        .arg("compose")
+        .arg("--compose-file")
+        .arg("docker-compose.yml")
+        .output();
+
+    let output = Command::new(posixlake_binary())
+        .arg("s3-test")
+        .arg("s3://posixlake-test/.posixlake")
+        .output()
+        .expect("Failed to execute posixlake s3-test");
+
+    assert!(
+        output.status.success(),
+        "s3-test failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

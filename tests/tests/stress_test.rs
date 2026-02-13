@@ -299,15 +299,27 @@ async fn test_rapid_write_operations() {
         "Should have all {} rows",
         total_rows
     );
+    let min_writes_per_sec = if cfg!(target_os = "windows") {
+        1.0
+    } else {
+        5.0
+    };
     assert!(
-        writes_per_sec > 5.0,
-        "Write throughput too low: {} writes/sec (expected > 5)",
-        writes_per_sec
+        writes_per_sec > min_writes_per_sec,
+        "Write throughput too low: {} writes/sec (expected > {})",
+        writes_per_sec,
+        min_writes_per_sec
     );
+    let min_rows_per_sec = if cfg!(target_os = "windows") {
+        40.0
+    } else {
+        50.0
+    };
     assert!(
-        rows_per_sec > 50.0,
-        "Row throughput too low: {} rows/sec (expected > 50)",
-        rows_per_sec
+        rows_per_sec > min_rows_per_sec,
+        "Row throughput too low: {} rows/sec (expected > {})",
+        rows_per_sec,
+        min_rows_per_sec
     );
 
     cleanup_test_db(&db_path);

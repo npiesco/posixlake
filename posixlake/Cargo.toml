@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "posixlake"
+name = "posixlake-cli"
 path = "src/bin/posixlake.rs"
 
 [[bin]]

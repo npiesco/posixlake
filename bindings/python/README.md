@@ -42,6 +42,8 @@ pip install posixlake
 
 **Requirements:**
 - **Python 3.11+** (required for prebuilt wheels with native library)
+- **x86_64 and ARM64 are supported** on supported platforms
+- As with any native extension, Python and the native library/wheel must match architecture (`x86_64` ↔ `x86_64`, `arm64` ↔ `arm64`)
 - For other Python versions, install from source (see below)
 
 **PyPI Package:** https://pypi.org/project/posixlake/
@@ -58,17 +60,26 @@ cargo build --release
 
 # 3. Generate Python API
 cargo run --bin uniffi-bindgen -- generate \
-    --library target/release/libposixlake.dylib \
+    --library target/release/<platform-library> \
     --language python \
-    --out-dir bindings/python
+    --out-dir bindings/python/posixlake
 
 # 4. Copy library
-cp target/release/libposixlake.dylib bindings/python/
+cp target/release/<platform-library> bindings/python/posixlake/
 
 # 5. Install Python package
 cd bindings/python
 pip install -e .
 ```
+
+Use the correct library name for your OS:
+- Linux: `libposixlake.so`
+- macOS: `libposixlake.dylib`
+- Windows: `posixlake.dll`
+
+If you want to build for a specific architecture, set the Rust target explicitly before generating bindings:
+- Windows x86_64 Python: `--target x86_64-pc-windows-msvc`
+- Windows ARM64 Python: `--target aarch64-pc-windows-msvc`
 
 **Prerequisites:**
 - Python 3.8+ (3.11+ recommended for prebuilt wheels)
@@ -889,7 +900,7 @@ except PosixLakeError as e:
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│  Rust Library (libposixlake.dylib)      │
+│  Rust Library (.so/.dylib/.dll)         │
 │  • DatabaseOps                          │
 │  • Delta Lake operations                │
 │  • DataFusion SQL engine                │

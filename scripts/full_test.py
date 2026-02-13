@@ -36,7 +36,7 @@ def main():
         schema = Schema(fields=[
             Field(name="id", data_type="Int32", nullable=False),
             Field(name="name", data_type="String", nullable=False),
-        ])
+        ], primary_key=None)
         db = DatabaseOps.create(f"{test_dir}/db", schema)
         db.insert_json('[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}, {"id": 3, "name": "Charlie"}]')
         print("Database created with 3 rows")
@@ -53,7 +53,7 @@ def main():
             Field(name="tags", data_type="List<String>", nullable=True),
             Field(name="metadata", data_type="Map<String,Int64>", nullable=True),
             Field(name="address", data_type="Struct<city:String,zip:Int32>", nullable=True),
-        ])
+        ], primary_key=None)
         complex_db = DatabaseOps.create(f"{test_dir}/complex_db", complex_schema)
         print("✓ Complex types database created:")
         for f in complex_db.get_schema().fields:

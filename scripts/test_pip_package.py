@@ -86,7 +86,7 @@ def test_create_with_schema(temp_dir, results):
         Field(name="email", data_type="String", nullable=True),
         Field(name="age", data_type="Int32", nullable=True),
         Field(name="salary", data_type="Float64", nullable=True),
-    ])
+    ], primary_key=None)
 
     try:
         db = DatabaseOps.create(db_path, schema)
@@ -190,7 +190,7 @@ def test_complex_types(temp_dir, results):
         schema = Schema(fields=[
             Field(name="id", data_type="Int32", nullable=False),
             Field(name="price", data_type="Decimal128(10,2)", nullable=False),
-        ])
+        ], primary_key=None)
         db = DatabaseOps.create(db_path, schema)
         s = db.get_schema()
         assert s.fields[1].data_type == "Decimal128(10,2)", f"Expected Decimal128(10,2), got {s.fields[1].data_type}"
@@ -201,7 +201,7 @@ def test_complex_types(temp_dir, results):
         schema = Schema(fields=[
             Field(name="id", data_type="Int32", nullable=False),
             Field(name="scores", data_type="List<Int32>", nullable=True),
-        ])
+        ], primary_key=None)
         db = DatabaseOps.create(db_path, schema)
         s = db.get_schema()
         assert "List" in s.fields[1].data_type, f"Expected List type, got {s.fields[1].data_type}"
@@ -212,7 +212,7 @@ def test_complex_types(temp_dir, results):
         schema = Schema(fields=[
             Field(name="id", data_type="Int32", nullable=False),
             Field(name="person", data_type="Struct<name:String,age:Int32>", nullable=True),
-        ])
+        ], primary_key=None)
         db = DatabaseOps.create(db_path, schema)
         s = db.get_schema()
         assert "Struct" in s.fields[1].data_type, f"Expected Struct type, got {s.fields[1].data_type}"
@@ -223,7 +223,7 @@ def test_complex_types(temp_dir, results):
         schema = Schema(fields=[
             Field(name="id", data_type="Int32", nullable=False),
             Field(name="metadata", data_type="Map<String,Int64>", nullable=True),
-        ])
+        ], primary_key=None)
         db = DatabaseOps.create(db_path, schema)
         s = db.get_schema()
         assert "Map" in s.fields[1].data_type, f"Expected Map type, got {s.fields[1].data_type}"
@@ -442,7 +442,7 @@ def test_auth_rbac(temp_dir, results):
     schema = Schema(fields=[
         Field(name="id", data_type="Int32", nullable=False),
         Field(name="name", data_type="String", nullable=False),
-    ])
+    ], primary_key=None)
 
     try:
         # Create with auth
