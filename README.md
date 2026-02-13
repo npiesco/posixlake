@@ -138,7 +138,7 @@ cat temp.csv > data.csv
 
 ```bash
 # Mount database as filesystem
-posixlake mount /path/to/database /mnt/data
+posixlake-cli mount /path/to/database /mnt/data
 
 # data.csv is a CSV view of the Parquet data
 cat /mnt/data/data/data.csv
@@ -180,7 +180,7 @@ wc -l /mnt/data/data/data.csv
 
 ```bash
 # Mount S3-backed Delta table
-posixlake mount s3://my-bucket/delta-table /mnt/s3-data
+posixlake-cli mount s3://my-bucket/delta-table /mnt/s3-data
 
 # Now use UNIX tools on cloud data!
 grep "pattern" /mnt/s3-data/data/data.csv
@@ -196,7 +196,7 @@ echo "new,record,123" >> /mnt/s3-data/data/data.csv
 
 ```bash
 # Create database via posixlake
-posixlake create /path/to/database
+posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 
 # Data is immediately readable by Spark/Databricks/Athena
 # -> Native _delta_log/ transaction log
@@ -417,7 +417,7 @@ See [Python Bindings Documentation](bindings/python/README.md) for complete API 
 mkdir storage
 
 # 2. Create a posixlake database with a schema
-posixlake create storage --schema "id:Int32,name:String,email:String"
+posixlake-cli create storage --schema "id:Int32,name:String,email:String"
 
 # 3. What gets created (even with no data):
 # storage/
@@ -425,26 +425,25 @@ posixlake create storage --schema "id:Int32,name:String,email:String"
 # │   └── 00000000000000000000.json   # Delta Lake transaction log
 # └── (no parquet files yet - empty table)
 
-# 4. Start NFS server to mount it
-posixlake serve storage --port 12099
+# 4. Mount database (starts NFS server and mounts via OS NFS client)
+posixlake-cli mount storage /mnt/storage --port 12099
 
-# 5. In another terminal, mount it
-sudo mkdir -p /mnt/storage
-sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port=12099,mountport=12099 localhost:/ /mnt/storage
-
-# 6. Now use POSIX commands
+# 5. Now use POSIX commands
 ls /mnt/storage/data/           # Shows data.csv (empty, just header)
 cat /mnt/storage/data/data.csv  # Shows: id,name,email
 
-# 7. Add data via echo/redirect
+# 6. Add data via echo/redirect
 echo "1,Alice,alice@example.com" >> /mnt/storage/data/data.csv
 echo "2,Bob,bob@example.com" >> /mnt/storage/data/data.csv
 
-# 8. Verify
+# 7. Verify
 cat /mnt/storage/data/data.csv
 # id,name,email
 # 1,Alice,alice@example.com
 # 2,Bob,bob@example.com
+
+# 8. Unmount when done
+posixlake-cli unmount /mnt/storage
 ```
 
 **Empty database** = valid Delta Lake table with schema but 0 rows. The `_delta_log/` is created immediately so any Delta Lake reader can open it.
@@ -453,7 +452,7 @@ cat /mnt/storage/data/data.csv
 
 ```bash
 # Create database from CSV - schema is automatically inferred
-posixlake create /path/to/db --from-csv data.csv
+posixlake-cli create /path/to/db --from-csv data.csv
 
 # Schema inference rules (from first 10 data rows):
 # - All values parse as integers → Int64
@@ -466,10 +465,10 @@ posixlake create /path/to/db --from-csv data.csv
 
 ```bash
 # Create database from single Parquet file
-posixlake create /path/to/db --from-parquet data.parquet
+posixlake-cli create /path/to/db --from-parquet data.parquet
 
 # Create from multiple Parquet files (glob pattern)
-posixlake create /path/to/db --from-parquet "data/*.parquet"
+posixlake-cli create /path/to/db --from-parquet "data/*.parquet"
 ```
 
 #### Python
@@ -547,7 +546,7 @@ The easiest way to use posixlake is to mount it as a filesystem:
 
 ```bash
 # Mount an existing database
-./target/release/posixlake mount /path/to/database /mnt/data
+./target/release/posixlake-cli mount /path/to/database /mnt/data
 
 # Now use regular UNIX commands!
 cat /mnt/data/data/data.csv        # Read all data
@@ -556,7 +555,7 @@ awk -F',' '{print $2}' /mnt/data/data/data.csv  # Process
 echo "id,name,value" >> /mnt/data/data/data.csv  # Append
 
 # Unmount when done
-./target/release/posixlake unmount /mnt/data
+./target/release/posixlake-cli unmount /mnt/data
 ```
 
 All writes persist to Delta Lake with full ACID guarantees. No special tools needed - just standard UNIX commands.
@@ -567,10 +566,10 @@ On Windows, mount to a drive letter and use PowerShell or cmd.exe for CRUD opera
 
 ```powershell
 # 1. Create database from CSV
-.\posixlake.exe create --from-csv data.csv test_db
+.\posixlake-cli.exe create test_db --from-csv data.csv
 
 # 2. Mount to drive letter
-.\posixlake.exe mount test_db T:
+.\posixlake-cli.exe mount test_db T:
 
 # 3. READ - view data
 Get-Content T:\data\data.csv
@@ -588,10 +587,10 @@ Get-Content T:\data\data.csv | Where-Object { $_ -notmatch 'RowToDelete' } | Out
 cmd /c "copy /Y temp.csv T:\data\data.csv"
 
 # 7. Unmount
-.\posixlake.exe unmount T:
+.\posixlake-cli.exe unmount T:
 
 # 8. Check status
-.\posixlake.exe status T:
+.\posixlake-cli.exe status T:
 ```
 
 **Note:** Use `-Encoding ascii` with `Out-File` and `cmd /c copy` for overwrites to ensure proper CSV formatting. PowerShell's default encoding can cause issues with CSV parsing.
@@ -602,7 +601,7 @@ When you unmount the NFS filesystem, **your data persists** because it's stored 
 
 ```bash
 # Unmount
-./target/release/posixlake unmount /mnt/data
+./target/release/posixlake-cli unmount /mnt/data
 
 # The mount point becomes empty, but data remains at:
 # /path/to/database/
@@ -656,7 +655,7 @@ open http://localhost:9001
 # Login: minioadmin / minioadmin
 
 # Test S3 backend
-./target/release/posixlake s3-test "s3://posixlake-test/test_db"
+./target/release/posixlake-cli s3-test "s3://posixlake-test/test_db"
 ```
 
 **MinIO Configuration:**
@@ -683,7 +682,7 @@ export MINIO_SECRET_KEY="your-secret-key"
 export MINIO_BUCKET="your-bucket"
 
 # Or pass via CLI
-./target/release/posixlake s3-test "s3://your-bucket/your-db" \
+./target/release/posixlake-cli s3-test "s3://your-bucket/your-db" \
   --endpoint "https://s3.amazonaws.com" \
   --access-key "your-access-key" \
   --secret-key "your-secret-key"
