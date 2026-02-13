@@ -101,7 +101,7 @@ schema = Schema(fields=[
     Field(name="name", data_type="String", nullable=False),
     Field(name="age", data_type="Int32", nullable=True),
     Field(name="salary", data_type="Float64", nullable=True),
-])
+], primary_key="id")
 
 # Create database on local filesystem
 try:
@@ -134,7 +134,7 @@ schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
     Field(name="name", data_type="String", nullable=False),
     Field(name="email", data_type="String", nullable=False),
-])
+], primary_key="id")
 
 db = DatabaseOps.create("/path/to/db", schema)
 
@@ -167,7 +167,7 @@ schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
     Field(name="name", data_type="String", nullable=False),
     Field(name="value", data_type="Float64", nullable=True),
-])
+], primary_key="id")
 
 # Create database on S3/MinIO
 s3_config = S3Config(
@@ -199,7 +199,7 @@ schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
     Field(name="name", data_type="String", nullable=False),
     Field(name="age", data_type="Int32", nullable=True),
-])
+], primary_key="id")
 db = DatabaseOps.create("/path/to/db", schema)
 
 # Insert data
@@ -250,7 +250,7 @@ from posixlake import DatabaseOps, Schema, Field
 schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
     Field(name="name", data_type="String", nullable=False),
-])
+], primary_key="id")
 
 db = DatabaseOps.create("/path/to/db", schema)
 
@@ -357,7 +357,7 @@ from posixlake import DatabaseOps, Schema, Field, S3Config
 schema = Schema(fields=[
     Field(name="id", data_type="Int32", nullable=False),
     Field(name="name", data_type="String", nullable=False),
-])
+], primary_key="id")
 db = DatabaseOps.create("/path/to/db", schema)
 db = DatabaseOps.open("/path/to/db")
 
@@ -623,7 +623,7 @@ nfs.shutdown()
 from posixlake import DatabaseOps, Schema, Field, Credentials
 
 # Create database with authentication enabled
-schema = Schema(fields=[...])
+schema = Schema(fields=[...], primary_key=None)
 db = DatabaseOps.create_with_auth("/path/to/db", schema, auth_enabled=True)
 
 # Open with credentials
@@ -722,7 +722,7 @@ schema = Schema(fields=[
     Field(name="name", data_type="String", nullable=False),
     Field(name="age", data_type="Int32", nullable=True),
     Field(name="salary", data_type="Float64", nullable=True),
-])
+], primary_key="id")
 ```
 
 #### Supported Data Types
