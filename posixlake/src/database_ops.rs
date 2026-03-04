@@ -2001,11 +2001,13 @@ impl DatabaseOps {
 
     /// Get column statistics from Delta Lake transaction log
     pub async fn get_column_statistics(&self) -> Result<HashMap<String, ColumnStats>> {
+        self.check_permission(&crate::security::Permission::Read)?;
         get_column_statistics_from_delta(&self.base_path)
     }
 
     /// Get query pruning statistics (Delta Lake handles this natively)
     pub async fn get_pruning_statistics(&self) -> Result<PruningStats> {
+        self.check_permission(&crate::security::Permission::Read)?;
         // Delta Lake doesn't expose pruning stats the same way
         // Return empty stats for now
         Ok(PruningStats {
@@ -2043,6 +2045,7 @@ impl DatabaseOps {
     /// Returns information about how many files were skipped during the last query
     /// based on min/max statistics pruning.
     pub async fn get_data_skipping_stats(&self) -> Result<DataSkippingStats> {
+        self.check_permission(&crate::security::Permission::Read)?;
         let stats = self.data_skipping_stats.lock().await;
         Ok(stats.clone())
     }
@@ -2055,6 +2058,19 @@ impl DatabaseOps {
 
     /// Get database health status
     pub async fn health_check(&self) -> HealthStatus {
+        if self
+            .check_permission(&crate::security::Permission::Read)
+            .is_err()
+        {
+            return HealthStatus {
+                status: "unauthorized".to_string(),
+                uptime_seconds: self.metrics.start_time.elapsed().as_secs_f64(),
+                total_files: 0,
+                total_rows: 0,
+                total_size_bytes: 0,
+            };
+        }
+
         // For Delta Lake, check _delta_log directory
         let delta_log_exists = self.base_path.join("_delta_log").exists();
 
@@ -2156,6 +2172,7 @@ impl DatabaseOps {
         base_backup_path: P,
         incremental_path: P,
     ) -> Result<()> {
+        self.check_permission(&crate::security::Permission::Read)?;
         let base_backup_path = base_backup_path.as_ref();
         let incremental_path = incremental_path.as_ref();
         info!(

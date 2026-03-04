@@ -200,3 +200,48 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for get_column_statistics operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_column_statistics` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `get_column_statistics()` succeeded).
+2. Approach: Enforce read permission gate in `DatabaseOps::get_column_statistics()` so unauthenticated sessions fail with `Authentication required`.
+3. Green: Added permission check in `DatabaseOps::get_column_statistics()`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for get_pruning_statistics operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_pruning_statistics` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `get_pruning_statistics()` succeeded).
+2. Approach: Enforce read permission gate in `DatabaseOps::get_pruning_statistics()` so unauthenticated sessions fail with `Authentication required`.
+3. Green: Added permission check in `DatabaseOps::get_pruning_statistics()`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for get_data_skipping_stats operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_data_skipping_stats` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `get_data_skipping_stats()` succeeded).
+2. Approach: Enforce read permission gate in `DatabaseOps::get_data_skipping_stats()` so unauthenticated sessions fail with `Authentication required`.
+3. Green: Added permission check in `DatabaseOps::get_data_skipping_stats()`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for backup_incremental operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_incremental_backup` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `backup_incremental()` succeeded).
+2. Approach: Enforce read permission gate in `DatabaseOps::backup_incremental()` so unauthenticated sessions fail with `Authentication required`.
+3. Green: Added permission check in `DatabaseOps::backup_incremental()`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for health_check status (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_hides_health_status` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `health_check()` returned `healthy`).
+2. Approach: Enforce fail-closed behavior in `DatabaseOps::health_check()` so unauthenticated sessions return `status: unauthorized` and zeroed counters.
+3. Green: Added permission gate in `DatabaseOps::health_check()` and unauthorized response.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
