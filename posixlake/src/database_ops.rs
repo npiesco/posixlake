@@ -1570,6 +1570,7 @@ impl DatabaseOps {
 
     /// Query a specific Parquet file (for individual file views)
     pub async fn query_file(&self, file_path: &str) -> Result<Vec<RecordBatch>> {
+        self.check_permission(&crate::security::Permission::Read)?;
         info!("Querying specific file: {}", file_path);
 
         let full_path = self.base_path.join(file_path);

@@ -164,3 +164,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for query_file operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_query_file` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `query_file` succeeded).
+2. Approach: Enforce read permission gate in `DatabaseOps::query_file()` so unauthenticated sessions fail with `Authentication required`.
+3. Green: Added permission check in `DatabaseOps::query_file()`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

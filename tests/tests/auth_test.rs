@@ -640,3 +640,66 @@ async fn test_open_without_credentials_denies_backup() {
     cleanup_test_db(&db_path);
     cleanup_test_db(&backup_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_query_file() {
+    setup_logging();
+    let db_path = test_db_path("test_db_query_file_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies query_file ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+        ],
+    )
+    .unwrap();
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+
+    let parquet_files = authed_db
+        .list_parquet_files()
+        .expect("Parquet files should be listable by authenticated admin");
+    assert!(
+        !parquet_files.is_empty(),
+        "Expected at least one parquet file after insert"
+    );
+    let target_file = parquet_files[0].clone();
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let query_file_result = opened.query_file(&target_file).await;
+    assert!(
+        query_file_result.is_err(),
+        "query_file should fail without authenticated context"
+    );
+    let err = format!("{}", query_file_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
