@@ -2391,7 +2391,52 @@ impl DatabaseOps {
 
     /// Get backup metadata
     pub async fn get_backup_metadata<P: AsRef<Path>>(backup_path: P) -> Result<BackupMetadata> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Backup,
+            None,
+        )?;
         crate::metadata::backup::get_backup_metadata(backup_path)
+    }
+
+    /// Get backup metadata with credentials for auth-enabled backups
+    pub async fn get_backup_metadata_with_credentials<P: AsRef<Path>>(
+        backup_path: P,
+        credentials: Option<(&str, &str)>,
+    ) -> Result<BackupMetadata> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Backup,
+            credentials,
+        )?;
+        crate::metadata::backup::get_backup_metadata(backup_path)
+    }
+
+    fn authorize_backup_access(
+        backup_path: &Path,
+        required_permission: crate::security::Permission,
+        credentials: Option<(&str, &str)>,
+    ) -> Result<()> {
+        let users_path = backup_path.join("_metadata").join("users.json");
+        if !users_path.exists() {
+            return Ok(());
+        }
+
+        let (username, password) =
+            credentials.ok_or_else(|| Error::Other("Authentication required".to_string()))?;
+
+        let user_store = crate::security::UserStore::load(&users_path)?;
+        let auth_context = user_store.authenticate(username, password)?;
+
+        let role_manager = crate::security::RoleManager::new();
+        if !role_manager.has_permission(&auth_context.roles, &required_permission) {
+            return Err(Error::Other(format!(
+                "Permission denied: {:?}",
+                required_permission
+            )));
+        }
+
+        Ok(())
     }
 }
 

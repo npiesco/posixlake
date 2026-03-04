@@ -1398,6 +1398,77 @@ async fn test_open_without_credentials_hides_metrics() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_backup_metadata_without_credentials_denies_auth_enabled_backup() {
+    setup_logging();
+    let db_path = test_db_path("test_db_backup_metadata_auth_required");
+    let backup_path = test_db_path("test_backup_metadata_auth_required");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+
+    println!("\n=== Test: get_backup_metadata without credentials denies auth-enabled backup ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+    authed_db
+        .backup(&backup_path)
+        .await
+        .expect("Authenticated backup should succeed");
+
+    let metadata_result = DatabaseOps::get_backup_metadata(&backup_path).await;
+    assert!(
+        metadata_result.is_err(),
+        "get_backup_metadata should fail without credentials on auth-enabled backup"
+    );
+    let err = format!("{}", metadata_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+
+    let authed_metadata = DatabaseOps::get_backup_metadata_with_credentials(
+        &backup_path,
+        Some(("admin", "admin_pass")),
+    )
+    .await
+    .expect("Credentialed metadata access should succeed");
+    assert!(
+        authed_metadata.total_files > 0,
+        "Expected backup metadata with non-zero files, got: {:?}",
+        authed_metadata
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_open_without_credentials_denies_delete_operation() {
     setup_logging();
     let db_path = test_db_path("test_db_delete_auth_required");
