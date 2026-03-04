@@ -782,6 +782,12 @@ impl DatabaseOps {
 
     /// Get the base path of the database
     pub fn base_path(&self) -> &std::path::Path {
+        if self
+            .check_permission(&crate::security::Permission::Read)
+            .is_err()
+        {
+            return std::path::Path::new("");
+        }
         &self.base_path
     }
 

@@ -308,3 +308,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for base_path metadata read (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_hides_base_path` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `base_path()` returned real filesystem path).
+2. Approach: Enforce read-permission gating in `DatabaseOps::base_path()` so unauthenticated sessions receive a redacted path.
+3. Green: Updated `DatabaseOps::base_path()` to return `Path::new(\"\")` when `check_permission(Permission::Read)` fails.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

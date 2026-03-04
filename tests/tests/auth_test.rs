@@ -1269,6 +1269,47 @@ async fn test_open_without_credentials_hides_schema() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_hides_base_path() {
+    setup_logging();
+    let db_path = test_db_path("test_db_base_path_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Hides base_path ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    assert_eq!(
+        authed_db.base_path(),
+        std::path::Path::new(&db_path),
+        "Authenticated caller should read real base path"
+    );
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    assert_eq!(
+        opened.base_path(),
+        std::path::Path::new(""),
+        "Unauthenticated caller should not see real base path"
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_open_without_credentials_hides_metrics() {
     setup_logging();
     let db_path = test_db_path("test_db_metrics_read_auth_required");
