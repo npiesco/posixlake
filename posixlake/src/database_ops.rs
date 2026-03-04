@@ -2331,6 +2331,34 @@ impl DatabaseOps {
         restore_path: P,
         target_txn_id: u64,
     ) -> Result<()> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Restore,
+            None,
+        )?;
+        Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
+    }
+
+    /// Restore database to a specific transaction with credentials for auth-enabled backups
+    pub async fn restore_to_transaction_with_credentials<P: AsRef<Path>>(
+        backup_path: P,
+        restore_path: P,
+        target_txn_id: u64,
+        credentials: Option<(&str, &str)>,
+    ) -> Result<()> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Restore,
+            credentials,
+        )?;
+        Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
+    }
+
+    async fn restore_to_transaction_impl<P: AsRef<Path>>(
+        backup_path: P,
+        restore_path: P,
+        target_txn_id: u64,
+    ) -> Result<()> {
         let backup_path_buf = backup_path.as_ref().to_path_buf();
         let restore_path_buf = restore_path.as_ref().to_path_buf();
 

@@ -1538,6 +1538,87 @@ async fn test_verify_backup_without_credentials_denies_auth_enabled_backup() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_restore_to_transaction_without_credentials_denies_auth_enabled_backup() {
+    setup_logging();
+    let db_path = test_db_path("test_db_restore_to_txn_auth_required");
+    let backup_path = test_db_path("test_restore_to_txn_backup_auth_required");
+    let restore_path = test_db_path("test_restore_to_txn_output_auth_required");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
+
+    println!(
+        "\n=== Test: restore_to_transaction without credentials denies auth-enabled backup ==="
+    );
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+    authed_db
+        .backup(&backup_path)
+        .await
+        .expect("Authenticated backup should succeed");
+
+    let target_txn_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("System time before UNIX_EPOCH")
+        .as_millis() as u64;
+    let restore_result =
+        DatabaseOps::restore_to_transaction(&backup_path, &restore_path, target_txn_id).await;
+    assert!(
+        restore_result.is_err(),
+        "restore_to_transaction should fail without credentials on auth-enabled backup"
+    );
+    let err = format!("{}", restore_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+
+    let restore_with_creds = DatabaseOps::restore_to_transaction_with_credentials(
+        &backup_path,
+        &restore_path,
+        target_txn_id,
+        Some(("admin", "admin_pass")),
+    )
+    .await;
+    assert!(
+        restore_with_creds.is_ok(),
+        "Credentialed restore_to_transaction should succeed, got: {:?}",
+        restore_with_creds
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_open_without_credentials_denies_delete_operation() {
     setup_logging();
     let db_path = test_db_path("test_db_delete_auth_required");
