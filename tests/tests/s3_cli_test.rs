@@ -5,27 +5,60 @@
 
 use std::process::Command;
 
+fn compose_file_path() -> std::path::PathBuf {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tests crate should have workspace root parent")
+        .join("docker-compose.yml");
+    assert!(path.exists(), "docker-compose.yml not found at {:?}", path);
+    path
+}
+
 fn posixlake_binary() -> std::path::PathBuf {
     if let Some(path) = option_env!("CARGO_BIN_EXE_posixlake_cli") {
-        return std::path::PathBuf::from(path);
+        let env_path = std::path::PathBuf::from(path);
+        if env_path.exists() {
+            return env_path;
+        }
     }
-    let mut path = std::env::current_exe().unwrap();
-    path.pop(); // Remove test binary name
-    path.pop(); // Remove deps
-    path.push("posixlake-cli");
-    if cfg!(windows) && !path.exists() {
-        let mut exe_path = path.clone();
+
+    let mut debug_path = std::env::current_exe().unwrap();
+    debug_path.pop(); // Remove test binary name
+    debug_path.pop(); // Remove deps
+    debug_path.push("posixlake-cli");
+    if cfg!(windows) && !debug_path.exists() {
+        let mut exe_path = debug_path.clone();
         exe_path.set_extension("exe");
         if exe_path.exists() {
             return exe_path;
         }
     }
+    if debug_path.exists() {
+        return debug_path;
+    }
+
+    let mut release_path = std::env::current_exe().unwrap();
+    release_path.pop(); // Remove test binary name
+    release_path.pop(); // Remove deps
+    release_path.pop(); // Remove debug or release
+    release_path.push("release");
+    release_path.push("posixlake-cli");
+    if cfg!(windows) && !release_path.exists() {
+        let mut exe_path = release_path.clone();
+        exe_path.set_extension("exe");
+        if exe_path.exists() {
+            return exe_path;
+        }
+    }
+
     assert!(
-        path.exists(),
-        "posixlake-cli binary not found at {:?}. Build it first or set CARGO_BIN_EXE_posixlake_cli.",
-        path
+        release_path.exists(),
+        "posixlake-cli binary not found. Tried debug path {:?} and release path {:?}. \
+Build it first or set CARGO_BIN_EXE_posixlake_cli.",
+        debug_path,
+        release_path
     );
-    path
+    release_path
 }
 
 fn has_native_engine() -> bool {
@@ -39,6 +72,54 @@ fn has_native_engine() -> bool {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+}
+
+fn selected_engine() -> Option<&'static str> {
+    if Command::new("podman")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some("podman");
+    }
+    if Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some("docker");
+    }
+    None
+}
+
+fn has_required_s3_images(engine: &str) -> bool {
+    let check_cmd = match engine {
+        "podman" => (
+            "podman",
+            vec!["image", "exists", "minio/minio:latest"],
+            vec!["image", "exists", "minio/mc:latest"],
+        ),
+        "docker" => (
+            "docker",
+            vec!["image", "inspect", "minio/minio:latest"],
+            vec!["image", "inspect", "minio/mc:latest"],
+        ),
+        _ => return false,
+    };
+
+    let minio = Command::new(check_cmd.0)
+        .args(check_cmd.1)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let mc = Command::new(check_cmd.0)
+        .args(check_cmd.2)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    minio && mc
 }
 
 #[cfg(target_os = "windows")]
@@ -69,27 +150,40 @@ fn test_cli_s3_start_stop_compose() {
         eprintln!("Skipping: no container engine found (native PATH or WSL)");
         return;
     }
+    let Some(engine) = selected_engine() else {
+        eprintln!("Skipping: no native engine selected");
+        return;
+    };
+    if !has_required_s3_images(engine) {
+        eprintln!(
+            "Skipping: required local images missing for {} (minio/minio:latest, minio/mc:latest)",
+            engine
+        );
+        return;
+    }
+
+    let compose_file = compose_file_path();
 
     let _ = Command::new(posixlake_binary())
         .arg("s3")
         .arg("stop")
         .arg("--engine")
-        .arg("podman")
+        .arg(engine)
         .arg("--mode")
         .arg("compose")
         .arg("--compose-file")
-        .arg("docker-compose.yml")
+        .arg(&compose_file)
         .output();
 
     let output = Command::new(posixlake_binary())
         .arg("s3")
         .arg("start")
         .arg("--engine")
-        .arg("podman")
+        .arg(engine)
         .arg("--mode")
         .arg("compose")
         .arg("--compose-file")
-        .arg("docker-compose.yml")
+        .arg(&compose_file)
         .output()
         .expect("Failed to execute posixlake s3 start");
 
@@ -103,11 +197,11 @@ fn test_cli_s3_start_stop_compose() {
         .arg("s3")
         .arg("stop")
         .arg("--engine")
-        .arg("podman")
+        .arg(engine)
         .arg("--mode")
         .arg("compose")
         .arg("--compose-file")
-        .arg("docker-compose.yml")
+        .arg(&compose_file)
         .output()
         .expect("Failed to execute posixlake s3 stop");
 
@@ -125,16 +219,29 @@ fn test_cli_s3_test_auto_start() {
         eprintln!("Skipping: no container engine found (native PATH or WSL)");
         return;
     }
+    let Some(engine) = selected_engine() else {
+        eprintln!("Skipping: no native engine selected");
+        return;
+    };
+    if !has_required_s3_images(engine) {
+        eprintln!(
+            "Skipping: required local images missing for {} (minio/minio:latest, minio/mc:latest)",
+            engine
+        );
+        return;
+    }
+
+    let compose_file = compose_file_path();
 
     let _ = Command::new(posixlake_binary())
         .arg("s3")
         .arg("stop")
         .arg("--engine")
-        .arg("podman")
+        .arg(engine)
         .arg("--mode")
         .arg("compose")
         .arg("--compose-file")
-        .arg("docker-compose.yml")
+        .arg(&compose_file)
         .output();
 
     let output = Command::new(posixlake_binary())

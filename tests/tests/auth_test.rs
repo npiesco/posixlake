@@ -406,3 +406,237 @@ async fn test_secure_password_hashing() {
 
     cleanup_test_db(&db_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_auth_enabled_database() {
+    setup_logging();
+    let db_path = test_db_path("test_db_open_without_credentials");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies Auth-Enabled DB ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    // Open using the non-credentialed path. This must not bypass auth checks.
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+        ],
+    )
+    .unwrap();
+
+    let insert_result = opened.insert(batch).await;
+    assert!(
+        insert_result.is_err(),
+        "Insert should fail without authenticated context"
+    );
+    let insert_err = format!("{}", insert_result.unwrap_err());
+    assert!(
+        insert_err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        insert_err
+    );
+
+    let query_result = opened.query("SELECT COUNT(*) FROM data").await;
+    assert!(
+        query_result.is_err(),
+        "Query should fail without authenticated context"
+    );
+    let query_err = format!("{}", query_result.unwrap_err());
+    assert!(
+        query_err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        query_err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_audit_log_access() {
+    setup_logging();
+    let db_path = test_db_path("test_db_audit_log_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies Audit Log Access ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    // Generate at least one audited operation as an authenticated user.
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+        ],
+    )
+    .unwrap();
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+
+    // Open using non-credentialed path; audit log access must be denied.
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let audit_result = opened.get_audit_log().await;
+    assert!(
+        audit_result.is_err(),
+        "Audit log read should fail without authenticated context"
+    );
+    let audit_err = format!("{}", audit_result.unwrap_err());
+    assert!(
+        audit_err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        audit_err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_parquet_listing() {
+    setup_logging();
+    let db_path = test_db_path("test_db_parquet_list_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies Parquet Listing ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+        ],
+    )
+    .unwrap();
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let list_result = opened.list_parquet_files();
+    assert!(
+        list_result.is_err(),
+        "Parquet listing should fail without authenticated context"
+    );
+    let err = format!("{}", list_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_backup() {
+    setup_logging();
+    let db_path = test_db_path("test_db_backup_auth_required");
+    let backup_path = test_db_path("test_db_backup_auth_required_output");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+
+    println!("\n=== Test: Open Without Credentials Denies Backup ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+        ],
+    )
+    .unwrap();
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let backup_result = opened.backup(&backup_path).await;
+    assert!(
+        backup_result.is_err(),
+        "Backup should fail without authenticated context"
+    );
+    let err = format!("{}", backup_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+    assert!(
+        !std::path::Path::new(&backup_path).exists(),
+        "Backup directory should not be created for unauthenticated backup attempts"
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+}

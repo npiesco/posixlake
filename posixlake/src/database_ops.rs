@@ -303,6 +303,21 @@ impl DatabaseOps {
             }
         };
 
+        // If auth metadata exists, enable security components but do not set
+        // an authenticated context. This makes unauthenticated opens fail closed.
+        let users_path = base_path.join("_metadata").join("users.json");
+        let (user_store, audit_logger, role_manager) = if users_path.exists() {
+            let loaded_user_store = crate::security::UserStore::load(&users_path)?;
+            let audit_path = base_path.join("_metadata").join("audit.json");
+            (
+                Some(Arc::new(tokio::sync::Mutex::new(loaded_user_store))),
+                Some(Arc::new(crate::security::AuditLogger::new(audit_path)?)),
+                Some(Arc::new(crate::security::RoleManager::new())),
+            )
+        } else {
+            (None, None, None)
+        };
+
         Ok(Self {
             base_path,
             s3_url: None,
@@ -311,9 +326,9 @@ impl DatabaseOps {
             metrics,
             data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
             auth_context: None,
-            user_store: None,
-            audit_logger: None,
-            role_manager: None,
+            user_store,
+            audit_logger,
+            role_manager,
             batch_buffer,
             primary_key: std::sync::Mutex::new(primary_key),
         })
@@ -735,6 +750,7 @@ impl DatabaseOps {
 
     /// Get audit log
     pub async fn get_audit_log(&self) -> Result<Vec<crate::security::AuditEntry>> {
+        self.check_permission(&crate::security::Permission::Admin)?;
         if let Some(logger) = &self.audit_logger {
             Ok(logger.get_entries().await)
         } else {
@@ -771,6 +787,7 @@ impl DatabaseOps {
 
     /// List Parquet data files in the database directory
     pub fn list_parquet_files(&self) -> Result<Vec<String>> {
+        self.check_permission(&crate::security::Permission::Read)?;
         let mut files = Vec::new();
         let entries = std::fs::read_dir(&self.base_path)?;
         for entry in entries.flatten() {
@@ -2055,6 +2072,7 @@ impl DatabaseOps {
     /// Create a full backup of the database
     /// Create a full backup of the database
     pub async fn backup<P: AsRef<Path>>(&self, backup_path: P) -> Result<()> {
+        self.check_permission(&crate::security::Permission::Read)?;
         let backup_path = backup_path.as_ref();
         info!("Creating backup at: {}", backup_path.display());
 

@@ -11,11 +11,50 @@ use std::process::Command;
 use tempfile::TempDir;
 
 fn posixlake_binary() -> std::path::PathBuf {
-    let mut path = std::env::current_exe().unwrap();
-    path.pop(); // Remove test binary name
-    path.pop(); // Remove deps
-    path.push("posixlake-cli");
-    path
+    if let Some(path) = option_env!("CARGO_BIN_EXE_posixlake_cli") {
+        let env_path = std::path::PathBuf::from(path);
+        if env_path.exists() {
+            return env_path;
+        }
+    }
+
+    let mut debug_path = std::env::current_exe().unwrap();
+    debug_path.pop(); // Remove test binary name
+    debug_path.pop(); // Remove deps
+    debug_path.push("posixlake-cli");
+    if cfg!(windows) {
+        let mut exe = debug_path.clone();
+        exe.set_extension("exe");
+        if exe.exists() {
+            return exe;
+        }
+    }
+    if debug_path.exists() {
+        return debug_path;
+    }
+
+    let mut release_path = std::env::current_exe().unwrap();
+    release_path.pop(); // Remove test binary name
+    release_path.pop(); // Remove deps
+    release_path.pop(); // Remove debug or release
+    release_path.push("release");
+    release_path.push("posixlake-cli");
+    if cfg!(windows) {
+        let mut exe = release_path.clone();
+        exe.set_extension("exe");
+        if exe.exists() {
+            return exe;
+        }
+    }
+    if release_path.exists() {
+        return release_path;
+    }
+
+    panic!(
+        "posixlake-cli binary not found. Tried debug path {:?} and release path {:?}. \
+Set CARGO_BIN_EXE_posixlake_cli or build with `cargo build -p posixlake --bin posixlake-cli`.",
+        debug_path, release_path
+    );
 }
 
 /// Test: posixlake create <DB_PATH> --schema "id:Int64,name:String"
