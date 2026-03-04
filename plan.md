@@ -263,3 +263,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for delete operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_delete_operation` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `delete()` returned Delta usage guidance instead of auth denial).
+2. Approach: Enforce write-permission gate in `DatabaseOps::delete()` so unauthenticated sessions fail with `Authentication required` before any behavior is exposed.
+3. Green: Added permission check in `DatabaseOps::delete()`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
