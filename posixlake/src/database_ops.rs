@@ -2075,9 +2075,11 @@ impl DatabaseOps {
     }
 
     /// Reset data skipping statistics
-    pub async fn reset_data_skipping_stats(&self) {
+    pub async fn reset_data_skipping_stats(&self) -> Result<()> {
+        self.check_permission(&crate::security::Permission::Write)?;
         let mut stats = self.data_skipping_stats.lock().await;
         *stats = DataSkippingStats::default();
+        Ok(())
     }
 
     /// Get database health status

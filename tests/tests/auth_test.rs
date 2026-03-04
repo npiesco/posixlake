@@ -1007,7 +1007,7 @@ async fn test_open_without_credentials_denies_incremental_backup() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_open_without_credentials_cannot_reset_data_skipping_stats() {
+async fn test_open_without_credentials_denies_reset_data_skipping_stats() {
     setup_logging();
     let db_path = test_db_path("test_db_reset_data_skipping_stats_auth_required");
     cleanup_test_db(&db_path);
@@ -1060,16 +1060,16 @@ async fn test_open_without_credentials_cannot_reset_data_skipping_stats() {
     let opened = DatabaseOps::open(&db_path)
         .await
         .expect("Open should succeed but remain unauthenticated");
-    opened.reset_data_skipping_stats().await;
-
-    let after = authed_db
-        .get_data_skipping_stats()
-        .await
-        .expect("Admin should read data skipping stats after unauth reset attempt");
+    let reset_result = opened.reset_data_skipping_stats().await;
     assert!(
-        after.total_files > 0 || after.files_read > 0,
-        "Unauthenticated reset_data_skipping_stats should not mutate state; got: {:?}",
-        after
+        reset_result.is_err(),
+        "reset_data_skipping_stats should fail without authenticated context"
+    );
+    let err = format!("{}", reset_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
     );
 
     cleanup_test_db(&db_path);
