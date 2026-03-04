@@ -1608,7 +1608,7 @@ impl DatabaseOps {
     /// Delete a specific file from Delta Lake
     /// Note: Delta Lake handles deletions natively through its transaction log
     pub async fn delete(&self, _file_path: &str) -> Result<u64> {
-        self.check_permission(&crate::security::Permission::Write)?;
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         // Track delete metrics
         self.metrics.total_deletes.fetch_add(1, Ordering::Relaxed);
