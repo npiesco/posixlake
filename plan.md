@@ -326,3 +326,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for backup verification read (Phase 1)
+1. Red: Added integration test `test_verify_backup_without_credentials_denies_auth_enabled_backup` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `verify_backup()` succeeded on auth-enabled backup).
+2. Approach: Reuse backup authorization checks for verification paths; require credentials when backup includes auth metadata and permit credentialed verification flow.
+3. Green: Added backup authorization gate in `DatabaseOps::verify_backup()`, plus `verify_backup_with_credentials()` for credentialed access.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

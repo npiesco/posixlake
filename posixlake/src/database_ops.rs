@@ -2303,6 +2303,24 @@ impl DatabaseOps {
 
     /// Verify backup integrity
     pub async fn verify_backup<P: AsRef<Path>>(backup_path: P) -> Result<BackupVerificationReport> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Backup,
+            None,
+        )?;
+        crate::metadata::backup::verify_backup(backup_path)
+    }
+
+    /// Verify backup integrity with credentials for auth-enabled backups
+    pub async fn verify_backup_with_credentials<P: AsRef<Path>>(
+        backup_path: P,
+        credentials: Option<(&str, &str)>,
+    ) -> Result<BackupVerificationReport> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Backup,
+            credentials,
+        )?;
         crate::metadata::backup::verify_backup(backup_path)
     }
 
