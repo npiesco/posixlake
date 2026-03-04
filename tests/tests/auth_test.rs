@@ -645,6 +645,117 @@ async fn test_open_without_credentials_denies_backup() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_read_role_cannot_create_backup() {
+    setup_logging();
+    let db_path = test_db_path("test_db_backup_permission_required");
+    let backup_path = test_db_path("test_backup_permission_required");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+
+    println!("\n=== Test: Read role cannot create backup ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("reader", "reader_pass", &["read"])
+        .await
+        .expect("Failed to create read-only user");
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    admin_db.insert(batch).await.expect("Insert should succeed");
+
+    let reader_db = DatabaseOps::open_with_credentials(&db_path, Some(("reader", "reader_pass")))
+        .await
+        .expect("Failed to open with reader credentials");
+    let backup_result = reader_db.backup(&backup_path).await;
+    assert!(
+        backup_result.is_err(),
+        "Read-only user should not be allowed to create backup"
+    );
+    let err = format!("{}", backup_result.unwrap_err());
+    assert!(
+        err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_write_role_cannot_delete_rows_without_delete_permission() {
+    setup_logging();
+    let db_path = test_db_path("test_db_delete_permission_boundary");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Write role cannot delete rows without delete permission ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create write user");
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["a", "b", "c"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    admin_db.insert(batch).await.expect("Insert should succeed");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Failed to open with writer credentials");
+    let delete_result = writer_db.delete_rows_where("id = 1").await;
+    assert!(
+        delete_result.is_err(),
+        "Write-only user should not be allowed to delete rows"
+    );
+    let err = format!("{}", delete_result.unwrap_err());
+    assert!(
+        err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_open_without_credentials_denies_query_file() {
     setup_logging();
     let db_path = test_db_path("test_db_query_file_auth_required");

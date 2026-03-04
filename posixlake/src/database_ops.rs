@@ -1627,8 +1627,8 @@ impl DatabaseOps {
     pub async fn delete_rows_where(&self, where_clause: &str) -> Result<usize> {
         info!("Deleting rows where: {}", where_clause);
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        // Check delete permission
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         let result = self.delete_rows_where_inner(where_clause).await;
         match &result {
@@ -2129,7 +2129,7 @@ impl DatabaseOps {
     /// Create a full backup of the database
     /// Create a full backup of the database
     pub async fn backup<P: AsRef<Path>>(&self, backup_path: P) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Read)?;
+        self.check_permission(&crate::security::Permission::Backup)?;
         let backup_path = backup_path.as_ref();
         info!("Creating backup at: {}", backup_path.display());
 
@@ -2226,7 +2226,7 @@ impl DatabaseOps {
         base_backup_path: P,
         incremental_path: P,
     ) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Read)?;
+        self.check_permission(&crate::security::Permission::Backup)?;
         let base_backup_path = base_backup_path.as_ref();
         let incremental_path = incremental_path.as_ref();
         info!(

@@ -371,3 +371,21 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for backup permission boundary (Phase 1)
+1. Red: Added integration test `test_read_role_cannot_create_backup` in `tests/tests/auth_test.rs`; validated failure (read-only user could run `backup()`).
+2. Approach: Enforce `Permission::Backup` for backup operations instead of `Permission::Read`.
+3. Green: Updated permission checks in `DatabaseOps::backup()` and `DatabaseOps::backup_incremental()` from `Read` to `Backup`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for delete_rows_where permission boundary (Phase 1)
+1. Red: Added integration test `test_write_role_cannot_delete_rows_without_delete_permission` in `tests/tests/auth_test.rs`; validated failure (write-only user could run `delete_rows_where()`).
+2. Approach: Enforce `Permission::Delete` for row-level delete operations while preserving existing write permissions for insert/update paths.
+3. Green: Updated `DatabaseOps::delete_rows_where()` to require `Permission::Delete`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
