@@ -2190,6 +2190,29 @@ impl DatabaseOps {
 
     /// Restore database from backup
     pub async fn restore<P: AsRef<Path>>(backup_path: P, restore_path: P) -> Result<()> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Restore,
+            None,
+        )?;
+        Self::restore_impl(backup_path, restore_path).await
+    }
+
+    /// Restore database from backup with credentials for auth-enabled backups
+    pub async fn restore_with_credentials<P: AsRef<Path>>(
+        backup_path: P,
+        restore_path: P,
+        credentials: Option<(&str, &str)>,
+    ) -> Result<()> {
+        Self::authorize_backup_access(
+            backup_path.as_ref(),
+            crate::security::Permission::Restore,
+            credentials,
+        )?;
+        Self::restore_impl(backup_path, restore_path).await
+    }
+
+    async fn restore_impl<P: AsRef<Path>>(backup_path: P, restore_path: P) -> Result<()> {
         info!(
             "Restoring database from {} to {}",
             backup_path.as_ref().display(),
