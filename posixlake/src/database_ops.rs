@@ -804,6 +804,12 @@ impl DatabaseOps {
 
     /// Get the primary key column name, if set
     pub fn primary_key(&self) -> Option<String> {
+        if self
+            .check_permission(&crate::security::Permission::Read)
+            .is_err()
+        {
+            return None;
+        }
         self.primary_key.lock().unwrap().clone()
     }
 

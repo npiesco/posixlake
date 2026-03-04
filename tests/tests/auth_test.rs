@@ -795,3 +795,47 @@ async fn test_open_without_credentials_denies_set_primary_key() {
 
     cleanup_test_db(&db_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_hides_primary_key() {
+    setup_logging();
+    let db_path = test_db_path("test_db_primary_key_read_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Hides primary_key ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    authed_db
+        .set_primary_key("id")
+        .expect("Admin should be able to set primary key");
+    assert_eq!(
+        authed_db.primary_key(),
+        Some("id".to_string()),
+        "Admin should be able to read configured primary key"
+    );
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    assert_eq!(
+        opened.primary_key(),
+        None,
+        "Unauthenticated access should not reveal primary key metadata"
+    );
+
+    cleanup_test_db(&db_path);
+}

@@ -191,3 +191,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for primary_key metadata read (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_hides_primary_key` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `primary_key()` returned configured key).
+2. Approach: Enforce read-permission gating in `DatabaseOps::primary_key()` so unauthenticated sessions on auth-enabled DBs cannot read primary key metadata.
+3. Green: Added permission check in `DatabaseOps::primary_key()` returning `None` when access is unauthorized.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
