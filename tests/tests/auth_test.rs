@@ -1178,3 +1178,132 @@ async fn test_open_without_credentials_hides_health_status() {
 
     cleanup_test_db(&db_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_hides_schema() {
+    setup_logging();
+    let db_path = test_db_path("test_db_schema_read_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Hides schema ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    assert_eq!(
+        authed_db.schema().fields().len(),
+        2,
+        "Authenticated session should read full schema"
+    );
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    assert_eq!(
+        opened.schema().fields().len(),
+        0,
+        "Unauthenticated session should not read schema metadata"
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_hides_metrics() {
+    setup_logging();
+    let db_path = test_db_path("test_db_metrics_read_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Hides get_metrics ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec!["a", "b", "c"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+    authed_db
+        .query("SELECT * FROM data")
+        .await
+        .expect("Query should succeed");
+
+    let authed_metrics = authed_db.get_metrics().await;
+    assert!(
+        authed_metrics.total_inserts > 0 || authed_metrics.total_queries > 0,
+        "Authenticated metrics should include real counters, got: {:?}",
+        authed_metrics
+    );
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let metrics = opened.get_metrics().await;
+    assert_eq!(
+        metrics.total_queries, 0,
+        "Unauthenticated get_metrics should not expose query counters"
+    );
+    assert_eq!(
+        metrics.total_inserts, 0,
+        "Unauthenticated get_metrics should not expose insert counters"
+    );
+    assert_eq!(
+        metrics.total_deletes, 0,
+        "Unauthenticated get_metrics should not expose delete counters"
+    );
+    assert_eq!(
+        metrics.total_transactions, 0,
+        "Unauthenticated get_metrics should not expose transaction counters"
+    );
+    assert_eq!(
+        metrics.total_errors, 0,
+        "Unauthenticated get_metrics should not expose error counters"
+    );
+    assert_eq!(
+        metrics.avg_query_latency_ms, 0.0,
+        "Unauthenticated get_metrics should not expose latency stats"
+    );
+    assert_eq!(
+        metrics.max_query_latency_ms, 0.0,
+        "Unauthenticated get_metrics should not expose latency stats"
+    );
+    assert_eq!(
+        metrics.uptime_seconds, 0.0,
+        "Unauthenticated get_metrics should not expose uptime"
+    );
+
+    cleanup_test_db(&db_path);
+}

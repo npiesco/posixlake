@@ -855,6 +855,12 @@ impl DatabaseOps {
 
     /// Get the database schema
     pub fn schema(&self) -> SchemaRef {
+        if self
+            .check_permission(&crate::security::Permission::Read)
+            .is_err()
+        {
+            return Arc::new(Schema::empty());
+        }
         self.schema.clone()
     }
 
@@ -2019,6 +2025,22 @@ impl DatabaseOps {
 
     /// Get current database metrics for monitoring and observability
     pub async fn get_metrics(&self) -> DatabaseMetrics {
+        if self
+            .check_permission(&crate::security::Permission::Read)
+            .is_err()
+        {
+            return DatabaseMetrics {
+                total_queries: 0,
+                total_inserts: 0,
+                total_deletes: 0,
+                total_transactions: 0,
+                total_errors: 0,
+                avg_query_latency_ms: 0.0,
+                max_query_latency_ms: 0.0,
+                uptime_seconds: 0.0,
+            };
+        }
+
         let latencies = self.metrics.query_latencies.lock().await;
         let avg_latency = if latencies.is_empty() {
             0.0

@@ -245,3 +245,21 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for schema metadata read (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_hides_schema` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `schema()` returned full schema).
+2. Approach: Enforce read-permission gate in `DatabaseOps::schema()` so unauthenticated sessions return an empty schema.
+3. Green: Added permission check in `DatabaseOps::schema()` returning `Schema::empty()` when unauthorized.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for get_metrics observability read (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_hides_metrics` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `get_metrics()` leaked uptime).
+2. Approach: Enforce read-permission gate in `DatabaseOps::get_metrics()` so unauthenticated sessions receive redacted metrics.
+3. Green: Added permission check in `DatabaseOps::get_metrics()` returning zeroed metrics when unauthorized.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
