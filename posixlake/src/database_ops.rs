@@ -936,6 +936,8 @@ impl DatabaseOps {
     /// Forces any buffered writes to be committed to Delta Lake.
     /// Call this before reading data to ensure consistency, or at shutdown.
     pub async fn flush_write_buffer(&self) -> Result<()> {
+        self.check_permission(&crate::security::Permission::Write)?;
+
         if self.batch_buffer.is_empty().await {
             info!("No buffered data to flush");
             return Ok(());

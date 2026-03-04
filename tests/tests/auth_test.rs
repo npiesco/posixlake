@@ -1728,3 +1728,41 @@ async fn test_open_without_credentials_denies_delete_operation() {
 
     cleanup_test_db(&db_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_flush_write_buffer() {
+    setup_logging();
+    let db_path = test_db_path("test_db_flush_write_buffer_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies flush_write_buffer ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let flush_result = opened.flush_write_buffer().await;
+    assert!(
+        flush_result.is_err(),
+        "flush_write_buffer should fail without authenticated context"
+    );
+    let err = format!("{}", flush_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}

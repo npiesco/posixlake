@@ -353,3 +353,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for flush_write_buffer operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_flush_write_buffer` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `flush_write_buffer()` succeeded when buffer was empty).
+2. Approach: Enforce write-permission check at `DatabaseOps::flush_write_buffer()` entry so unauthenticated sessions fail before any flush behavior.
+3. Green: Added `check_permission(Permission::Write)?` at start of `DatabaseOps::flush_write_buffer()`.
+4. Regression: Ran `cargo test --workspace`; first attempt failed due environment disk exhaustion (`/tmp` full, os error 28). Cleared generated `/tmp/posixlake_nfs_test_*.log` artifacts and re-ran successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
