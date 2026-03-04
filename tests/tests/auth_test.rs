@@ -757,3 +757,41 @@ async fn test_open_without_credentials_denies_get_delta_table() {
 
     cleanup_test_db(&db_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_set_primary_key() {
+    setup_logging();
+    let db_path = test_db_path("test_db_set_primary_key_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies set_primary_key ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let set_pk_result = opened.set_primary_key("id");
+    assert!(
+        set_pk_result.is_err(),
+        "set_primary_key should fail without authenticated context"
+    );
+    let err = format!("{}", set_pk_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}

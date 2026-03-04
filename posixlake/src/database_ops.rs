@@ -809,6 +809,8 @@ impl DatabaseOps {
 
     /// Set the primary key column name and persist to _metadata/schema.json
     pub fn set_primary_key(&self, column_name: &str) -> Result<()> {
+        self.check_permission(&crate::security::Permission::Write)?;
+
         // Verify the column exists in the schema
         if self.schema.field_with_name(column_name).is_err() {
             return Err(Error::InvalidOperation(format!(
