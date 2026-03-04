@@ -2088,7 +2088,7 @@ impl DatabaseOps {
         {
             return HealthStatus {
                 status: "unauthorized".to_string(),
-                uptime_seconds: self.metrics.start_time.elapsed().as_secs_f64(),
+                uptime_seconds: 0.0,
                 total_files: 0,
                 total_rows: 0,
                 total_size_bytes: 0,

@@ -272,3 +272,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for health_check uptime metadata (Phase 1)
+1. Red: Tightened integration test `test_open_without_credentials_hides_health_status` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `health_check()` leaked non-zero uptime).
+2. Approach: Redact unauthorized `health_check()` metadata completely by setting `uptime_seconds` to `0.0`.
+3. Green: Updated unauthorized branch in `DatabaseOps::health_check()` to return zero uptime.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

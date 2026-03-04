@@ -1175,6 +1175,10 @@ async fn test_open_without_credentials_hides_health_status() {
         health.status, "unauthorized",
         "Unauthenticated health_check should not reveal real health status"
     );
+    assert_eq!(
+        health.uptime_seconds, 0.0,
+        "Unauthenticated health_check should not expose uptime"
+    );
 
     cleanup_test_db(&db_path);
 }
