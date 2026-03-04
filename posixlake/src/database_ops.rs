@@ -963,6 +963,7 @@ impl DatabaseOps {
     ///
     /// Exposes the DeltaTable for version checking, history inspection, etc.
     pub async fn get_delta_table(&self) -> Result<deltalake::DeltaTable> {
+        self.check_permission(&crate::security::Permission::Read)?;
         use crate::storage::s3::parse_s3_url;
         use deltalake::{open_table, open_table_with_storage_options};
         use url::Url;

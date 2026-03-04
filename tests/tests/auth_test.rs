@@ -703,3 +703,57 @@ async fn test_open_without_credentials_denies_query_file() {
 
     cleanup_test_db(&db_path);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_get_delta_table() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_delta_table_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies get_delta_table ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let authed_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+        ],
+    )
+    .unwrap();
+    authed_db
+        .insert(batch)
+        .await
+        .expect("Insert should succeed");
+
+    let opened = DatabaseOps::open(&db_path)
+        .await
+        .expect("Open should succeed but remain unauthenticated");
+    let table_result = opened.get_delta_table().await;
+    assert!(
+        table_result.is_err(),
+        "get_delta_table should fail without authenticated context"
+    );
+    let err = format!("{}", table_result.unwrap_err());
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
