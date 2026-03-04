@@ -670,14 +670,9 @@ impl DatabaseOps {
 
         if auth_enabled {
             let user_store = crate::security::UserStore::load(&users_path)?;
-
-            // None credentials = system access (for administrative operations)
-            let auth_ctx = if let Some((username, password)) = credentials {
-                user_store.authenticate(username, password)?
-            } else {
-                // System access with admin privileges
-                crate::security::AuthContext::system()
-            };
+            let (username, password) =
+                credentials.ok_or_else(|| Error::Other("Authentication required".to_string()))?;
+            let auth_ctx = user_store.authenticate(username, password)?;
 
             db.auth_context = Some(Arc::new(auth_ctx));
 

@@ -362,3 +362,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for open_with_credentials(None) bypass (Phase 1)
+1. Red: Added integration test `test_open_with_none_credentials_denies_auth_enabled_database` in `tests/tests/auth_test.rs`; validated failure (`open_with_credentials(..., None)` incorrectly succeeded on auth-enabled DBs).
+2. Approach: Remove the `None => system admin` path in `DatabaseOps::open_with_credentials()` for auth-enabled databases and require explicit credentials; keep non-auth databases unchanged.
+3. Green: Updated `DatabaseOps::open_with_credentials()` to return `Authentication required` when auth is enabled and credentials are `None`. Updated `test_permission_inheritance_and_revocation` to use explicit admin credentials.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

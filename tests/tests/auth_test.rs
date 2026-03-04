@@ -290,6 +290,9 @@ async fn test_permission_inheritance_and_revocation() {
     let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
         .await
         .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
 
     // Create user with read and write permissions
     db.create_user("user1", "pass1", &["read", "write"])
@@ -322,9 +325,9 @@ async fn test_permission_inheritance_and_revocation() {
     println!("[OK] User can read and write");
 
     // Admin revokes write permission
-    let admin_db = DatabaseOps::open_with_credentials(&db_path, None)
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
         .await
-        .expect("Failed to open as system");
+        .expect("Admin auth failed");
     admin_db
         .revoke_role_from_user("user1", "write")
         .await
@@ -1763,6 +1766,42 @@ async fn test_open_without_credentials_denies_flush_write_buffer() {
         "Expected authentication error, got: {}",
         err
     );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_with_none_credentials_denies_auth_enabled_database() {
+    setup_logging();
+    let db_path = test_db_path("test_db_none_credentials_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: open_with_credentials(None) denied on auth-enabled DB ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let opened_with_none = DatabaseOps::open_with_credentials(&db_path, None).await;
+    match opened_with_none {
+        Ok(_) => panic!("open_with_credentials(None) should be denied on auth-enabled DB"),
+        Err(err) => {
+            let msg = format!("{}", err);
+            assert!(
+                msg.contains("Authentication required"),
+                "Expected authentication error, got: {}",
+                msg
+            );
+        }
+    }
 
     cleanup_test_db(&db_path);
 }
