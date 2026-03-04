@@ -2416,6 +2416,8 @@ impl DatabaseOps {
     /// # }
     /// ```
     pub async fn begin_transaction(self: &Arc<Self>) -> Result<Transaction> {
+        self.check_permission(&crate::security::Permission::Write)?;
+
         // Simple transaction ID allocation
         use std::sync::atomic::{AtomicU64, Ordering};
         static TXN_COUNTER: AtomicU64 = AtomicU64::new(1);

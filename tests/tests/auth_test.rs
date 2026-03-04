@@ -1142,6 +1142,47 @@ async fn test_open_without_credentials_denies_reset_metrics() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_without_credentials_denies_begin_transaction() {
+    setup_logging();
+    let db_path = test_db_path("test_db_begin_transaction_auth_required");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Open Without Credentials Denies begin_transaction ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let opened = Arc::new(
+        DatabaseOps::open(&db_path)
+            .await
+            .expect("Open should succeed but remain unauthenticated"),
+    );
+    let txn_result = opened.begin_transaction().await;
+    match txn_result {
+        Ok(_) => panic!("begin_transaction should fail without authenticated context"),
+        Err(e) => {
+            let err = format!("{}", e);
+            assert!(
+                err.contains("Authentication required"),
+                "Expected authentication error, got: {}",
+                err
+            );
+        }
+    }
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_open_without_credentials_hides_health_status() {
     setup_logging();
     let db_path = test_db_path("test_db_health_check_auth_required");

@@ -299,3 +299,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for begin_transaction operation (Phase 1)
+1. Red: Added integration test `test_open_without_credentials_denies_begin_transaction` in `tests/tests/auth_test.rs`; validated failure (unauthenticated `begin_transaction()` succeeded).
+2. Approach: Enforce write-permission checking at `DatabaseOps::begin_transaction()` entry so unauthenticated sessions fail before transaction allocation.
+3. Green: Added `check_permission(Permission::Write)?` at the start of `DatabaseOps::begin_transaction()`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
