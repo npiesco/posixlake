@@ -2115,10 +2115,12 @@ impl DatabaseOps {
     }
 
     /// Reset metrics counters (except uptime)
-    pub async fn reset_metrics(&self) {
+    pub async fn reset_metrics(&self) -> Result<()> {
+        self.check_permission(&crate::security::Permission::Write)?;
         self.metrics.reset();
         let mut latencies = self.metrics.query_latencies.lock().await;
         latencies.clear();
+        Ok(())
     }
 
     /// Create a full backup of the database

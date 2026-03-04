@@ -172,7 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 7. Reset metrics
     println!("\n7. Resetting metrics...");
-    db.reset_metrics().await;
+    db.reset_metrics().await?;
 
     let metrics_after_reset = db.get_metrics().await;
     println!("   Metrics After Reset:");

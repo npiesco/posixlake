@@ -290,3 +290,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for reset_metrics operation (Phase 1)
+1. Red: Strengthened integration test to `test_open_without_credentials_denies_reset_metrics` in `tests/tests/auth_test.rs`; validated failure (method returned `()` and could not deny unauthenticated calls).
+2. Approach: Change `DatabaseOps::reset_metrics()` to return `Result<()>` and enforce write-permission checking before mutating metrics.
+3. Green: Updated `DatabaseOps::reset_metrics()` signature to `Result<()>`, added `check_permission(Permission::Write)?`, and returned `Ok(())` after reset. Updated callsites in `tests/tests/monitoring_test.rs` and `posixlake/examples/monitoring.rs`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

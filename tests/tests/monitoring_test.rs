@@ -304,7 +304,7 @@ async fn test_metrics_reset() {
     assert!(before_reset.total_queries > 0);
 
     // Reset metrics
-    db.reset_metrics().await;
+    db.reset_metrics().await.unwrap();
 
     let after_reset = db.get_metrics().await;
     assert_eq!(after_reset.total_queries, 0, "Queries should be reset to 0");
