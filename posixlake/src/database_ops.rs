@@ -454,6 +454,18 @@ impl DatabaseOps {
 
         let metrics = Arc::new(MetricsTracker::new());
         let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
+        let users_path = base_path.join("_metadata").join("users.json");
+        let (user_store, audit_logger, role_manager) = if users_path.exists() {
+            let loaded_user_store = crate::security::UserStore::load(&users_path)?;
+            let audit_path = base_path.join("_metadata").join("audit.json");
+            (
+                Some(Arc::new(tokio::sync::Mutex::new(loaded_user_store))),
+                Some(Arc::new(crate::security::AuditLogger::new(audit_path)?)),
+                Some(Arc::new(crate::security::RoleManager::new())),
+            )
+        } else {
+            (None, None, None)
+        };
 
         Ok(Self {
             base_path,
@@ -463,9 +475,9 @@ impl DatabaseOps {
             metrics,
             data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
             auth_context: None,
-            user_store: None,
-            audit_logger: None,
-            role_manager: None,
+            user_store,
+            audit_logger,
+            role_manager,
             batch_buffer,
             primary_key: std::sync::Mutex::new(None),
         })
@@ -666,27 +678,33 @@ impl DatabaseOps {
         // Check if authentication is enabled
         let auth_enabled = users_path.exists();
 
+        if !auth_enabled {
+            return Err(Error::Other("Authentication not enabled".to_string()));
+        }
+
         let mut db = Self::open(&base_path).await?;
 
-        if auth_enabled {
-            let user_store = crate::security::UserStore::load(&users_path)?;
-            let (username, password) =
-                credentials.ok_or_else(|| Error::Other("Authentication required".to_string()))?;
-            let auth_ctx = user_store.authenticate(username, password)?;
+        let user_store = crate::security::UserStore::load(&users_path)?;
+        let (username, password) =
+            credentials.ok_or_else(|| Error::Other("Authentication required".to_string()))?;
+        let auth_ctx = user_store.authenticate(username, password)?;
 
-            db.auth_context = Some(Arc::new(auth_ctx));
+        db.auth_context = Some(Arc::new(auth_ctx));
 
-            let audit_path = base_path.join("_metadata").join("audit.json");
-            db.user_store = Some(Arc::new(tokio::sync::Mutex::new(user_store)));
-            db.audit_logger = Some(Arc::new(crate::security::AuditLogger::new(audit_path)?));
-            db.role_manager = Some(Arc::new(crate::security::RoleManager::new()));
-        }
+        let audit_path = base_path.join("_metadata").join("audit.json");
+        db.user_store = Some(Arc::new(tokio::sync::Mutex::new(user_store)));
+        db.audit_logger = Some(Arc::new(crate::security::AuditLogger::new(audit_path)?));
+        db.role_manager = Some(Arc::new(crate::security::RoleManager::new()));
 
         Ok(db)
     }
 
     /// Create a user (requires admin role)
     pub async fn create_user(&self, username: &str, password: &str, roles: &[&str]) -> Result<()> {
+        if self.user_store.is_none() {
+            return Err(Error::Other("Authentication not enabled".to_string()));
+        }
+
         self.check_permission(&crate::security::Permission::Admin)?;
 
         let result = async {
@@ -731,20 +749,52 @@ impl DatabaseOps {
 
     /// Revoke a role from a user (requires admin role)
     pub async fn revoke_role_from_user(&self, username: &str, role: &str) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Admin)?;
-
-        if let Some(user_store) = &self.user_store {
-            let mut store = user_store.lock().await;
-            store.revoke_role(username, role)?;
-            let users_path = self.base_path.join("_metadata").join("users.json");
-            store.save(users_path)?;
+        if self.user_store.is_none() {
+            return Err(Error::Other("Authentication not enabled".to_string()));
         }
 
-        Ok(())
+        self.check_permission(&crate::security::Permission::Admin)?;
+
+        let result = async {
+            if let Some(user_store) = &self.user_store {
+                let mut store = user_store.lock().await;
+                store.revoke_role(username, role)?;
+                let users_path = self.base_path.join("_metadata").join("users.json");
+                store.save(users_path)?;
+            }
+
+            Ok(())
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log(
+                    "REVOKE_ROLE",
+                    &format!("username={}, role={}", username, role),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log(
+                    "REVOKE_ROLE",
+                    &format!("username={}, role={}: {}", username, role, e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Get audit log
     pub async fn get_audit_log(&self) -> Result<Vec<crate::security::AuditEntry>> {
+        if self.user_store.is_none() || self.audit_logger.is_none() || self.role_manager.is_none() {
+            return Err(Error::Other("Authentication not enabled".to_string()));
+        }
+
         self.check_permission(&crate::security::Permission::Admin)?;
         if let Some(logger) = &self.audit_logger {
             Ok(logger.get_entries().await)
@@ -816,7 +866,7 @@ impl DatabaseOps {
 
     /// Set the primary key column name and persist to _metadata/schema.json
     pub fn set_primary_key(&self, column_name: &str) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Write)?;
+        self.check_permission(&crate::security::Permission::Admin)?;
 
         // Verify the column exists in the schema
         if self.schema.field_with_name(column_name).is_err() {
@@ -1922,8 +1972,8 @@ impl DatabaseOps {
             retention_hours
         );
 
-        // Check read permission for dry run
-        self.check_permission(&crate::security::Permission::Read)?;
+        // Match VACUUM permission boundary: preview requires delete permission too.
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         self.vacuum_inner_dry_run(retention_hours).await
     }
@@ -2079,7 +2129,7 @@ impl DatabaseOps {
 
     /// Reset data skipping statistics
     pub async fn reset_data_skipping_stats(&self) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Write)?;
+        self.check_permission(&crate::security::Permission::Admin)?;
         let mut stats = self.data_skipping_stats.lock().await;
         *stats = DataSkippingStats::default();
         Ok(())
@@ -2191,6 +2241,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Restore,
             None,
+            false,
         )?;
         Self::restore_impl(backup_path, restore_path).await
     }
@@ -2205,6 +2256,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Restore,
             credentials,
+            true,
         )?;
         Self::restore_impl(backup_path, restore_path).await
     }
@@ -2327,6 +2379,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Backup,
             None,
+            false,
         )?;
         crate::metadata::backup::verify_backup(backup_path)
     }
@@ -2340,6 +2393,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Backup,
             credentials,
+            true,
         )?;
         crate::metadata::backup::verify_backup(backup_path)
     }
@@ -2355,6 +2409,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Restore,
             None,
+            false,
         )?;
         Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
     }
@@ -2370,6 +2425,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Restore,
             credentials,
+            true,
         )?;
         Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
     }
@@ -2461,6 +2517,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Backup,
             None,
+            false,
         )?;
         crate::metadata::backup::get_backup_metadata(backup_path)
     }
@@ -2474,6 +2531,7 @@ impl DatabaseOps {
             backup_path.as_ref(),
             crate::security::Permission::Backup,
             credentials,
+            true,
         )?;
         crate::metadata::backup::get_backup_metadata(backup_path)
     }
@@ -2482,9 +2540,13 @@ impl DatabaseOps {
         backup_path: &Path,
         required_permission: crate::security::Permission,
         credentials: Option<(&str, &str)>,
+        strict_when_auth_disabled: bool,
     ) -> Result<()> {
         let users_path = backup_path.join("_metadata").join("users.json");
         if !users_path.exists() {
+            if strict_when_auth_disabled {
+                return Err(Error::Other("Authentication not enabled".to_string()));
+            }
             return Ok(());
         }
 
@@ -2533,7 +2595,7 @@ impl DatabaseOps {
     /// # }
     /// ```
     pub async fn begin_transaction(self: &Arc<Self>) -> Result<Transaction> {
-        self.check_permission(&crate::security::Permission::Write)?;
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         // Simple transaction ID allocation
         use std::sync::atomic::{AtomicU64, Ordering};

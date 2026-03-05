@@ -452,3 +452,122 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for reset_data_skipping_stats permission boundary (Phase 1)
+1. Red: Added integration test `test_write_role_cannot_reset_data_skipping_stats_without_admin_permission` in `tests/tests/auth_test.rs`; validated failure (write-only user could call `reset_data_skipping_stats()`).
+2. Approach: Enforce `Permission::Admin` for data-skipping stats reset operations so write-only roles cannot tamper with optimization/observability signal quality.
+3. Green: Updated `DatabaseOps::reset_data_skipping_stats()` to require `Permission::Admin` instead of `Permission::Write`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for set_primary_key permission boundary (Phase 1)
+1. Red: Added integration test `test_write_role_cannot_set_primary_key_without_admin_permission` in `tests/tests/auth_test.rs`; validated failure (write-only user could call `set_primary_key()`).
+2. Approach: Enforce `Permission::Admin` for primary-key metadata mutation so write-only roles cannot alter schema-level key configuration.
+3. Green: Updated `DatabaseOps::set_primary_key()` to require `Permission::Admin` instead of `Permission::Write`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for begin_transaction permission boundary (Phase 1)
+1. Red: Added integration test `test_write_role_cannot_begin_transaction_without_delete_permission` in `tests/tests/auth_test.rs`; validated failure (write-only user could call `begin_transaction()`).
+2. Approach: Enforce `Permission::Delete` at transaction entry because transaction scopes can include delete-capable operations.
+3. Green: Updated `DatabaseOps::begin_transaction()` to require `Permission::Delete` instead of `Permission::Write`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for open_with_s3 cached-auth metadata (Phase 1)
+1. Red: Added integration test `test_s3_open_without_credentials_denies_when_auth_metadata_exists` in `tests/tests/s3_test.rs`; validated failure when run against real MinIO (`MINIO_BUCKET=posixlake-test`) showing unauthenticated `open_with_s3()` allowed write.
+2. Approach: Mirror local-open fail-closed behavior in `DatabaseOps::open_with_s3()` by loading security components when cached `_metadata/users.json` exists while keeping `auth_context: None`.
+3. Green: Updated `DatabaseOps::open_with_s3()` to initialize `user_store`, `audit_logger`, and `role_manager` from cached auth metadata.
+4. Regression: Ran `cargo test --workspace`; encountered `s3_cli_test` compose-file CWD regression and fixed CLI compose path resolution in `start_local_minio_for_test()` using absolute workspace path discovery.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully (including `s3_cli_test` and `s3_test`).
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth-safe create_with_s3 cache handling (Phase 1)
+1. Red: Added integration test `test_s3_create_ignores_stale_local_auth_cache_metadata` in `tests/tests/s3_test.rs`; validated failure (`create_with_s3()` returned DB that denied insert with `Authentication required` due stale local cache `users.json`).
+2. Approach: Ensure fresh S3 create path does not inherit local cache auth metadata; auth bootstrap should occur on explicit auth-enabled opens, not on initial create.
+3. Green: Updated `DatabaseOps::create_with_s3()` to always initialize with auth disabled (`user_store`, `audit_logger`, `role_manager` set to `None`) regardless of local cache contents.
+4. Regression: Ran `cargo test --workspace` successfully (including S3 integration suites with MinIO).
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth-explicit admin API behavior when auth is disabled (Phase 1)
+1. Red: Added integration test `test_create_user_fails_when_auth_is_disabled` in `tests/tests/auth_test.rs`; validated failure (`create_user()` incorrectly returned success on non-auth DB).
+2. Approach: Make admin user-management APIs fail explicitly when auth is disabled to prevent silent no-op behavior.
+3. Green: Updated `DatabaseOps::create_user()` and `DatabaseOps::revoke_role_from_user()` to return `Authentication not enabled` when no `user_store` is configured.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth-explicit audit admin API behavior when auth is disabled (Phase 1)
+1. Red: Added integration test `test_get_audit_log_fails_when_auth_is_disabled` in `tests/tests/auth_test.rs`; validated failure (`get_audit_log()` incorrectly returned success on non-auth DB).
+2. Approach: Require authentication infrastructure for audit-log admin API; return explicit `Authentication not enabled` when auth is disabled.
+3. Green: Updated `DatabaseOps::get_audit_log()` to fail with `Authentication not enabled` when security components are not configured, while preserving admin permission checks for auth-enabled DBs.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth-explicit credentialed open behavior when auth is disabled (Phase 1)
+1. Red: Added integration test `test_open_with_credentials_fails_when_auth_is_disabled` in `tests/tests/auth_test.rs`; validated failure (`open_with_credentials()` incorrectly succeeded on non-auth DB).
+2. Approach: Fail fast in `open_with_credentials()` when `_metadata/users.json` is absent, returning explicit `Authentication not enabled`.
+3. Green: Updated `DatabaseOps::open_with_credentials()` to return `Authentication not enabled` when auth metadata is not configured; auth-enabled flow remains unchanged.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth-explicit credentialed backup metadata behavior when auth is disabled (Phase 1)
+1. Red: Added integration test `test_get_backup_metadata_with_credentials_fails_when_auth_is_disabled` in `tests/tests/auth_test.rs`; validated failure (`get_backup_metadata_with_credentials()` incorrectly succeeded on non-auth backups).
+2. Approach: Add strict auth-disabled handling for credentialed backup APIs while preserving existing non-credentialed behavior for non-auth backups.
+3. Green: Updated `authorize_backup_access(...)` with a strict mode and wired all `*_with_credentials` backup APIs to return `Authentication not enabled` when backup auth metadata is absent.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth-explicit credentialed backup verify behavior when auth is disabled (Phase 1)
+1. Red: Added integration test `test_verify_backup_with_credentials_fails_when_auth_is_disabled` in `tests/tests/auth_test.rs`; expected failure, but test was already green due prior shared `authorize_backup_access(...)` hardening.
+2. Green: No production code change required for this feature; behavior already enforced.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+
+### Feature: Auth-explicit credentialed backup restore behavior when auth is disabled (Phase 1)
+1. Red: Added integration test `test_restore_with_credentials_fails_when_auth_is_disabled` in `tests/tests/auth_test.rs`; expected failure, but test was already green due prior shared `authorize_backup_access(...)` hardening.
+2. Green: No production code change required for this feature; behavior already enforced.
+3. Regression: Ran targeted integration test successfully and full workspace regression successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+
+### Feature: Auth-explicit revoke-role admin API behavior when auth is disabled (Phase 1)
+1. Red: Added integration test `test_revoke_role_from_user_fails_when_auth_is_disabled` in `tests/tests/auth_test.rs`; expected failure, but test was already green because `revoke_role_from_user()` already returned `Authentication not enabled` when auth was disabled.
+2. Green: No production code change required for this feature; behavior already enforced.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth permission boundary for vacuum_dry_run (Phase 1)
+1. Red: Added integration test `test_read_role_cannot_vacuum_dry_run_without_delete_permission` in `tests/tests/auth_test.rs`; validated failure (`vacuum_dry_run()` incorrectly allowed read-only user).
+2. Approach: Align `vacuum_dry_run()` with `vacuum()` permission boundary by requiring `Permission::Delete`.
+3. Green: Updated `DatabaseOps::vacuum_dry_run()` to enforce `Permission::Delete` instead of `Permission::Read`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for role revocation (Phase 1)
+1. Red: Added integration test `test_revoke_role_operation_is_audited` in `tests/tests/auth_test.rs`; validated failure (`revoke_role_from_user()` did not emit `REVOKE_ROLE` audit entry).
+2. Approach: Add success/failure audit logging in `revoke_role_from_user()` with operation `REVOKE_ROLE` and details containing `username` and `role`.
+3. Green: Updated `DatabaseOps::revoke_role_from_user()` to emit audit entries for both success and failure paths.
+4. Regression: Ran `cargo test --workspace`; initial run failed due host `/tmp` exhaustion and MinIO storage pressure (HTTP 507) in integration environment. Cleaned stale `/tmp/posixlake_nfs_test_*.log` artifacts and reset `posixlake_minio-data` volume. Re-ran workspace regression successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

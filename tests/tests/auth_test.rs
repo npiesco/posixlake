@@ -358,6 +358,64 @@ async fn test_permission_inheritance_and_revocation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_revoke_role_operation_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_revoke_role_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Revoke role operation is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("user1", "pass1", &["read", "write"])
+        .await
+        .expect("Failed to create user");
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    admin_db
+        .revoke_role_from_user("user1", "write")
+        .await
+        .expect("Role revocation failed");
+
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let revoke_entry = audit_log
+        .iter()
+        .find(|entry| entry.operation == "REVOKE_ROLE")
+        .expect("No REVOKE_ROLE audit entry");
+    assert_eq!(revoke_entry.user, "admin");
+    assert!(
+        revoke_entry.success,
+        "REVOKE_ROLE audit entry should be success"
+    );
+    assert!(
+        revoke_entry.details.contains("username=user1"),
+        "Expected username in REVOKE_ROLE details, got: {}",
+        revoke_entry.details
+    );
+    assert!(
+        revoke_entry.details.contains("role=write"),
+        "Expected role in REVOKE_ROLE details, got: {}",
+        revoke_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_secure_password_hashing() {
     setup_logging();
     let db_path = test_db_path("test_db_password_hash");
@@ -864,6 +922,60 @@ async fn test_write_role_cannot_vacuum_without_delete_permission() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_read_role_cannot_vacuum_dry_run_without_delete_permission() {
+    setup_logging();
+    let db_path = test_db_path("test_db_vacuum_dry_run_permission_boundary");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Read role cannot vacuum_dry_run without delete permission ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema.clone(), true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("reader", "reader_pass", &["read"])
+        .await
+        .expect("Failed to create read user");
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Failed to open with admin credentials");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    admin_db.insert(batch).await.expect("Insert should succeed");
+
+    let reader_db = DatabaseOps::open_with_credentials(&db_path, Some(("reader", "reader_pass")))
+        .await
+        .expect("Failed to open with reader credentials");
+    let dry_run_result = reader_db.vacuum_dry_run(0).await;
+    assert!(
+        dry_run_result.is_err(),
+        "Read-only user should not be allowed to run vacuum_dry_run"
+    );
+    let err = format!("{}", dry_run_result.unwrap_err());
+    assert!(
+        err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_write_role_cannot_optimize_without_delete_permission() {
     setup_logging();
     let db_path = test_db_path("test_db_optimize_permission_boundary");
@@ -1171,6 +1283,140 @@ async fn test_write_role_cannot_reset_metrics_without_admin_permission() {
     );
     let err = match reset_result {
         Ok(_) => panic!("Write-only user should not be allowed to reset metrics"),
+        Err(e) => format!("{}", e),
+    };
+    assert!(
+        err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_write_role_cannot_reset_data_skipping_stats_without_admin_permission() {
+    setup_logging();
+    let db_path = test_db_path("test_db_reset_data_skipping_stats_permission_boundary");
+    cleanup_test_db(&db_path);
+
+    println!(
+        "\n=== Test: Write role cannot reset_data_skipping_stats without admin permission ==="
+    );
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create write user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Failed to open with writer credentials");
+    let reset_result = writer_db.reset_data_skipping_stats().await;
+    assert!(
+        reset_result.is_err(),
+        "Write-only user should not be allowed to reset data skipping stats"
+    );
+    let err = match reset_result {
+        Ok(_) => panic!("Write-only user should not be allowed to reset data skipping stats"),
+        Err(e) => format!("{}", e),
+    };
+    assert!(
+        err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_write_role_cannot_set_primary_key_without_admin_permission() {
+    setup_logging();
+    let db_path = test_db_path("test_db_set_primary_key_permission_boundary");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Write role cannot set_primary_key without admin permission ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create write user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Failed to open with writer credentials");
+    let set_pk_result = writer_db.set_primary_key("id");
+    assert!(
+        set_pk_result.is_err(),
+        "Write-only user should not be allowed to set primary key"
+    );
+    let err = match set_pk_result {
+        Ok(_) => panic!("Write-only user should not be allowed to set primary key"),
+        Err(e) => format!("{}", e),
+    };
+    assert!(
+        err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_write_role_cannot_begin_transaction_without_delete_permission() {
+    setup_logging();
+    let db_path = test_db_path("test_db_begin_transaction_permission_boundary");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Write role cannot begin_transaction without delete permission ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create auth-enabled database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create write user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Failed to open with writer credentials");
+    let begin_result = Arc::new(writer_db).begin_transaction().await;
+    assert!(
+        begin_result.is_err(),
+        "Write-only user should not be allowed to begin transaction"
+    );
+    let err = match begin_result {
+        Ok(_) => panic!("Write-only user should not be allowed to begin transaction"),
         Err(e) => format!("{}", e),
     };
     assert!(
@@ -2079,6 +2325,221 @@ async fn test_verify_backup_without_credentials_denies_auth_enabled_backup() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_backup_metadata_with_credentials_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_backup_metadata_with_creds_auth_disabled");
+    let backup_path = test_db_path("test_backup_metadata_with_creds_auth_disabled");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+
+    println!("\n=== Test: get_backup_metadata_with_credentials fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone())
+        .await
+        .expect("Failed to create database");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    db.insert(batch).await.expect("Insert should succeed");
+    db.backup(&backup_path)
+        .await
+        .expect("Backup should succeed on non-auth database");
+
+    let metadata_result = DatabaseOps::get_backup_metadata_with_credentials(
+        &backup_path,
+        Some(("admin", "admin_pass")),
+    )
+    .await;
+    assert!(
+        metadata_result.is_err(),
+        "get_backup_metadata_with_credentials should fail when authentication is disabled"
+    );
+    let err = format!("{}", metadata_result.unwrap_err());
+    assert!(
+        err.contains("Authentication not enabled"),
+        "Expected auth-disabled error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_verify_backup_with_credentials_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_verify_backup_with_creds_auth_disabled");
+    let backup_path = test_db_path("test_verify_backup_with_creds_auth_disabled");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+
+    println!("\n=== Test: verify_backup_with_credentials fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone())
+        .await
+        .expect("Failed to create database");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    db.insert(batch).await.expect("Insert should succeed");
+    db.backup(&backup_path)
+        .await
+        .expect("Backup should succeed on non-auth database");
+
+    let verify_result =
+        DatabaseOps::verify_backup_with_credentials(&backup_path, Some(("admin", "admin_pass")))
+            .await;
+    assert!(
+        verify_result.is_err(),
+        "verify_backup_with_credentials should fail when authentication is disabled"
+    );
+    let err = format!("{}", verify_result.unwrap_err());
+    assert!(
+        err.contains("Authentication not enabled"),
+        "Expected auth-disabled error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_restore_with_credentials_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_restore_with_creds_auth_disabled");
+    let backup_path = test_db_path("test_restore_with_creds_auth_disabled");
+    let restore_path = test_db_path("test_restore_with_creds_auth_disabled_output");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
+
+    println!("\n=== Test: restore_with_credentials fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone())
+        .await
+        .expect("Failed to create database");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    db.insert(batch).await.expect("Insert should succeed");
+    db.backup(&backup_path)
+        .await
+        .expect("Backup should succeed on non-auth database");
+
+    let restore_result = DatabaseOps::restore_with_credentials(
+        &backup_path,
+        &restore_path,
+        Some(("admin", "admin_pass")),
+    )
+    .await;
+    assert!(
+        restore_result.is_err(),
+        "restore_with_credentials should fail when authentication is disabled"
+    );
+    let err = format!("{}", restore_result.unwrap_err());
+    assert!(
+        err.contains("Authentication not enabled"),
+        "Expected auth-disabled error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_restore_to_transaction_with_credentials_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_restore_to_txn_with_creds_auth_disabled");
+    let backup_path = test_db_path("test_restore_to_txn_with_creds_auth_disabled");
+    let restore_path = test_db_path("test_restore_to_txn_with_creds_auth_disabled_output");
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
+
+    println!("\n=== Test: restore_to_transaction_with_credentials fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone())
+        .await
+        .expect("Failed to create database");
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        ],
+    )
+    .expect("Failed to create record batch");
+    db.insert(batch).await.expect("Insert should succeed");
+    db.backup(&backup_path)
+        .await
+        .expect("Backup should succeed on non-auth database");
+
+    let target_txn_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("System time before UNIX_EPOCH")
+        .as_millis() as u64;
+    let restore_result = DatabaseOps::restore_to_transaction_with_credentials(
+        &backup_path,
+        &restore_path,
+        target_txn_id,
+        Some(("admin", "admin_pass")),
+    )
+    .await;
+    assert!(
+        restore_result.is_err(),
+        "restore_to_transaction_with_credentials should fail when authentication is disabled"
+    );
+    let err = format!("{}", restore_result.unwrap_err());
+    assert!(
+        err.contains("Authentication not enabled"),
+        "Expected auth-disabled error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+    cleanup_test_db(&backup_path);
+    cleanup_test_db(&restore_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_restore_to_transaction_without_credentials_denies_auth_enabled_backup() {
     setup_logging();
     let db_path = test_db_path("test_db_restore_to_txn_auth_required");
@@ -2336,6 +2797,135 @@ async fn test_open_with_none_credentials_denies_auth_enabled_database() {
             assert!(
                 msg.contains("Authentication required"),
                 "Expected authentication error, got: {}",
+                msg
+            );
+        }
+    }
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_create_user_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_create_user_auth_disabled");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: create_user fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema)
+        .await
+        .expect("Failed to create database");
+
+    let create_result = db.create_user("admin", "admin_pass", &["admin"]).await;
+    assert!(
+        create_result.is_err(),
+        "create_user should fail when authentication is disabled"
+    );
+    let err = format!("{}", create_result.unwrap_err());
+    assert!(
+        err.contains("Authentication not enabled"),
+        "Expected auth-disabled error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_revoke_role_from_user_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_revoke_role_auth_disabled");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: revoke_role_from_user fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema)
+        .await
+        .expect("Failed to create database");
+
+    let revoke_result = db.revoke_role_from_user("admin", "admin").await;
+    assert!(
+        revoke_result.is_err(),
+        "revoke_role_from_user should fail when authentication is disabled"
+    );
+    let err = format!("{}", revoke_result.unwrap_err());
+    assert!(
+        err.contains("Authentication not enabled"),
+        "Expected auth-disabled error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_audit_log_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_audit_log_auth_disabled");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: get_audit_log fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema)
+        .await
+        .expect("Failed to create database");
+
+    let audit_result = db.get_audit_log().await;
+    assert!(
+        audit_result.is_err(),
+        "get_audit_log should fail when authentication is disabled"
+    );
+    let err = format!("{}", audit_result.unwrap_err());
+    assert!(
+        err.contains("Authentication not enabled"),
+        "Expected auth-disabled error, got: {}",
+        err
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_open_with_credentials_fails_when_auth_is_disabled() {
+    setup_logging();
+    let db_path = test_db_path("test_db_open_with_credentials_auth_disabled");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: open_with_credentials fails when auth is disabled ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    DatabaseOps::create(&db_path, schema)
+        .await
+        .expect("Failed to create database");
+
+    let opened = DatabaseOps::open_with_credentials(&db_path, Some(("any_user", "any_pass"))).await;
+    match opened {
+        Ok(_) => panic!("open_with_credentials should fail when authentication is disabled"),
+        Err(err) => {
+            let msg = format!("{}", err);
+            assert!(
+                msg.contains("Authentication not enabled"),
+                "Expected auth-disabled error, got: {}",
                 msg
             );
         }
