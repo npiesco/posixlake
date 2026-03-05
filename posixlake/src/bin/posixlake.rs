@@ -730,8 +730,53 @@ fn should_open_existing_db(err: &Error) -> bool {
         || (message.contains("already") && message.contains("exist"))
 }
 
+fn resolve_default_compose_file() -> PathBuf {
+    let cwd_compose = PathBuf::from("docker-compose.yml");
+    if cwd_compose.exists() {
+        return cwd_compose;
+    }
+
+    let from_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docker-compose.yml");
+    if from_manifest.exists() {
+        return from_manifest;
+    }
+    let from_manifest_parent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.join("docker-compose.yml"));
+    if let Some(path) = from_manifest_parent {
+        if path.exists() {
+            return path;
+        }
+    }
+
+    if let Ok(mut exe_path) = std::env::current_exe() {
+        // Try ../docker-compose.yml from target/{debug,release}/posixlake-cli
+        exe_path.pop();
+        let candidate_same_dir = exe_path.join("docker-compose.yml");
+        if candidate_same_dir.exists() {
+            return candidate_same_dir;
+        }
+
+        // target/{debug,release}/../docker-compose.yml -> workspace root
+        exe_path.pop();
+        let candidate_workspace = exe_path.join("docker-compose.yml");
+        if candidate_workspace.exists() {
+            return candidate_workspace;
+        }
+
+        // target/../docker-compose.yml -> workspace root
+        exe_path.pop();
+        let candidate_parent_workspace = exe_path.join("docker-compose.yml");
+        if candidate_parent_workspace.exists() {
+            return candidate_parent_workspace;
+        }
+    }
+
+    cwd_compose
+}
+
 fn start_local_minio_for_test() -> Result<()> {
-    let compose_file = PathBuf::from("docker-compose.yml");
+    let compose_file = resolve_default_compose_file();
     let (program, args) = build_compose_up_command(S3Engine::Podman, &compose_file);
     run_command_with_fallback(S3Engine::Podman, &program, &args)
 }

@@ -15,6 +15,7 @@ use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use posixlake::DatabaseOps;
+use posixlake::security::{User, UserStore};
 use std::env;
 use std::sync::Arc;
 
@@ -302,6 +303,148 @@ async fn test_s3_multiple_inserts() {
         count_col.value(0),
         9,
         "Expected 9 rows total (3 batches * 3 rows)"
+    );
+}
+
+#[tokio::test]
+async fn test_s3_open_without_credentials_denies_when_auth_metadata_exists() {
+    if !is_minio_available().await {
+        eprintln!("Skipping S3 test: MinIO not available");
+        return;
+    }
+
+    let (endpoint, access_key, secret_key, bucket) = get_minio_config();
+    if !is_bucket_available(&endpoint, &access_key, &secret_key, &bucket).await {
+        return;
+    }
+    let s3_path = format!("s3://{}/test_db_{}", bucket, uuid::Uuid::new_v4());
+    let schema = create_test_schema();
+
+    let db = DatabaseOps::create_with_s3(
+        &s3_path,
+        schema.clone(),
+        &endpoint,
+        &access_key,
+        &secret_key,
+    )
+    .await
+    .expect("Failed to create S3 database");
+
+    let initial_batch = create_test_batch(schema.clone(), 1);
+    db.insert(initial_batch)
+        .await
+        .expect("Initial insert should succeed");
+
+    let cache_path = posixlake::storage::s3::get_s3_cache_path(&s3_path);
+    let metadata_dir = cache_path.join("_metadata");
+    std::fs::create_dir_all(&metadata_dir).expect("Failed to create cache metadata directory");
+    let users_path = metadata_dir.join("users.json");
+
+    let mut user_store = UserStore::new();
+    let admin = User::new("admin".to_string(), "admin_pass", vec!["admin".to_string()])
+        .expect("Failed to create admin user");
+    user_store
+        .add_user(admin)
+        .expect("Failed to add admin user");
+    user_store
+        .save(&users_path)
+        .expect("Failed to save users metadata");
+    assert!(
+        users_path.exists(),
+        "users.json should exist at {:?} before reopen",
+        users_path
+    );
+
+    let reopened = DatabaseOps::open_with_s3(&s3_path, &endpoint, &access_key, &secret_key)
+        .await
+        .expect("Failed to reopen S3 database");
+    let audit_result = reopened.get_audit_log().await;
+    assert!(
+        audit_result.is_err(),
+        "Audit log should require authentication when auth metadata is present"
+    );
+    let audit_err = match audit_result {
+        Ok(_) => panic!("Audit log should fail without auth context"),
+        Err(e) => format!("{}", e),
+    };
+    assert!(
+        audit_err.contains("Authentication required"),
+        "Expected authentication required from audit gate, got: {}",
+        audit_err
+    );
+
+    let batch = create_test_batch(schema, 100);
+    let insert_result = reopened.insert(batch).await;
+    assert!(
+        insert_result.is_err(),
+        "open_with_s3 should fail closed when auth metadata exists and no auth context is set"
+    );
+    let err = match insert_result {
+        Ok(_) => panic!("Insert should fail without auth context"),
+        Err(e) => format!("{}", e),
+    };
+    assert!(
+        err.contains("Authentication required"),
+        "Expected authentication required error, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_s3_create_ignores_stale_local_auth_cache_metadata() {
+    if !is_minio_available().await {
+        eprintln!("Skipping S3 test: MinIO not available");
+        return;
+    }
+
+    let (endpoint, access_key, secret_key, bucket) = get_minio_config();
+    if !is_bucket_available(&endpoint, &access_key, &secret_key, &bucket).await {
+        return;
+    }
+    let s3_path = format!("s3://{}/test_db_{}", bucket, uuid::Uuid::new_v4());
+    let schema = create_test_schema();
+
+    // Seed local cache auth metadata before database creation to emulate stale local state.
+    let cache_path = posixlake::storage::s3::get_s3_cache_path(&s3_path);
+    let metadata_dir = cache_path.join("_metadata");
+    std::fs::create_dir_all(&metadata_dir).expect("Failed to create cache metadata directory");
+    let users_path = metadata_dir.join("users.json");
+
+    let mut user_store = UserStore::new();
+    let admin = User::new(
+        "stale_admin".to_string(),
+        "stale_pass",
+        vec!["admin".to_string()],
+    )
+    .expect("Failed to create stale admin user");
+    user_store
+        .add_user(admin)
+        .expect("Failed to add stale admin user");
+    user_store
+        .save(&users_path)
+        .expect("Failed to write stale users metadata");
+    assert!(
+        users_path.exists(),
+        "Expected stale users metadata at {:?}",
+        users_path
+    );
+
+    let created = DatabaseOps::create_with_s3(
+        &s3_path,
+        schema.clone(),
+        &endpoint,
+        &access_key,
+        &secret_key,
+    )
+    .await
+    .expect("Failed to create S3 database");
+
+    let batch = create_test_batch(schema, 1000);
+    let insert_result = created.insert(batch).await;
+    assert!(
+        insert_result.is_ok(),
+        "create_with_s3 should ignore stale local cache auth metadata for a fresh DB create, got: {:?}",
+        insert_result
     );
 }
 
