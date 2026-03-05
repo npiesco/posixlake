@@ -416,3 +416,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for optimize variant permission boundary (Phase 1)
+1. Red: Added integration tests `test_write_role_cannot_optimize_with_filter_without_delete_permission` and `test_write_role_cannot_optimize_with_target_size_without_delete_permission` in `tests/tests/auth_test.rs`; validated failure on `optimize_with_filter()` before the permission fix.
+2. Approach: Enforce `Permission::Delete` consistently across optimize entry points (`optimize()`, `optimize_with_filter()`, `optimize_with_target_size()`) so write-only roles cannot run destructive maintenance.
+3. Green: Updated `DatabaseOps::optimize_with_filter()` and `DatabaseOps::optimize_with_target_size()` to require `Permission::Delete` instead of `Permission::Write`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

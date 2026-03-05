@@ -1776,8 +1776,8 @@ impl DatabaseOps {
     pub async fn optimize_with_filter(&self, filter: &str) -> Result<()> {
         info!("Running Delta Lake OPTIMIZE with filter: {}", filter);
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        // Check delete permission
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         let result = self.optimize_inner(Some(filter), None).await;
         match &result {
@@ -1812,8 +1812,8 @@ impl DatabaseOps {
             target_size_bytes
         );
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        // Check delete permission
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         let result = self.optimize_inner(None, Some(target_size_bytes)).await;
         match &result {
