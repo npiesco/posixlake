@@ -1884,8 +1884,8 @@ impl DatabaseOps {
             retention_hours
         );
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        // Check delete permission
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         let result = self.vacuum_inner(retention_hours, false).await;
         match &result {
