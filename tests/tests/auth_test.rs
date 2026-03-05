@@ -416,6 +416,65 @@ async fn test_revoke_role_operation_is_audited() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_revoke_role_failure_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_revoke_role_audit_failure");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Revoke role failure is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+
+    let revoke_result = admin_db
+        .revoke_role_from_user("missing_user", "write")
+        .await;
+    assert!(
+        revoke_result.is_err(),
+        "Revoking role from unknown user should fail"
+    );
+    let revoke_err = format!("{}", revoke_result.unwrap_err());
+    assert!(
+        revoke_err.contains("User not found"),
+        "Expected user-not-found error, got: {}",
+        revoke_err
+    );
+
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let revoke_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.operation == "REVOKE_ROLE"
+                && entry.details.contains("username=missing_user")
+                && entry.details.contains("role=write")
+        })
+        .expect("No REVOKE_ROLE audit failure entry");
+    assert_eq!(revoke_entry.user, "admin");
+    assert!(
+        !revoke_entry.success,
+        "REVOKE_ROLE audit entry should be marked failed"
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_secure_password_hashing() {
     setup_logging();
     let db_path = test_db_path("test_db_password_hash");

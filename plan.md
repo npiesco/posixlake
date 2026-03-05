@@ -571,3 +571,11 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for failed role revocation (Phase 1)
+1. Red: Added integration test `test_revoke_role_failure_is_audited` in `tests/tests/auth_test.rs`; expected failure, but behavior was already green because failed revocations already emitted `REVOKE_ROLE` audit entries with `success=false`.
+2. Green: No production code change required for this feature; behavior already enforced.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
