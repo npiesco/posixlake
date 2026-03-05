@@ -1709,8 +1709,8 @@ impl DatabaseOps {
     pub async fn merge(&self) -> Result<crate::delta_lake::merge::MergeBuilder> {
         info!("Creating MERGE operation");
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        // Check delete permission
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         // Open the Delta Lake table
         use crate::storage::s3::parse_s3_url;
