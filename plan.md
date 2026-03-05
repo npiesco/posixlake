@@ -407,3 +407,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for optimize permission boundary (Phase 1)
+1. Red: Added integration test `test_write_role_cannot_optimize_without_delete_permission` in `tests/tests/auth_test.rs`; validated failure (write-only user could run `optimize()`).
+2. Approach: Enforce `Permission::Delete` for compaction/maintenance optimize operations.
+3. Green: Updated `DatabaseOps::optimize()` to require `Permission::Delete` instead of `Permission::Write`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

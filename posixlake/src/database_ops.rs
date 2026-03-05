@@ -1743,8 +1743,8 @@ impl DatabaseOps {
     pub async fn optimize(&self) -> Result<()> {
         info!("Running Delta Lake OPTIMIZE operation");
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        // Check delete permission
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         let result = self.optimize_inner(None, None).await;
         match &result {
