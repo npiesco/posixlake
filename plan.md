@@ -443,3 +443,12 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 6. Regression again: Re-ran `cargo test --workspace` successfully.
 7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Auth fail-closed for reset_metrics permission boundary (Phase 1)
+1. Red: Added integration test `test_write_role_cannot_reset_metrics_without_admin_permission` in `tests/tests/auth_test.rs`; validated failure (write-only user could call `reset_metrics()`).
+2. Approach: Enforce `Permission::Admin` for observability counter reset operations so write-only roles cannot tamper with audit/monitoring signal quality.
+3. Green: Updated `DatabaseOps::reset_metrics()` to require `Permission::Admin` instead of `Permission::Write`.
+4. Regression: Ran `cargo test --workspace` successfully.
+5. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression again: Re-ran `cargo test --workspace` successfully.
+7. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
