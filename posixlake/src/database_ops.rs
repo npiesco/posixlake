@@ -1964,8 +1964,8 @@ impl DatabaseOps {
     pub async fn zorder(&self, columns: &[&str]) -> Result<()> {
         info!("Running Delta Lake Z-ORDER on columns: {:?}", columns);
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        // Check delete permission
+        self.check_permission(&crate::security::Permission::Delete)?;
 
         if columns.is_empty() {
             return Err(Error::InvalidOperation(
