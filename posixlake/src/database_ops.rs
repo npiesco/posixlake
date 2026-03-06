@@ -1032,26 +1032,42 @@ impl DatabaseOps {
     /// Forces any buffered writes to be committed to Delta Lake.
     /// Call this before reading data to ensure consistency, or at shutdown.
     pub async fn flush_write_buffer(&self) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Write)?;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Write)?;
 
-        if self.batch_buffer.is_empty().await {
-            info!("No buffered data to flush");
-            return Ok(());
+            if self.batch_buffer.is_empty().await {
+                info!("No buffered data to flush");
+                return Ok(());
+            }
+
+            let (batch_count, total_rows) = self.batch_buffer.stats().await;
+            info!(
+                "Flushing batch buffer: {} rows across {} batches",
+                total_rows, batch_count
+            );
+
+            // Take all batches from buffer
+            let batches_to_flush = self.batch_buffer.take_all().await;
+
+            // Flush all batches
+            self.flush_batches(batches_to_flush).await?;
+
+            Ok(())
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log("FLUSH_WRITE_BUFFER", "flushed write buffer", true)
+                    .await;
+            }
+            Err(e) => {
+                self.audit_log("FLUSH_WRITE_BUFFER", &format!("failed: {}", e), false)
+                    .await;
+            }
         }
 
-        let (batch_count, total_rows) = self.batch_buffer.stats().await;
-        info!(
-            "Flushing batch buffer: {} rows across {} batches",
-            total_rows, batch_count
-        );
-
-        // Take all batches from buffer
-        let batches_to_flush = self.batch_buffer.take_all().await;
-
-        // Flush all batches
-        self.flush_batches(batches_to_flush).await?;
-
-        Ok(())
+        result
     }
 
     /// Internal: Flush multiple batches efficiently
@@ -2684,17 +2700,36 @@ impl DatabaseOps {
     /// # }
     /// ```
     pub async fn begin_transaction(self: &Arc<Self>) -> Result<Transaction> {
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = (|| {
+            self.check_permission(&crate::security::Permission::Delete)?;
 
-        // Simple transaction ID allocation
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static TXN_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let txn_id = TXN_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let snapshot_version = txn_id;
+            // Simple transaction ID allocation
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static TXN_COUNTER: AtomicU64 = AtomicU64::new(1);
+            let txn_id = TXN_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let snapshot_version = txn_id;
 
-        info!("Beginning transaction {}", txn_id);
+            info!("Beginning transaction {}", txn_id);
 
-        Ok(Transaction::new(Arc::clone(self), txn_id, snapshot_version))
+            Ok((txn_id, snapshot_version))
+        })();
+
+        match result {
+            Ok((txn_id, snapshot_version)) => {
+                self.audit_log(
+                    "BEGIN_TRANSACTION",
+                    &format!("txn_id={}, snapshot_version={}", txn_id, snapshot_version),
+                    true,
+                )
+                .await;
+                Ok(Transaction::new(Arc::clone(self), txn_id, snapshot_version))
+            }
+            Err(e) => {
+                self.audit_log("BEGIN_TRANSACTION", &format!("failed: {}", e), false)
+                    .await;
+                Err(e)
+            }
+        }
     }
 }
 

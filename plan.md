@@ -643,3 +643,19 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 5. Regression again: Re-ran `cargo test --workspace` successfully.
 6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied begin_transaction (Phase 1)
+1. Red: Added integration test `test_begin_transaction_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`begin_transaction()` denied writer access but emitted no `BEGIN_TRANSACTION` audit entry).
+2. Green: Updated `DatabaseOps::begin_transaction()` to run through an audited success/failure path and emit `BEGIN_TRANSACTION` entries, including permission-denied failures with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied flush_write_buffer (Phase 1)
+1. Red: Added integration test `test_flush_write_buffer_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (permission-denied `flush_write_buffer()` emitted no `FLUSH_WRITE_BUFFER` audit entry).
+2. Green: Updated `DatabaseOps::flush_write_buffer()` to run through an audited success/failure path and emit `FLUSH_WRITE_BUFFER` entries, including permission-denied failures with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
