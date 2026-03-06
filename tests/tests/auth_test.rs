@@ -1046,6 +1046,645 @@ async fn test_flush_write_buffer_permission_denied_is_audited() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_delta_table_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_delta_table_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: get_delta_table permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let table_result = writer_db.get_delta_table().await;
+    match table_result {
+        Ok(_) => panic!("Non-read user should not be able to get delta table"),
+        Err(e) => {
+            let table_err = format!("{}", e);
+            assert!(
+                table_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                table_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "GET_DELTA_TABLE"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No GET_DELTA_TABLE audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_list_parquet_files_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_list_parquet_files_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: list_parquet_files permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let list_result = writer_db.list_parquet_files();
+    match list_result {
+        Ok(_) => panic!("Non-read user should not be able to list parquet files"),
+        Err(e) => {
+            let list_err = format!("{}", e);
+            assert!(
+                list_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                list_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "LIST_PARQUET_FILES"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No LIST_PARQUET_FILES audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_query_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_query_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: query permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let query_result = writer_db.query("SELECT * FROM data").await;
+    match query_result {
+        Ok(_) => panic!("Non-read user should not be able to query data"),
+        Err(e) => {
+            let query_err = format!("{}", e);
+            assert!(
+                query_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                query_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "SELECT"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No SELECT audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_query_version_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_query_version_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: query_version permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let query_result = writer_db.query_version("SELECT * FROM data", 0).await;
+    match query_result {
+        Ok(_) => panic!("Non-read user should not be able to run query_version"),
+        Err(e) => {
+            let query_err = format!("{}", e);
+            assert!(
+                query_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                query_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "SELECT_VERSION"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No SELECT_VERSION audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_query_timestamp_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_query_timestamp_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: query_timestamp permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_millis() as i64;
+    let query_result = writer_db
+        .query_timestamp("SELECT * FROM data", now_ms)
+        .await;
+    match query_result {
+        Ok(_) => panic!("Non-read user should not be able to run query_timestamp"),
+        Err(e) => {
+            let query_err = format!("{}", e);
+            assert!(
+                query_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                query_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "SELECT_TIMESTAMP"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No SELECT_TIMESTAMP audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_query_file_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_query_file_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: query_file permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let query_result = writer_db.query_file("part-00000.parquet").await;
+    match query_result {
+        Ok(_) => panic!("Non-read user should not be able to run query_file"),
+        Err(e) => {
+            let query_err = format!("{}", e);
+            assert!(
+                query_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                query_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "QUERY_FILE"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No QUERY_FILE audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_column_statistics_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_column_statistics_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: get_column_statistics permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let stats_result = writer_db.get_column_statistics().await;
+    match stats_result {
+        Ok(_) => panic!("Non-read user should not be able to get column statistics"),
+        Err(e) => {
+            let stats_err = format!("{}", e);
+            assert!(
+                stats_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                stats_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "GET_COLUMN_STATISTICS"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No GET_COLUMN_STATISTICS audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_pruning_statistics_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_pruning_statistics_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: get_pruning_statistics permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let stats_result = writer_db.get_pruning_statistics().await;
+    match stats_result {
+        Ok(_) => panic!("Non-read user should not be able to get pruning statistics"),
+        Err(e) => {
+            let stats_err = format!("{}", e);
+            assert!(
+                stats_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                stats_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "GET_PRUNING_STATISTICS"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No GET_PRUNING_STATISTICS audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_data_skipping_stats_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_data_skipping_stats_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: get_data_skipping_stats permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let stats_result = writer_db.get_data_skipping_stats().await;
+    match stats_result {
+        Ok(_) => panic!("Non-read user should not be able to get data skipping stats"),
+        Err(e) => {
+            let stats_err = format!("{}", e);
+            assert!(
+                stats_err.contains("Permission denied"),
+                "Expected permission denied error, got: {}",
+                stats_err
+            );
+        }
+    }
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "GET_DATA_SKIPPING_STATS"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No GET_DATA_SKIPPING_STATS audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_metrics_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_metrics_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: get_metrics permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let metrics = writer_db.get_metrics().await;
+    assert_eq!(
+        metrics.total_queries, 0,
+        "Unauthorized metrics call should return redacted totals"
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "GET_METRICS"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No GET_METRICS audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_secure_password_hashing() {
     setup_logging();
     let db_path = test_db_path("test_db_password_hash");

@@ -636,6 +636,14 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Regression again: Re-ran `cargo test --workspace` successfully.
 6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
 
+### Feature: Audit trail for permission-denied metrics reads (Phase 1)
+1. Red: Added integration test `test_get_metrics_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure during full regression (`get_metrics()` returned redacted values but emitted no `GET_METRICS` audit entry).
+2. Green: Updated `DatabaseOps::get_metrics()` to run through an audited success/failure path and emit `GET_METRICS` entries, including permission-denied failures with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
 ### Reliability hardening: S3 CLI integration timeout guard (test infra)
 1. Problem surfaced during Regression: `tests/tests/s3_cli_test.rs` could hang indefinitely when `posixlake s3 start` blocked on container health wait.
 2. Green: Added bounded command execution helper (`run_with_timeout`) and applied 90s timeout to `s3 start` and `s3-test` invocations, with deterministic cleanup/skip on timeout.
@@ -656,6 +664,78 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 1. Red: Added integration test `test_flush_write_buffer_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (permission-denied `flush_write_buffer()` emitted no `FLUSH_WRITE_BUFFER` audit entry).
 2. Green: Updated `DatabaseOps::flush_write_buffer()` to run through an audited success/failure path and emit `FLUSH_WRITE_BUFFER` entries, including permission-denied failures with `success=false`.
 3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied get_delta_table (Phase 1)
+1. Red: Added integration test `test_get_delta_table_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`get_delta_table()` denied writer access but emitted no `GET_DELTA_TABLE` audit entry).
+2. Green: Updated `DatabaseOps::get_delta_table()` to run through an audited success/failure path and emit `GET_DELTA_TABLE` entries, including permission-denied failures with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied list_parquet_files (Phase 1)
+1. Red: Added integration test `test_list_parquet_files_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`list_parquet_files()` denied writer access but emitted no `LIST_PARQUET_FILES` audit entry).
+2. Green: Updated `DatabaseOps::list_parquet_files()` to run through an audited success/failure path and emit `LIST_PARQUET_FILES` entries, including permission-denied failures with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied query (Phase 1)
+1. Red: Added integration test `test_query_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`query()` denied writer access but emitted no `SELECT` audit entry).
+2. Green: Updated `DatabaseOps::query()` to run permission checks inside the audited success/failure path so permission-denied failures emit `SELECT` entries with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied query_version (Phase 1)
+1. Red: Added integration test `test_query_version_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`query_version()` denied writer access but emitted no `SELECT_VERSION` audit entry).
+2. Green: Updated `DatabaseOps::query_version()` to run permission checks inside the audited success/failure path so permission-denied failures emit `SELECT_VERSION` entries with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied query_timestamp (Phase 1)
+1. Red: Added integration test `test_query_timestamp_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`query_timestamp()` denied writer access but emitted no `SELECT_TIMESTAMP` audit entry).
+2. Green: Updated `DatabaseOps::query_timestamp()` to run permission checks inside the audited success/failure path so permission-denied failures emit `SELECT_TIMESTAMP` entries with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied query_file (Phase 1)
+1. Red: Added integration test `test_query_file_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`query_file()` denied writer access but emitted no `QUERY_FILE` audit entry).
+2. Green: Updated `DatabaseOps::query_file()` to run permission checks inside the audited success/failure path so permission-denied failures emit `QUERY_FILE` entries with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied get_column_statistics (Phase 1)
+1. Red: Added integration test `test_get_column_statistics_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`get_column_statistics()` denied writer access but emitted no `GET_COLUMN_STATISTICS` audit entry).
+2. Green: Updated `DatabaseOps::get_column_statistics()` to run permission checks inside the audited success/failure path so permission-denied failures emit `GET_COLUMN_STATISTICS` entries with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied get_pruning_statistics (Phase 1)
+1. Red: Added integration test `test_get_pruning_statistics_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`get_pruning_statistics()` denied writer access but emitted no `GET_PRUNING_STATISTICS` audit entry).
+2. Green: Updated `DatabaseOps::get_pruning_statistics()` to run permission checks inside the audited success/failure path so permission-denied failures emit `GET_PRUNING_STATISTICS` entries with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+5. Regression again: Re-ran `cargo test --workspace` successfully.
+6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Feature: Audit trail for permission-denied get_data_skipping_stats (Phase 1)
+1. Red: Added integration test `test_get_data_skipping_stats_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`get_data_skipping_stats()` denied writer access but emitted no `GET_DATA_SKIPPING_STATS` audit entry).
+2. Green: Updated `DatabaseOps::get_data_skipping_stats()` to run permission checks inside the audited success/failure path so permission-denied failures emit `GET_DATA_SKIPPING_STATS` entries with `success=false`.
+3. Regression: Ran `cargo test --workspace` successfully after reclaiming `/tmp` space (removed stale `posixlake_nfs_test_*.log`) and adding targeted stress-test diagnostics for insert failures.
 4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 5. Regression again: Re-ran `cargo test --workspace` successfully.
 6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

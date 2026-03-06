@@ -858,19 +858,50 @@ impl DatabaseOps {
 
     /// List Parquet data files in the database directory
     pub fn list_parquet_files(&self) -> Result<Vec<String>> {
-        self.check_permission(&crate::security::Permission::Read)?;
-        let mut files = Vec::new();
-        let entries = std::fs::read_dir(&self.base_path)?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                if let Some(name) = path.file_name() {
-                    files.push(name.to_string_lossy().to_string());
+        let result = (|| {
+            self.check_permission(&crate::security::Permission::Read)?;
+            let mut files = Vec::new();
+            let entries = std::fs::read_dir(&self.base_path)?;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                    if let Some(name) = path.file_name() {
+                        files.push(name.to_string_lossy().to_string());
+                    }
+                }
+            }
+            files.sort();
+            Ok(files)
+        })();
+
+        match &result {
+            Ok(files) => {
+                if let Some(auth_ctx) = &self.auth_context {
+                    if let Some(logger) = &self.audit_logger {
+                        let _ = futures::executor::block_on(logger.log(
+                            auth_ctx.username.clone(),
+                            "LIST_PARQUET_FILES".to_string(),
+                            format!("listed {} parquet files", files.len()),
+                            true,
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                if let Some(auth_ctx) = &self.auth_context {
+                    if let Some(logger) = &self.audit_logger {
+                        let _ = futures::executor::block_on(logger.log(
+                            auth_ctx.username.clone(),
+                            "LIST_PARQUET_FILES".to_string(),
+                            format!("failed: {}", e),
+                            false,
+                        ));
+                    }
                 }
             }
         }
-        files.sort();
-        Ok(files)
+
+        result
     }
 
     /// Get the primary key column name, if set
@@ -1097,27 +1128,43 @@ impl DatabaseOps {
     ///
     /// Exposes the DeltaTable for version checking, history inspection, etc.
     pub async fn get_delta_table(&self) -> Result<deltalake::DeltaTable> {
-        self.check_permission(&crate::security::Permission::Read)?;
-        use crate::storage::s3::parse_s3_url;
-        use deltalake::{open_table, open_table_with_storage_options};
-        use url::Url;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            use crate::storage::s3::parse_s3_url;
+            use deltalake::{open_table, open_table_with_storage_options};
+            use url::Url;
 
-        let table = if let (Some(s3_url), Some(storage_options)) =
-            (&self.s3_url, &self.s3_storage_options)
-        {
-            // S3 backend
-            let s3_url_parsed = parse_s3_url(s3_url)?;
-            open_table_with_storage_options(s3_url_parsed, storage_options.clone())
-                .await
-                .map_err(Error::DeltaTable)?
-        } else {
-            // Local backend
-            let table_url = Url::from_directory_path(&self.base_path)
-                .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
-            open_table(table_url).await.map_err(Error::DeltaTable)?
-        };
+            let table = if let (Some(s3_url), Some(storage_options)) =
+                (&self.s3_url, &self.s3_storage_options)
+            {
+                // S3 backend
+                let s3_url_parsed = parse_s3_url(s3_url)?;
+                open_table_with_storage_options(s3_url_parsed, storage_options.clone())
+                    .await
+                    .map_err(Error::DeltaTable)?
+            } else {
+                // Local backend
+                let table_url = Url::from_directory_path(&self.base_path)
+                    .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
+                open_table(table_url).await.map_err(Error::DeltaTable)?
+            };
 
-        Ok(table)
+            Ok(table)
+        }
+        .await;
+
+        match result {
+            Ok(table) => {
+                self.audit_log("GET_DELTA_TABLE", "opened delta table", true)
+                    .await;
+                Ok(table)
+            }
+            Err(e) => {
+                self.audit_log("GET_DELTA_TABLE", &format!("failed: {}", e), false)
+                    .await;
+                Err(e)
+            }
+        }
     }
 
     /// Insert data using Delta Lake native format
@@ -1357,12 +1404,13 @@ impl DatabaseOps {
     pub async fn query(&self, sql: &str) -> Result<Vec<RecordBatch>> {
         info!("Executing query: {}", sql);
 
-        // Check read permission
-        self.check_permission(&crate::security::Permission::Read)?;
-
         // Track query metrics with latency
         let start = Instant::now();
-        let result = self.query_inner(sql).await;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            self.query_inner(sql).await
+        }
+        .await;
         let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         match &result {
@@ -1449,12 +1497,13 @@ impl DatabaseOps {
             version, sql
         );
 
-        // Check read permission
-        self.check_permission(&crate::security::Permission::Read)?;
-
         // Track query metrics with latency
         let start = Instant::now();
-        let result = self.query_version_inner(sql, version).await;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            self.query_version_inner(sql, version).await
+        }
+        .await;
         let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         match &result {
@@ -1568,12 +1617,13 @@ impl DatabaseOps {
             timestamp_ms, sql
         );
 
-        // Check read permission
-        self.check_permission(&crate::security::Permission::Read)?;
-
         // Track query metrics with latency
         let start = Instant::now();
-        let result = self.query_timestamp_inner(sql, timestamp_ms).await;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            self.query_timestamp_inner(sql, timestamp_ms).await
+        }
+        .await;
         let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         match &result {
@@ -1705,21 +1755,37 @@ impl DatabaseOps {
 
     /// Query a specific Parquet file (for individual file views)
     pub async fn query_file(&self, file_path: &str) -> Result<Vec<RecordBatch>> {
-        self.check_permission(&crate::security::Permission::Read)?;
-        info!("Querying specific file: {}", file_path);
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            info!("Querying specific file: {}", file_path);
 
-        let full_path = self.base_path.join(file_path);
-        if !full_path.exists() {
-            return Err(Error::RecordNotFound(format!(
-                "File not found: {}",
-                file_path
-            )));
+            let full_path = self.base_path.join(file_path);
+            if !full_path.exists() {
+                return Err(Error::RecordNotFound(format!(
+                    "File not found: {}",
+                    file_path
+                )));
+            }
+
+            let reader = ParquetReader::new();
+            let batch = reader.read_batch(&full_path)?;
+
+            Ok(vec![batch])
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log("QUERY_FILE", &format!("file={}", file_path), true)
+                    .await;
+            }
+            Err(e) => {
+                self.audit_log("QUERY_FILE", &format!("file={}: {}", file_path, e), false)
+                    .await;
+            }
         }
 
-        let reader = ParquetReader::new();
-        let batch = reader.read_batch(&full_path)?;
-
-        Ok(vec![batch])
+        result
     }
 
     /// Delete a specific file from Delta Lake
@@ -2129,58 +2195,104 @@ impl DatabaseOps {
 
     /// Get column statistics from Delta Lake transaction log
     pub async fn get_column_statistics(&self) -> Result<HashMap<String, ColumnStats>> {
-        self.check_permission(&crate::security::Permission::Read)?;
-        get_column_statistics_from_delta(&self.base_path)
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            get_column_statistics_from_delta(&self.base_path)
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log("GET_COLUMN_STATISTICS", "retrieved column statistics", true)
+                    .await;
+            }
+            Err(e) => {
+                self.audit_log("GET_COLUMN_STATISTICS", &format!("failed: {}", e), false)
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Get query pruning statistics (Delta Lake handles this natively)
     pub async fn get_pruning_statistics(&self) -> Result<PruningStats> {
-        self.check_permission(&crate::security::Permission::Read)?;
-        // Delta Lake doesn't expose pruning stats the same way
-        // Return empty stats for now
-        Ok(PruningStats {
-            files_scanned: 0,
-            files_pruned: 0,
-            total_files: 0,
-        })
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            // Delta Lake doesn't expose pruning stats the same way
+            // Return empty stats for now
+            Ok(PruningStats {
+                files_scanned: 0,
+                files_pruned: 0,
+                total_files: 0,
+            })
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log(
+                    "GET_PRUNING_STATISTICS",
+                    "retrieved pruning statistics",
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log("GET_PRUNING_STATISTICS", &format!("failed: {}", e), false)
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Get current database metrics for monitoring and observability
     pub async fn get_metrics(&self) -> DatabaseMetrics {
-        if self
-            .check_permission(&crate::security::Permission::Read)
-            .is_err()
-        {
-            return DatabaseMetrics {
-                total_queries: 0,
-                total_inserts: 0,
-                total_deletes: 0,
-                total_transactions: 0,
-                total_errors: 0,
-                avg_query_latency_ms: 0.0,
-                max_query_latency_ms: 0.0,
-                uptime_seconds: 0.0,
+        let result: Result<DatabaseMetrics> = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+
+            let latencies = self.metrics.query_latencies.lock().await;
+            let avg_latency = if latencies.is_empty() {
+                0.0
+            } else {
+                latencies.iter().sum::<f64>() / latencies.len() as f64
             };
+            let max_latency = latencies.iter().copied().fold(0.0, f64::max);
+            drop(latencies); // Release lock
+
+            Ok(DatabaseMetrics {
+                total_queries: self.metrics.total_queries.load(Ordering::Relaxed),
+                total_inserts: self.metrics.total_inserts.load(Ordering::Relaxed),
+                total_deletes: self.metrics.total_deletes.load(Ordering::Relaxed),
+                total_transactions: self.metrics.total_transactions.load(Ordering::Relaxed),
+                total_errors: self.metrics.total_errors.load(Ordering::Relaxed),
+                avg_query_latency_ms: avg_latency,
+                max_query_latency_ms: max_latency,
+                uptime_seconds: self.metrics.start_time.elapsed().as_secs_f64(),
+            })
         }
+        .await;
 
-        let latencies = self.metrics.query_latencies.lock().await;
-        let avg_latency = if latencies.is_empty() {
-            0.0
-        } else {
-            latencies.iter().sum::<f64>() / latencies.len() as f64
-        };
-        let max_latency = latencies.iter().copied().fold(0.0, f64::max);
-        drop(latencies); // Release lock
-
-        DatabaseMetrics {
-            total_queries: self.metrics.total_queries.load(Ordering::Relaxed),
-            total_inserts: self.metrics.total_inserts.load(Ordering::Relaxed),
-            total_deletes: self.metrics.total_deletes.load(Ordering::Relaxed),
-            total_transactions: self.metrics.total_transactions.load(Ordering::Relaxed),
-            total_errors: self.metrics.total_errors.load(Ordering::Relaxed),
-            avg_query_latency_ms: avg_latency,
-            max_query_latency_ms: max_latency,
-            uptime_seconds: self.metrics.start_time.elapsed().as_secs_f64(),
+        match result {
+            Ok(metrics) => {
+                self.audit_log("GET_METRICS", "metrics read", true).await;
+                metrics
+            }
+            Err(e) => {
+                self.audit_log("GET_METRICS", &format!("failed: {}", e), false)
+                    .await;
+                DatabaseMetrics {
+                    total_queries: 0,
+                    total_inserts: 0,
+                    total_deletes: 0,
+                    total_transactions: 0,
+                    total_errors: 0,
+                    avg_query_latency_ms: 0.0,
+                    max_query_latency_ms: 0.0,
+                    uptime_seconds: 0.0,
+                }
+            }
         }
     }
 
@@ -2189,9 +2301,29 @@ impl DatabaseOps {
     /// Returns information about how many files were skipped during the last query
     /// based on min/max statistics pruning.
     pub async fn get_data_skipping_stats(&self) -> Result<DataSkippingStats> {
-        self.check_permission(&crate::security::Permission::Read)?;
-        let stats = self.data_skipping_stats.lock().await;
-        Ok(stats.clone())
+        let result = async {
+            self.check_permission(&crate::security::Permission::Read)?;
+            let stats = self.data_skipping_stats.lock().await;
+            Ok(stats.clone())
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log(
+                    "GET_DATA_SKIPPING_STATS",
+                    "retrieved data skipping statistics",
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log("GET_DATA_SKIPPING_STATS", &format!("failed: {}", e), false)
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Reset data skipping statistics
