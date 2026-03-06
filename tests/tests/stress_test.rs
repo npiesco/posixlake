@@ -261,7 +261,16 @@ async fn test_rapid_write_operations() {
             (write_num * rows_per_write) as i32,
             rows_per_write,
         );
-        db.insert(batch).await.expect("Failed to insert");
+        if let Err(e) = db.insert(batch).await {
+            let exists = std::path::Path::new(&db_path).exists();
+            let meta = std::fs::metadata(&db_path)
+                .map(|m| format!("is_dir={}, perms={:?}", m.is_dir(), m.permissions()))
+                .unwrap_or_else(|meta_err| format!("metadata error: {}", meta_err));
+            panic!(
+                "Failed to insert at write {} for path {} (exists={}, {}): {}",
+                write_num, db_path, exists, meta, e
+            );
+        }
 
         if (write_num + 1) % 100 == 0 {
             println!("  Completed {} writes", write_num + 1);
