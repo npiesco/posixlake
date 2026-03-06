@@ -705,9 +705,9 @@ impl DatabaseOps {
             return Err(Error::Other("Authentication not enabled".to_string()));
         }
 
-        self.check_permission(&crate::security::Permission::Admin)?;
-
         let result = async {
+            self.check_permission(&crate::security::Permission::Admin)?;
+
             let user = crate::security::User::new(
                 username.to_string(),
                 password,
@@ -753,9 +753,9 @@ impl DatabaseOps {
             return Err(Error::Other("Authentication not enabled".to_string()));
         }
 
-        self.check_permission(&crate::security::Permission::Admin)?;
-
         let result = async {
+            self.check_permission(&crate::security::Permission::Admin)?;
+
             if let Some(user_store) = &self.user_store {
                 let mut store = user_store.lock().await;
                 store.revoke_role(username, role)?;
@@ -795,12 +795,32 @@ impl DatabaseOps {
             return Err(Error::Other("Authentication not enabled".to_string()));
         }
 
-        self.check_permission(&crate::security::Permission::Admin)?;
-        if let Some(logger) = &self.audit_logger {
-            Ok(logger.get_entries().await)
-        } else {
-            Ok(vec![])
+        let result = async {
+            self.check_permission(&crate::security::Permission::Admin)?;
+            if let Some(logger) = &self.audit_logger {
+                Ok(logger.get_entries().await)
+            } else {
+                Ok(vec![])
+            }
         }
+        .await;
+
+        match &result {
+            Ok(entries) => {
+                self.audit_log(
+                    "GET_AUDIT_LOG",
+                    &format!("returned {} entries", entries.len()),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log("GET_AUDIT_LOG", &format!("failed: {}", e), false)
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Check if current user has permission
@@ -866,26 +886,57 @@ impl DatabaseOps {
 
     /// Set the primary key column name and persist to _metadata/schema.json
     pub fn set_primary_key(&self, column_name: &str) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Admin)?;
+        let result = (|| {
+            self.check_permission(&crate::security::Permission::Admin)?;
 
-        // Verify the column exists in the schema
-        if self.schema.field_with_name(column_name).is_err() {
-            return Err(Error::InvalidOperation(format!(
-                "Column '{}' not found in schema",
-                column_name
-            )));
+            // Verify the column exists in the schema
+            if self.schema.field_with_name(column_name).is_err() {
+                return Err(Error::InvalidOperation(format!(
+                    "Column '{}' not found in schema",
+                    column_name
+                )));
+            }
+
+            *self.primary_key.lock().unwrap() = Some(column_name.to_string());
+
+            // Persist to _metadata/schema.json
+            let metadata_dir = self.base_path.join("_metadata");
+            let manager = crate::metadata::SchemaManager::new(&metadata_dir)?;
+            let posix_schema =
+                crate::metadata::Schema::from_arrow(&self.schema).with_primary_key(column_name);
+            manager.write_schema(&posix_schema)?;
+
+            Ok(())
+        })();
+
+        match &result {
+            Ok(_) => {
+                if let Some(auth_ctx) = &self.auth_context {
+                    if let Some(logger) = &self.audit_logger {
+                        let _ = futures::executor::block_on(logger.log(
+                            auth_ctx.username.clone(),
+                            "SET_PRIMARY_KEY".to_string(),
+                            format!("column={}", column_name),
+                            true,
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                if let Some(auth_ctx) = &self.auth_context {
+                    if let Some(logger) = &self.audit_logger {
+                        let _ = futures::executor::block_on(logger.log(
+                            auth_ctx.username.clone(),
+                            "SET_PRIMARY_KEY".to_string(),
+                            format!("column={}: {}", column_name, e),
+                            false,
+                        ));
+                    }
+                }
+            }
         }
 
-        *self.primary_key.lock().unwrap() = Some(column_name.to_string());
-
-        // Persist to _metadata/schema.json
-        let metadata_dir = self.base_path.join("_metadata");
-        let manager = crate::metadata::SchemaManager::new(&metadata_dir)?;
-        let posix_schema =
-            crate::metadata::Schema::from_arrow(&self.schema).with_primary_key(column_name);
-        manager.write_schema(&posix_schema)?;
-
-        Ok(())
+        result
     }
 
     /// Log audit entry
@@ -2129,18 +2180,41 @@ impl DatabaseOps {
 
     /// Reset data skipping statistics
     pub async fn reset_data_skipping_stats(&self) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Admin)?;
-        let mut stats = self.data_skipping_stats.lock().await;
-        *stats = DataSkippingStats::default();
-        Ok(())
+        let result = async {
+            self.check_permission(&crate::security::Permission::Admin)?;
+            let mut stats = self.data_skipping_stats.lock().await;
+            *stats = DataSkippingStats::default();
+            Ok(())
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log(
+                    "RESET_DATA_SKIPPING_STATS",
+                    "data skipping stats reset",
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log(
+                    "RESET_DATA_SKIPPING_STATS",
+                    &format!("failed: {}", e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Get database health status
     pub async fn health_check(&self) -> HealthStatus {
-        if self
-            .check_permission(&crate::security::Permission::Read)
-            .is_err()
-        {
+        if let Err(e) = self.check_permission(&crate::security::Permission::Read) {
+            self.audit_log("HEALTH_CHECK", &format!("failed: {}", e), false)
+                .await;
             return HealthStatus {
                 status: "unauthorized".to_string(),
                 uptime_seconds: 0.0,
@@ -2169,11 +2243,26 @@ impl DatabaseOps {
 
     /// Reset metrics counters (except uptime)
     pub async fn reset_metrics(&self) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Admin)?;
-        self.metrics.reset();
-        let mut latencies = self.metrics.query_latencies.lock().await;
-        latencies.clear();
-        Ok(())
+        let result = async {
+            self.check_permission(&crate::security::Permission::Admin)?;
+            self.metrics.reset();
+            let mut latencies = self.metrics.query_latencies.lock().await;
+            latencies.clear();
+            Ok(())
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log("RESET_METRICS", "metrics reset", true).await;
+            }
+            Err(e) => {
+                self.audit_log("RESET_METRICS", &format!("failed: {}", e), false)
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Create a full backup of the database

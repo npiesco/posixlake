@@ -475,6 +475,447 @@ async fn test_revoke_role_failure_is_audited() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_revoke_role_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_revoke_role_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Revoke role permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("reader", "reader_pass", &["read"])
+        .await
+        .expect("Failed to create reader user");
+    db.create_user("target", "target_pass", &["write"])
+        .await
+        .expect("Failed to create target user");
+
+    let reader_db = DatabaseOps::open_with_credentials(&db_path, Some(("reader", "reader_pass")))
+        .await
+        .expect("Reader auth failed");
+
+    let revoke_result = reader_db.revoke_role_from_user("target", "write").await;
+    assert!(
+        revoke_result.is_err(),
+        "Non-admin user should not be able to revoke roles"
+    );
+    let revoke_err = format!("{}", revoke_result.unwrap_err());
+    assert!(
+        revoke_err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        revoke_err
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let revoke_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "reader"
+                && entry.operation == "REVOKE_ROLE"
+                && entry.details.contains("username=target")
+                && entry.details.contains("role=write")
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No REVOKE_ROLE audit entry for permission denial");
+    assert!(
+        !revoke_entry.success,
+        "Permission-denied REVOKE_ROLE audit entry should be marked failed"
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_create_user_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_create_user_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Create user permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("reader", "reader_pass", &["read"])
+        .await
+        .expect("Failed to create reader user");
+
+    let reader_db = DatabaseOps::open_with_credentials(&db_path, Some(("reader", "reader_pass")))
+        .await
+        .expect("Reader auth failed");
+
+    let create_result = reader_db
+        .create_user("blocked_user", "blocked_pass", &["read"])
+        .await;
+    assert!(
+        create_result.is_err(),
+        "Non-admin user should not be able to create users"
+    );
+    let create_err = format!("{}", create_result.unwrap_err());
+    assert!(
+        create_err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        create_err
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let create_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "reader"
+                && entry.operation == "CREATE_USER"
+                && entry.details.contains("username=blocked_user")
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No CREATE_USER audit entry for permission denial");
+    assert!(
+        !create_entry.success,
+        "Permission-denied CREATE_USER audit entry should be marked failed"
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_get_audit_log_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_get_audit_log_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Get audit log permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("reader", "reader_pass", &["read"])
+        .await
+        .expect("Failed to create reader user");
+
+    let reader_db = DatabaseOps::open_with_credentials(&db_path, Some(("reader", "reader_pass")))
+        .await
+        .expect("Reader auth failed");
+    let denied_result = reader_db.get_audit_log().await;
+    assert!(
+        denied_result.is_err(),
+        "Non-admin user should not be able to read audit log"
+    );
+    let denied_err = format!("{}", denied_result.unwrap_err());
+    assert!(
+        denied_err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        denied_err
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "reader"
+                && entry.operation == "GET_AUDIT_LOG"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No GET_AUDIT_LOG audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Admin"),
+        "Expected admin permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_reset_metrics_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_reset_metrics_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Reset metrics permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let reset_result = writer_db.reset_metrics().await;
+    assert!(
+        reset_result.is_err(),
+        "Non-admin user should not be able to reset metrics"
+    );
+    let reset_err = format!("{}", reset_result.unwrap_err());
+    assert!(
+        reset_err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        reset_err
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "RESET_METRICS"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No RESET_METRICS audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Admin"),
+        "Expected admin permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_reset_data_skipping_stats_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_reset_data_skipping_stats_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Reset data skipping stats permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let reset_result = writer_db.reset_data_skipping_stats().await;
+    assert!(
+        reset_result.is_err(),
+        "Non-admin user should not be able to reset data skipping stats"
+    );
+    let reset_err = format!("{}", reset_result.unwrap_err());
+    assert!(
+        reset_err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        reset_err
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "RESET_DATA_SKIPPING_STATS"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No RESET_DATA_SKIPPING_STATS audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Admin"),
+        "Expected admin permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_set_primary_key_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_set_primary_key_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Set primary key permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let set_pk_result = writer_db.set_primary_key("id");
+    assert!(
+        set_pk_result.is_err(),
+        "Non-admin user should not be able to set primary key"
+    );
+    let set_pk_err = format!("{}", set_pk_result.unwrap_err());
+    assert!(
+        set_pk_err.contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        set_pk_err
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "SET_PRIMARY_KEY"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No SET_PRIMARY_KEY audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Admin"),
+        "Expected admin permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_health_check_permission_denied_is_audited() {
+    setup_logging();
+    let db_path = test_db_path("test_db_health_check_permission_denied_audit");
+    cleanup_test_db(&db_path);
+
+    println!("\n=== Test: Health check permission denial is audited ===");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create_with_auth(&db_path, schema, true)
+        .await
+        .expect("Failed to create database");
+    db.create_user("admin", "admin_pass", &["admin"])
+        .await
+        .expect("Failed to create admin user");
+    db.create_user("writer", "writer_pass", &["write"])
+        .await
+        .expect("Failed to create writer user");
+
+    let writer_db = DatabaseOps::open_with_credentials(&db_path, Some(("writer", "writer_pass")))
+        .await
+        .expect("Writer auth failed");
+    let health = writer_db.health_check().await;
+    assert_eq!(
+        health.status, "unauthorized",
+        "Non-read user health_check should be unauthorized"
+    );
+
+    let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
+        .await
+        .expect("Admin auth failed");
+    let audit_log = admin_db
+        .get_audit_log()
+        .await
+        .expect("Failed to get audit log");
+    let denied_entry = audit_log
+        .iter()
+        .find(|entry| {
+            entry.user == "writer"
+                && entry.operation == "HEALTH_CHECK"
+                && !entry.success
+                && entry.details.contains("Permission denied")
+        })
+        .expect("No HEALTH_CHECK audit entry for permission denial");
+    assert!(
+        denied_entry.details.contains("Permission denied: Read"),
+        "Expected read permission denial details, got: {}",
+        denied_entry.details
+    );
+
+    cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_secure_password_hashing() {
     setup_logging();
     let db_path = test_db_path("test_db_password_hash");
