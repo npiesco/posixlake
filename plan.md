@@ -872,6 +872,11 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 5. Regression again: Re-ran `cargo test --workspace` successfully after the isolated stress validation.
 6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
 
+### Documentation: Security policy, threat model, and auth-mode reference (Phase 1)
+1. Created `SECURITY.md` with vulnerability reporting process, patch SLAs (48h ack, 14d critical fix, 30d medium fix), supported versions, security model summary, dependency policy, and scope.
+2. Created `docs/threat-model.md` covering trust boundaries (API, filesystem, NFS, S3), seven threat categories (unauthorized access, privilege escalation, credential compromise, audit tampering, data integrity, NFS exposure, SQL injection), residual risks, and operator recommendations.
+3. Created `docs/auth-modes.md` documenting auth-disabled vs auth-enabled behavior, detection mechanism, credential passing, the full permission matrix for all DatabaseOps methods, built-in roles, audit trail format, and planned CLI auth support.
+
 ### Feature: Audit trail for permission-denied base_path access (Phase 1)
 1. Red: Added integration test `test_base_path_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`base_path()` denied writer (no read) access but emitted no `BASE_PATH` audit entry).
 2. Green: Updated `DatabaseOps::base_path()` to log `BASE_PATH` with `success=false` via `futures::executor::block_on` when the read permission check fails.
