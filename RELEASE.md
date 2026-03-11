@@ -53,6 +53,8 @@ Each release produces:
 | Python wheel | `.whl` | Platform-specific wheel with native library |
 | Python sdist | `.tar.gz` | Source distribution (Linux only) |
 | SBOM | CycloneDX JSON | Software Bill of Materials (`bom.json`) |
+| Checksums | `SHA256SUMS.txt` | SHA-256 manifest for published Python artifacts |
+| Signatures | `.sig` + `.pem` | Keyless Sigstore signatures and certificates for published Python artifacts |
 
 ## How to Release
 
@@ -74,9 +76,15 @@ Each release produces:
 8. Tag the release: `git tag -a v{VERSION} -m "Release v{VERSION}"`.
 9. Push tag: `git push origin v{VERSION}`.
 
-## Checksums
+## Checksums And Signing
 
-Release binaries should be accompanied by SHA-256 checksums:
+Published Python artifacts are signed in CI using Sigstore keyless signing via GitHub OIDC. The release workflow:
+
+- generates `SHA256SUMS.txt` for every file in `bindings/python/dist`
+- signs each artifact and the checksum manifest with `cosign sign-blob`
+- uploads the signed bundle as a workflow artifact alongside PyPI publication
+
+Manual CLI builds should still be accompanied by SHA-256 checksums:
 
 ```bash
 sha256sum target/release/posixlake-cli > posixlake-cli.sha256

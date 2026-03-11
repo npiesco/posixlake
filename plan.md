@@ -27,7 +27,7 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 ### Exit Criteria
 - `SUPPORT.md` drafted with support window and response targets.
 - `RELEASE_POLICY.md` approved with versioning/deprecation rules.
-- `PROD_READINESS.md` checklist created with pass/fail criteria.
+- Final readiness criteria tracked in `plan.md` and release docs.
 
 ## Phase 1 (Week 1-3): Security Defaults and Threat Model
 1. Add `SECURITY.md` with reporting process and patch SLAs.
@@ -104,7 +104,6 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 - `SUPPORT.md`
 - `RELEASE_POLICY.md`
 - `RELEASE.md`
-- `PROD_READINESS.md`
 - Threat model doc (`docs/threat-model.md`)
 - Runbooks (`docs/runbooks/*.md`)
 - Compatibility matrix (`docs/compatibility.md`)
@@ -114,7 +113,16 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 ### Feature: Support, release policy, and readiness checklist docs (Phase 0/5)
 1. Added `SUPPORT.md` with version support window, severity targets, and support boundaries for the self-hosted CLI.
 2. Added `RELEASE_POLICY.md` to codify SemVer, release prerequisites, required artifacts, deprecation, and compatibility rules.
-3. Added `PROD_READINESS.md` as the release sign-off checklist with current green/red status for security, release integrity, operations, compatibility, and supportability.
+3. Consolidated readiness tracking into `plan.md`, `RELEASE.md`, and release notes instead of maintaining a separate readiness checklist file.
+
+### Feature: Release artifact signing automation (Phase 2/5)
+1. Updated `.github/workflows/ci.yml` to install `cosign`, generate `SHA256SUMS.txt`, sign published Python artifacts with Sigstore keyless signing, and upload the signed release bundle.
+2. Updated `RELEASE.md` to document checksum generation and signing behavior in the automated release flow.
+3. Kept release gating state in `plan.md` and release docs rather than a separate readiness checklist.
+
+### Feature: v1.0.0 release notes draft (Phase 5)
+1. Added `docs/releases/v1.0.0.md` with summary, compatibility, upgrade/rollback notes, added/changed/fixed sections, and known limitations.
+2. Captured known limitations directly in the release notes draft.
 
 ### Feature: Legacy upgrade compatibility and rollback coverage (Phase 4)
 1. Added `docs/compatibility.md` describing supported OS, architecture, Python, and upgrade/rollback paths for `0.1.x`.

@@ -295,6 +295,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [bump-version]
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       matrix:
         include:
@@ -331,6 +334,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install setuptools wheel twine uniffi-bindgen
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
 
       - name: Build Rust library
         shell: bash
@@ -384,6 +390,31 @@ jobs:
           wheel_file=$(ls dist/*.whl | head -1)
           echo "Inspecting wheel: $wheel_file"
           python -m zipfile -l "$wheel_file" | grep -E "\.(dylib|so|dll)" || echo "WARNING: No native library found in wheel!"
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd bindings/python/dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Sign release artifacts
+        shell: bash
+        run: |
+          cd bindings/python/dist
+          for artifact in *; do
+            if [ -f "$artifact" ]; then
+              cosign sign-blob --yes "$artifact" \
+                --output-signature "$artifact.sig" \
+                --output-certificate "$artifact.pem"
+            fi
+          done
+
+      - name: Upload signed release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-release-bundle-${{ matrix.target }}
+          path: bindings/python/dist/*
 
       - name: Publish to PyPI
         env:
