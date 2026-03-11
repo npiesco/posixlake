@@ -152,6 +152,13 @@ impl AuditLogger {
         let log = self.log.lock().await;
         log.entries().to_vec()
     }
+
+    /// Reload audit entries from disk before returning them.
+    pub async fn get_entries_fresh(&self) -> Result<Vec<AuditEntry>> {
+        let mut log = self.log.lock().await;
+        *log = AuditLog::load(&self.log_path)?;
+        Ok(log.entries().to_vec())
+    }
 }
 
 #[cfg(test)]

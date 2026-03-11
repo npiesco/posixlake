@@ -798,7 +798,7 @@ impl DatabaseOps {
         let result = async {
             self.check_permission(&crate::security::Permission::Admin)?;
             if let Some(logger) = &self.audit_logger {
-                Ok(logger.get_entries().await)
+                logger.get_entries_fresh().await
             } else {
                 Ok(vec![])
             }
@@ -847,10 +847,17 @@ impl DatabaseOps {
 
     /// Get the base path of the database
     pub fn base_path(&self) -> &std::path::Path {
-        if self
-            .check_permission(&crate::security::Permission::Read)
-            .is_err()
-        {
+        if let Err(e) = self.check_permission(&crate::security::Permission::Read) {
+            if let Some(auth_ctx) = &self.auth_context {
+                if let Some(logger) = &self.audit_logger {
+                    let _ = futures::executor::block_on(logger.log(
+                        auth_ctx.username.clone(),
+                        "BASE_PATH".to_string(),
+                        format!("failed: {}", e),
+                        false,
+                    ));
+                }
+            }
             return std::path::Path::new("");
         }
         &self.base_path
@@ -906,10 +913,17 @@ impl DatabaseOps {
 
     /// Get the primary key column name, if set
     pub fn primary_key(&self) -> Option<String> {
-        if self
-            .check_permission(&crate::security::Permission::Read)
-            .is_err()
-        {
+        if let Err(e) = self.check_permission(&crate::security::Permission::Read) {
+            if let Some(auth_ctx) = &self.auth_context {
+                if let Some(logger) = &self.audit_logger {
+                    let _ = futures::executor::block_on(logger.log(
+                        auth_ctx.username.clone(),
+                        "PRIMARY_KEY".to_string(),
+                        format!("failed: {}", e),
+                        false,
+                    ));
+                }
+            }
             return None;
         }
         self.primary_key.lock().unwrap().clone()
@@ -988,10 +1002,17 @@ impl DatabaseOps {
 
     /// Get the database schema
     pub fn schema(&self) -> SchemaRef {
-        if self
-            .check_permission(&crate::security::Permission::Read)
-            .is_err()
-        {
+        if let Err(e) = self.check_permission(&crate::security::Permission::Read) {
+            if let Some(auth_ctx) = &self.auth_context {
+                if let Some(logger) = &self.audit_logger {
+                    let _ = futures::executor::block_on(logger.log(
+                        auth_ctx.username.clone(),
+                        "SCHEMA".to_string(),
+                        format!("failed: {}", e),
+                        false,
+                    ));
+                }
+            }
             return Arc::new(Schema::empty());
         }
         self.schema.clone()
@@ -1001,12 +1022,13 @@ impl DatabaseOps {
     pub async fn insert(&self, batch: RecordBatch) -> Result<u64> {
         info!("Inserting {} rows", batch.num_rows());
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
-
         // Track metrics on completion (success or error)
         let num_rows = batch.num_rows();
-        let result = self.insert_delta_native(batch).await;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Write)?;
+            self.insert_delta_native(batch).await
+        }
+        .await;
         match &result {
             Ok(_) => {
                 self.metrics.total_inserts.fetch_add(1, Ordering::Relaxed);
@@ -1037,25 +1059,44 @@ impl DatabaseOps {
         let num_rows = batch.num_rows();
         info!("Buffering {} rows for insertion", num_rows);
 
-        // Check write permission
-        self.check_permission(&crate::security::Permission::Write)?;
+        let result = async {
+            // Check write permission
+            self.check_permission(&crate::security::Permission::Write)?;
 
-        // Add batch to buffer and check if we should auto-flush
-        let should_flush = self.batch_buffer.push(batch).await;
+            // Add batch to buffer and check if we should auto-flush
+            let should_flush = self.batch_buffer.push(batch).await;
 
-        if should_flush {
-            let (batch_count, total_rows) = self.batch_buffer.stats().await;
-            info!(
-                "Auto-flushing batch buffer: {} rows across {} batches",
-                total_rows, batch_count
-            );
+            if should_flush {
+                let (batch_count, total_rows) = self.batch_buffer.stats().await;
+                info!(
+                    "Auto-flushing batch buffer: {} rows across {} batches",
+                    total_rows, batch_count
+                );
 
-            // Take all batches and flush
-            let batches_to_flush = self.batch_buffer.take_all().await;
-            self.flush_batches(batches_to_flush).await?;
+                // Take all batches and flush
+                let batches_to_flush = self.batch_buffer.take_all().await;
+                self.flush_batches(batches_to_flush).await?;
+            }
+
+            Ok(())
         }
+        .await;
 
-        Ok(())
+        match &result {
+            Ok(_) => {
+                self.audit_log(
+                    "INSERT_BUFFERED",
+                    &format!("{} rows buffered", num_rows),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log("INSERT_BUFFERED", &format!("failed: {}", e), false)
+                    .await;
+            }
+        }
+        result
     }
 
     /// Flush the write buffer immediately
@@ -1790,19 +1831,38 @@ impl DatabaseOps {
 
     /// Delete a specific file from Delta Lake
     /// Note: Delta Lake handles deletions natively through its transaction log
-    pub async fn delete(&self, _file_path: &str) -> Result<u64> {
-        self.check_permission(&crate::security::Permission::Delete)?;
+    pub async fn delete(&self, file_path: &str) -> Result<u64> {
+        let result = (|| {
+            self.check_permission(&crate::security::Permission::Delete)?;
 
-        // Track delete metrics
-        self.metrics.total_deletes.fetch_add(1, Ordering::Relaxed);
-        self.metrics
-            .total_transactions
-            .fetch_add(1, Ordering::Relaxed);
+            // Track delete metrics
+            self.metrics.total_deletes.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .total_transactions
+                .fetch_add(1, Ordering::Relaxed);
 
-        // Delta Lake doesn't support individual file deletion - use delete_rows_where instead
-        Err(Error::Other(
-            "Use delete_rows_where() for row-level deletion in Delta Lake".to_string(),
-        ))
+            // Delta Lake doesn't support individual file deletion - use delete_rows_where instead
+            Err(Error::Other(
+                "Use delete_rows_where() for row-level deletion in Delta Lake".to_string(),
+            ))
+        })();
+
+        match &result {
+            Ok(count) => {
+                self.audit_log(
+                    "DELETE",
+                    &format!("file={} ({} rows)", file_path, count),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log("DELETE", &format!("file={}: {}", file_path, e), false)
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Delete rows matching a SQL WHERE clause (row-level deletion with deletion vectors)
@@ -1810,10 +1870,12 @@ impl DatabaseOps {
     pub async fn delete_rows_where(&self, where_clause: &str) -> Result<usize> {
         info!("Deleting rows where: {}", where_clause);
 
-        // Check delete permission
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Delete)?;
+            self.delete_rows_where_inner(where_clause).await
+        }
+        .await;
 
-        let result = self.delete_rows_where_inner(where_clause).await;
         match &result {
             Ok(count) => {
                 self.metrics.total_deletes.fetch_add(1, Ordering::Relaxed);
@@ -1892,31 +1954,45 @@ impl DatabaseOps {
     pub async fn merge(&self) -> Result<crate::delta_lake::merge::MergeBuilder> {
         info!("Creating MERGE operation");
 
-        // Check delete permission
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Delete)?;
 
-        // Open the Delta Lake table
-        use crate::storage::s3::parse_s3_url;
-        use deltalake::{open_table, open_table_with_storage_options};
-        use url::Url;
+            // Open the Delta Lake table
+            use crate::storage::s3::parse_s3_url;
+            use deltalake::{open_table, open_table_with_storage_options};
+            use url::Url;
 
-        let table = if let (Some(s3_url), Some(storage_options)) =
-            (&self.s3_url, &self.s3_storage_options)
-        {
-            // S3 backend
-            let s3_url_parsed = parse_s3_url(s3_url)?;
-            open_table_with_storage_options(s3_url_parsed, storage_options.clone())
-                .await
-                .map_err(Error::DeltaTable)?
-        } else {
-            // Local backend
-            let table_url = Url::from_directory_path(&self.base_path)
-                .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
-            open_table(table_url).await.map_err(Error::DeltaTable)?
-        };
+            let table = if let (Some(s3_url), Some(storage_options)) =
+                (&self.s3_url, &self.s3_storage_options)
+            {
+                // S3 backend
+                let s3_url_parsed = parse_s3_url(s3_url)?;
+                open_table_with_storage_options(s3_url_parsed, storage_options.clone())
+                    .await
+                    .map_err(Error::DeltaTable)?
+            } else {
+                // Local backend
+                let table_url = Url::from_directory_path(&self.base_path)
+                    .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
+                open_table(table_url).await.map_err(Error::DeltaTable)?
+            };
 
-        Ok(crate::delta_lake::merge::MergeBuilder::new(table)
-            .with_primary_key(self.primary_key.lock().unwrap().clone()))
+            Ok(crate::delta_lake::merge::MergeBuilder::new(table)
+                .with_primary_key(self.primary_key.lock().unwrap().clone()))
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                self.audit_log("MERGE", "builder created", true).await;
+            }
+            Err(e) => {
+                self.audit_log("MERGE", &format!("failed: {}", e), false)
+                    .await;
+            }
+        }
+
+        result
     }
 
     /// Compact database files using Delta Lake OPTIMIZE
@@ -1926,10 +2002,12 @@ impl DatabaseOps {
     pub async fn optimize(&self) -> Result<()> {
         info!("Running Delta Lake OPTIMIZE operation");
 
-        // Check delete permission
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Delete)?;
+            self.optimize_inner(None, None).await
+        }
+        .await;
 
-        let result = self.optimize_inner(None, None).await;
         match &result {
             Ok(metrics) => {
                 info!(
@@ -1959,10 +2037,12 @@ impl DatabaseOps {
     pub async fn optimize_with_filter(&self, filter: &str) -> Result<()> {
         info!("Running Delta Lake OPTIMIZE with filter: {}", filter);
 
-        // Check delete permission
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Delete)?;
+            self.optimize_inner(Some(filter), None).await
+        }
+        .await;
 
-        let result = self.optimize_inner(Some(filter), None).await;
         match &result {
             Ok(metrics) => {
                 info!(
@@ -1995,10 +2075,12 @@ impl DatabaseOps {
             target_size_bytes
         );
 
-        // Check delete permission
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Delete)?;
+            self.optimize_inner(None, Some(target_size_bytes)).await
+        }
+        .await;
 
-        let result = self.optimize_inner(None, Some(target_size_bytes)).await;
         match &result {
             Ok(metrics) => {
                 info!(
@@ -2067,10 +2149,11 @@ impl DatabaseOps {
             retention_hours
         );
 
-        // Check delete permission
-        self.check_permission(&crate::security::Permission::Delete)?;
-
-        let result = self.vacuum_inner(retention_hours, false).await;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Delete)?;
+            self.vacuum_inner(retention_hours, false).await
+        }
+        .await;
         match &result {
             Ok(deleted_count) => {
                 info!("VACUUM completed: {} files deleted", deleted_count);
@@ -2105,10 +2188,38 @@ impl DatabaseOps {
             retention_hours
         );
 
-        // Match VACUUM permission boundary: preview requires delete permission too.
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = async {
+            // Match VACUUM permission boundary: preview requires delete permission too.
+            self.check_permission(&crate::security::Permission::Delete)?;
+            self.vacuum_inner_dry_run(retention_hours).await
+        }
+        .await;
 
-        self.vacuum_inner_dry_run(retention_hours).await
+        match &result {
+            Ok(files) => {
+                self.audit_log(
+                    "VACUUM_DRY_RUN",
+                    &format!(
+                        "retention={}h: {} files would be deleted",
+                        retention_hours,
+                        files.len()
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.metrics.total_errors.fetch_add(1, Ordering::Relaxed);
+                self.audit_log(
+                    "VACUUM_DRY_RUN",
+                    &format!("retention={}h: {}", retention_hours, e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Internal VACUUM implementation
@@ -2147,16 +2258,19 @@ impl DatabaseOps {
     pub async fn zorder(&self, columns: &[&str]) -> Result<()> {
         info!("Running Delta Lake Z-ORDER on columns: {:?}", columns);
 
-        // Check delete permission
-        self.check_permission(&crate::security::Permission::Delete)?;
+        let result = async {
+            self.check_permission(&crate::security::Permission::Delete)?;
 
-        if columns.is_empty() {
-            return Err(Error::InvalidOperation(
-                "Z-ORDER requires at least one column".to_string(),
-            ));
+            if columns.is_empty() {
+                return Err(Error::InvalidOperation(
+                    "Z-ORDER requires at least one column".to_string(),
+                ));
+            }
+
+            self.zorder_inner(columns).await
         }
+        .await;
 
-        let result = self.zorder_inner(columns).await;
         match &result {
             Ok(metrics) => {
                 info!(
@@ -2416,71 +2530,140 @@ impl DatabaseOps {
     /// Create a full backup of the database
     /// Create a full backup of the database
     pub async fn backup<P: AsRef<Path>>(&self, backup_path: P) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Backup)?;
         let backup_path = backup_path.as_ref();
-        info!("Creating backup at: {}", backup_path.display());
+        let result = async {
+            self.check_permission(&crate::security::Permission::Backup)?;
+            info!("Creating backup at: {}", backup_path.display());
 
-        // Create backup directory
-        std::fs::create_dir_all(backup_path)?;
+            // Create backup directory
+            std::fs::create_dir_all(backup_path)?;
 
-        // Copy all database files
-        crate::metadata::backup::copy_dir_recursively(&self.base_path, backup_path)?;
+            // Copy all database files
+            crate::metadata::backup::copy_dir_recursively(&self.base_path, backup_path)?;
 
-        // Count files and size
-        let mut total_files = 0;
-        let mut total_size_bytes = 0;
-        crate::metadata::backup::count_parquet_files(
-            backup_path,
-            &mut total_files,
-            &mut total_size_bytes,
-        )?;
+            // Count files and size
+            let mut total_files = 0;
+            let mut total_size_bytes = 0;
+            crate::metadata::backup::count_parquet_files(
+                backup_path,
+                &mut total_files,
+                &mut total_size_bytes,
+            )?;
 
-        // Query for total row count
-        let total_rows = self
-            .query("SELECT COUNT(*) as count FROM data")
-            .await
-            .ok()
-            .and_then(|batches| batches.first().cloned())
-            .and_then(|batch| {
-                batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<arrow::array::Int64Array>()
-                    .filter(|arr| !arr.is_empty() && !arr.is_null(0))
-                    .map(|arr| arr.value(0) as u64)
-            })
-            .unwrap_or(0);
+            // Query for total row count
+            let total_rows = self
+                .query("SELECT COUNT(*) as count FROM data")
+                .await
+                .ok()
+                .and_then(|batches| batches.first().cloned())
+                .and_then(|batch| {
+                    batch
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Int64Array>()
+                        .filter(|arr| !arr.is_empty() && !arr.is_null(0))
+                        .map(|arr| arr.value(0) as u64)
+                })
+                .unwrap_or(0);
 
-        // Write backup metadata
-        let metadata = BackupMetadata {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
-            total_rows,
-            total_files,
-            total_size_bytes,
-        };
+            // Write backup metadata
+            let metadata = BackupMetadata {
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+                total_rows,
+                total_files,
+                total_size_bytes,
+            };
 
-        let metadata_json = serde_json::to_string_pretty(&metadata)?;
-        std::fs::write(backup_path.join("backup_metadata.json"), metadata_json)?;
+            let metadata_json = serde_json::to_string_pretty(&metadata)?;
+            std::fs::write(backup_path.join("backup_metadata.json"), metadata_json)?;
 
-        info!(
-            "Backup completed: {} files, {} rows, {} bytes",
-            total_files, total_rows, total_size_bytes
-        );
-        Ok(())
+            info!(
+                "Backup completed: {} files, {} rows, {} bytes",
+                total_files, total_rows, total_size_bytes
+            );
+            Ok((total_files, total_rows, total_size_bytes))
+        }
+        .await;
+
+        match &result {
+            Ok((total_files, total_rows, total_size_bytes)) => {
+                self.audit_log(
+                    "BACKUP",
+                    &format!(
+                        "path={}, files={}, rows={}, bytes={}",
+                        backup_path.display(),
+                        total_files,
+                        total_rows,
+                        total_size_bytes
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log(
+                    "BACKUP",
+                    &format!("path={}: {}", backup_path.display(), e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result.map(|_| ())
     }
 
     /// Restore database from backup
     pub async fn restore<P: AsRef<Path>>(backup_path: P, restore_path: P) -> Result<()> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Restore,
-            None,
-            false,
-        )?;
-        Self::restore_impl(backup_path, restore_path).await
+        let backup_path = backup_path.as_ref();
+        let restore_path = restore_path.as_ref();
+        let result = async {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Restore,
+                None,
+                false,
+            )?;
+            Self::restore_impl(backup_path, restore_path).await
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "RESTORE",
+                    &format!(
+                        "backup_path={}, restore_path={}",
+                        backup_path.display(),
+                        restore_path.display()
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "RESTORE",
+                    &format!(
+                        "backup_path={}, restore_path={}: {}",
+                        backup_path.display(),
+                        restore_path.display(),
+                        e
+                    ),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Restore database from backup with credentials for auth-enabled backups
@@ -2489,13 +2672,53 @@ impl DatabaseOps {
         restore_path: P,
         credentials: Option<(&str, &str)>,
     ) -> Result<()> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Restore,
-            credentials,
-            true,
-        )?;
-        Self::restore_impl(backup_path, restore_path).await
+        let backup_path = backup_path.as_ref();
+        let restore_path = restore_path.as_ref();
+        let username = credentials.map(|(username, _)| username);
+        let result = async {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Restore,
+                credentials,
+                true,
+            )?;
+            Self::restore_impl(backup_path, restore_path).await
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "RESTORE",
+                    &format!(
+                        "backup_path={}, restore_path={}",
+                        backup_path.display(),
+                        restore_path.display()
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "RESTORE",
+                    &format!(
+                        "backup_path={}, restore_path={}: {}",
+                        backup_path.display(),
+                        restore_path.display(),
+                        e
+                    ),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     async fn restore_impl<P: AsRef<Path>>(backup_path: P, restore_path: P) -> Result<()> {
@@ -2515,110 +2738,179 @@ impl DatabaseOps {
         base_backup_path: P,
         incremental_path: P,
     ) -> Result<()> {
-        self.check_permission(&crate::security::Permission::Backup)?;
         let base_backup_path = base_backup_path.as_ref();
         let incremental_path = incremental_path.as_ref();
-        info!(
-            "Creating incremental backup at: {}",
-            incremental_path.display()
-        );
+        let result = async {
+            self.check_permission(&crate::security::Permission::Backup)?;
+            info!(
+                "Creating incremental backup at: {}",
+                incremental_path.display()
+            );
 
-        // Read base backup metadata to get timestamp
-        let base_metadata_path = base_backup_path.join("backup_metadata.json");
-        if !base_metadata_path.exists() {
-            return Err(Error::Other("Base backup metadata not found".to_string()));
-        }
+            // Read base backup metadata to get timestamp
+            let base_metadata_path = base_backup_path.join("backup_metadata.json");
+            if !base_metadata_path.exists() {
+                return Err(Error::Other("Base backup metadata not found".to_string()));
+            }
 
-        let base_metadata_content = std::fs::read_to_string(&base_metadata_path)?;
-        let base_metadata: BackupMetadata = serde_json::from_str(&base_metadata_content)?;
-        let since_timestamp = base_metadata.timestamp;
+            let base_metadata_content = std::fs::read_to_string(&base_metadata_path)?;
+            let base_metadata: BackupMetadata = serde_json::from_str(&base_metadata_content)?;
+            let since_timestamp = base_metadata.timestamp;
 
-        // Create incremental backup directory
-        std::fs::create_dir_all(incremental_path)?;
+            // Create incremental backup directory
+            std::fs::create_dir_all(incremental_path)?;
 
-        // Copy only parquet files modified after base backup timestamp
-        let mut total_files = 0;
-        let mut total_size_bytes = 0;
+            // Copy only parquet files modified after base backup timestamp
+            let mut total_files = 0;
+            let mut total_size_bytes = 0;
 
-        for entry in std::fs::read_dir(&self.base_path)? {
-            let entry = entry?;
-            let src = entry.path();
+            for entry in std::fs::read_dir(&self.base_path)? {
+                let entry = entry?;
+                let src = entry.path();
 
-            if src.is_file() && src.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                let metadata = entry.metadata()?;
-                if let Ok(modified) = metadata.modified() {
-                    let modified_ts = modified
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
+                if src.is_file() && src.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                    let metadata = entry.metadata()?;
+                    if let Ok(modified) = metadata.modified() {
+                        let modified_ts = modified
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
 
-                    if modified_ts > since_timestamp {
-                        let filename = src.file_name().unwrap();
-                        let dst = incremental_path.join(filename);
-                        let file_size = std::fs::copy(&src, &dst)?;
-                        total_size_bytes += file_size;
-                        total_files += 1;
+                        if modified_ts > since_timestamp {
+                            let filename = src.file_name().unwrap();
+                            let dst = incremental_path.join(filename);
+                            let file_size = std::fs::copy(&src, &dst)?;
+                            total_size_bytes += file_size;
+                            total_files += 1;
+                        }
                     }
                 }
             }
-        }
 
-        // Copy Delta Lake transaction log (only new entries)
-        let delta_log_src = self.base_path.join("_delta_log");
-        let delta_log_dst = incremental_path.join("_delta_log");
-        std::fs::create_dir_all(&delta_log_dst)?;
+            // Copy Delta Lake transaction log (only new entries)
+            let delta_log_src = self.base_path.join("_delta_log");
+            let delta_log_dst = incremental_path.join("_delta_log");
+            std::fs::create_dir_all(&delta_log_dst)?;
 
-        for entry in std::fs::read_dir(&delta_log_src)? {
-            let entry = entry?;
-            let src = entry.path();
+            for entry in std::fs::read_dir(&delta_log_src)? {
+                let entry = entry?;
+                let src = entry.path();
 
-            if src.is_file() && src.extension().and_then(|s| s.to_str()) == Some("json") {
-                let metadata = entry.metadata()?;
-                if let Ok(modified) = metadata.modified() {
-                    let modified_ts = modified
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
+                if src.is_file() && src.extension().and_then(|s| s.to_str()) == Some("json") {
+                    let metadata = entry.metadata()?;
+                    if let Ok(modified) = metadata.modified() {
+                        let modified_ts = modified
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
 
-                    if modified_ts > since_timestamp {
-                        let filename = src.file_name().unwrap();
-                        let dst = delta_log_dst.join(filename);
-                        std::fs::copy(&src, &dst)?;
+                        if modified_ts > since_timestamp {
+                            let filename = src.file_name().unwrap();
+                            let dst = delta_log_dst.join(filename);
+                            std::fs::copy(&src, &dst)?;
+                        }
                     }
                 }
             }
+
+            // Write incremental backup metadata
+            let metadata = BackupMetadata {
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+                total_rows: 0, // Incremental doesn't track total rows
+                total_files,
+                total_size_bytes,
+            };
+
+            let metadata_json = serde_json::to_string_pretty(&metadata)?;
+            std::fs::write(incremental_path.join("backup_metadata.json"), metadata_json)?;
+
+            info!(
+                "Incremental backup completed: {} files, {} bytes",
+                total_files, total_size_bytes
+            );
+            Ok((total_files, total_size_bytes))
+        }
+        .await;
+
+        match &result {
+            Ok((total_files, total_size_bytes)) => {
+                self.audit_log(
+                    "BACKUP_INCREMENTAL",
+                    &format!(
+                        "base_path={}, incremental_path={}, files={}, bytes={}",
+                        base_backup_path.display(),
+                        incremental_path.display(),
+                        total_files,
+                        total_size_bytes
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                self.audit_log(
+                    "BACKUP_INCREMENTAL",
+                    &format!(
+                        "base_path={}, incremental_path={}: {}",
+                        base_backup_path.display(),
+                        incremental_path.display(),
+                        e
+                    ),
+                    false,
+                )
+                .await;
+            }
         }
 
-        // Write incremental backup metadata
-        let metadata = BackupMetadata {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
-            total_rows: 0, // Incremental doesn't track total rows
-            total_files,
-            total_size_bytes,
-        };
-
-        let metadata_json = serde_json::to_string_pretty(&metadata)?;
-        std::fs::write(incremental_path.join("backup_metadata.json"), metadata_json)?;
-
-        info!(
-            "Incremental backup completed: {} files, {} bytes",
-            total_files, total_size_bytes
-        );
-        Ok(())
+        result.map(|_| ())
     }
 
     /// Verify backup integrity
     pub async fn verify_backup<P: AsRef<Path>>(backup_path: P) -> Result<BackupVerificationReport> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Backup,
-            None,
-            false,
-        )?;
-        crate::metadata::backup::verify_backup(backup_path)
+        let backup_path = backup_path.as_ref();
+        let result = (|| {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Backup,
+                None,
+                false,
+            )?;
+            crate::metadata::backup::verify_backup(backup_path)
+        })();
+
+        match &result {
+            Ok(report) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "VERIFY_BACKUP",
+                    &format!(
+                        "path={}, files_verified={}, bytes={}, schema_valid={}",
+                        backup_path.display(),
+                        report.files_verified,
+                        report.total_size_bytes,
+                        report.schema_valid
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "VERIFY_BACKUP",
+                    &format!("path={}: {}", backup_path.display(), e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Verify backup integrity with credentials for auth-enabled backups
@@ -2626,13 +2918,48 @@ impl DatabaseOps {
         backup_path: P,
         credentials: Option<(&str, &str)>,
     ) -> Result<BackupVerificationReport> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Backup,
-            credentials,
-            true,
-        )?;
-        crate::metadata::backup::verify_backup(backup_path)
+        let backup_path = backup_path.as_ref();
+        let username = credentials.map(|(username, _)| username);
+        let result = (|| {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Backup,
+                credentials,
+                true,
+            )?;
+            crate::metadata::backup::verify_backup(backup_path)
+        })();
+
+        match &result {
+            Ok(report) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "VERIFY_BACKUP",
+                    &format!(
+                        "path={}, files_verified={}, bytes={}, schema_valid={}",
+                        backup_path.display(),
+                        report.files_verified,
+                        report.total_size_bytes,
+                        report.schema_valid
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "VERIFY_BACKUP",
+                    &format!("path={}: {}", backup_path.display(), e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Restore database to a specific transaction (point-in-time recovery)
@@ -2642,13 +2969,54 @@ impl DatabaseOps {
         restore_path: P,
         target_txn_id: u64,
     ) -> Result<()> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Restore,
-            None,
-            false,
-        )?;
-        Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
+        let backup_path = backup_path.as_ref();
+        let restore_path = restore_path.as_ref();
+        let result = async {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Restore,
+                None,
+                false,
+            )?;
+            Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "RESTORE_TO_TRANSACTION",
+                    &format!(
+                        "backup_path={}, restore_path={}, target_txn_id={}",
+                        backup_path.display(),
+                        restore_path.display(),
+                        target_txn_id
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "RESTORE_TO_TRANSACTION",
+                    &format!(
+                        "backup_path={}, restore_path={}, target_txn_id={}: {}",
+                        backup_path.display(),
+                        restore_path.display(),
+                        target_txn_id,
+                        e
+                    ),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Restore database to a specific transaction with credentials for auth-enabled backups
@@ -2658,13 +3026,55 @@ impl DatabaseOps {
         target_txn_id: u64,
         credentials: Option<(&str, &str)>,
     ) -> Result<()> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Restore,
-            credentials,
-            true,
-        )?;
-        Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
+        let backup_path = backup_path.as_ref();
+        let restore_path = restore_path.as_ref();
+        let username = credentials.map(|(username, _)| username);
+        let result = async {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Restore,
+                credentials,
+                true,
+            )?;
+            Self::restore_to_transaction_impl(backup_path, restore_path, target_txn_id).await
+        }
+        .await;
+
+        match &result {
+            Ok(_) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "RESTORE_TO_TRANSACTION",
+                    &format!(
+                        "backup_path={}, restore_path={}, target_txn_id={}",
+                        backup_path.display(),
+                        restore_path.display(),
+                        target_txn_id
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "RESTORE_TO_TRANSACTION",
+                    &format!(
+                        "backup_path={}, restore_path={}, target_txn_id={}: {}",
+                        backup_path.display(),
+                        restore_path.display(),
+                        target_txn_id,
+                        e
+                    ),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     async fn restore_to_transaction_impl<P: AsRef<Path>>(
@@ -2750,13 +3160,48 @@ impl DatabaseOps {
 
     /// Get backup metadata
     pub async fn get_backup_metadata<P: AsRef<Path>>(backup_path: P) -> Result<BackupMetadata> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Backup,
-            None,
-            false,
-        )?;
-        crate::metadata::backup::get_backup_metadata(backup_path)
+        let backup_path = backup_path.as_ref();
+        let result = (|| {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Backup,
+                None,
+                false,
+            )?;
+            crate::metadata::backup::get_backup_metadata(backup_path)
+        })();
+
+        match &result {
+            Ok(metadata) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "GET_BACKUP_METADATA",
+                    &format!(
+                        "path={}, timestamp={}, rows={}, files={}, bytes={}",
+                        backup_path.display(),
+                        metadata.timestamp,
+                        metadata.total_rows,
+                        metadata.total_files,
+                        metadata.total_size_bytes
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    None,
+                    "GET_BACKUP_METADATA",
+                    &format!("path={}: {}", backup_path.display(), e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     /// Get backup metadata with credentials for auth-enabled backups
@@ -2764,13 +3209,49 @@ impl DatabaseOps {
         backup_path: P,
         credentials: Option<(&str, &str)>,
     ) -> Result<BackupMetadata> {
-        Self::authorize_backup_access(
-            backup_path.as_ref(),
-            crate::security::Permission::Backup,
-            credentials,
-            true,
-        )?;
-        crate::metadata::backup::get_backup_metadata(backup_path)
+        let backup_path = backup_path.as_ref();
+        let username = credentials.map(|(username, _)| username);
+        let result = (|| {
+            Self::authorize_backup_access(
+                backup_path,
+                crate::security::Permission::Backup,
+                credentials,
+                true,
+            )?;
+            crate::metadata::backup::get_backup_metadata(backup_path)
+        })();
+
+        match &result {
+            Ok(metadata) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "GET_BACKUP_METADATA",
+                    &format!(
+                        "path={}, timestamp={}, rows={}, files={}, bytes={}",
+                        backup_path.display(),
+                        metadata.timestamp,
+                        metadata.total_rows,
+                        metadata.total_files,
+                        metadata.total_size_bytes
+                    ),
+                    true,
+                )
+                .await;
+            }
+            Err(e) => {
+                Self::audit_backup_operation(
+                    backup_path,
+                    username,
+                    "GET_BACKUP_METADATA",
+                    &format!("path={}: {}", backup_path.display(), e),
+                    false,
+                )
+                .await;
+            }
+        }
+
+        result
     }
 
     fn authorize_backup_access(
@@ -2802,6 +3283,30 @@ impl DatabaseOps {
         }
 
         Ok(())
+    }
+
+    async fn audit_backup_operation(
+        backup_path: &Path,
+        username: Option<&str>,
+        operation: &str,
+        details: &str,
+        success: bool,
+    ) {
+        let audit_path = backup_path.join("_metadata").join("audit.json");
+        if !audit_path.exists() {
+            return;
+        }
+
+        if let Ok(logger) = crate::security::AuditLogger::new(audit_path) {
+            let _ = logger
+                .log(
+                    username.unwrap_or("anonymous").to_string(),
+                    operation.to_string(),
+                    details.to_string(),
+                    success,
+                )
+                .await;
+        }
     }
 }
 

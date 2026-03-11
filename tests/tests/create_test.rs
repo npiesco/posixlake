@@ -8,7 +8,47 @@
 use std::fs;
 use std::io::Write;
 use std::process::Command;
+use std::sync::OnceLock;
 use tempfile::TempDir;
+
+fn build_posixlake_binary() -> &'static std::path::PathBuf {
+    static BUILD_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+    BUILD_PATH.get_or_init(|| {
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("tests crate should have workspace root parent");
+        let target_dir = std::env::temp_dir().join("posixlake-cli-test-target");
+        let output = Command::new("cargo")
+            .arg("build")
+            .arg("-p")
+            .arg("posixlake")
+            .arg("--bin")
+            .arg("posixlake-cli")
+            .arg("--target-dir")
+            .arg(&target_dir)
+            .current_dir(workspace_root)
+            .output()
+            .expect("failed to build posixlake-cli for integration tests");
+        assert!(
+            output.status.success(),
+            "failed to build posixlake-cli for integration tests\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let binary_name = if cfg!(windows) {
+            "posixlake-cli.exe"
+        } else {
+            "posixlake-cli"
+        };
+        let binary_path = target_dir.join("debug").join(binary_name);
+        assert!(
+            binary_path.exists(),
+            "built posixlake-cli binary not found at {:?}",
+            binary_path
+        );
+        binary_path
+    })
+}
 
 fn posixlake_binary() -> std::path::PathBuf {
     if let Some(path) = option_env!("CARGO_BIN_EXE_posixlake_cli") {
@@ -50,11 +90,7 @@ fn posixlake_binary() -> std::path::PathBuf {
         return release_path;
     }
 
-    panic!(
-        "posixlake-cli binary not found. Tried debug path {:?} and release path {:?}. \
-Set CARGO_BIN_EXE_posixlake_cli or build with `cargo build -p posixlake --bin posixlake-cli`.",
-        debug_path, release_path
-    );
+    build_posixlake_binary().clone()
 }
 
 /// Test: posixlake create <DB_PATH> --schema "id:Int64,name:String"

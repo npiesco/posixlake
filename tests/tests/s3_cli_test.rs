@@ -4,6 +4,7 @@
 //! The CLI itself does the same fallback, so one test covers both paths.
 
 use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Option<Output> {
@@ -38,6 +39,45 @@ fn compose_file_path() -> std::path::PathBuf {
         .join("docker-compose.yml");
     assert!(path.exists(), "docker-compose.yml not found at {:?}", path);
     path
+}
+
+fn build_posixlake_binary() -> &'static std::path::PathBuf {
+    static BUILD_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
+    BUILD_PATH.get_or_init(|| {
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("tests crate should have workspace root parent");
+        let target_dir = std::env::temp_dir().join("posixlake-cli-test-target");
+        let output = Command::new("cargo")
+            .arg("build")
+            .arg("-p")
+            .arg("posixlake")
+            .arg("--bin")
+            .arg("posixlake-cli")
+            .arg("--target-dir")
+            .arg(&target_dir)
+            .current_dir(workspace_root)
+            .output()
+            .expect("failed to build posixlake-cli for integration tests");
+        assert!(
+            output.status.success(),
+            "failed to build posixlake-cli for integration tests\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let binary_name = if cfg!(windows) {
+            "posixlake-cli.exe"
+        } else {
+            "posixlake-cli"
+        };
+        let binary_path = target_dir.join("debug").join(binary_name);
+        assert!(
+            binary_path.exists(),
+            "built posixlake-cli binary not found at {:?}",
+            binary_path
+        );
+        binary_path
+    })
 }
 
 fn posixlake_binary() -> std::path::PathBuf {
@@ -77,14 +117,11 @@ fn posixlake_binary() -> std::path::PathBuf {
         }
     }
 
-    assert!(
-        release_path.exists(),
-        "posixlake-cli binary not found. Tried debug path {:?} and release path {:?}. \
-Build it first or set CARGO_BIN_EXE_posixlake_cli.",
-        debug_path,
-        release_path
-    );
-    release_path
+    if release_path.exists() {
+        return release_path;
+    }
+
+    build_posixlake_binary().clone()
 }
 
 fn has_native_engine() -> bool {
@@ -148,6 +185,15 @@ fn has_required_s3_images(engine: &str) -> bool {
     minio && mc
 }
 
+fn port_is_available(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+        && std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
+}
+
+fn has_required_s3_ports() -> bool {
+    port_is_available(9000) && port_is_available(9001)
+}
+
 #[cfg(target_os = "windows")]
 fn has_wsl_engine() -> bool {
     let distro = std::env::var("WSL_DISTRO").unwrap_or_else(|_| "Ubuntu".to_string());
@@ -185,6 +231,10 @@ fn test_cli_s3_start_stop_compose() {
             "Skipping: required local images missing for {} (minio/minio:latest, minio/mc:latest)",
             engine
         );
+        return;
+    }
+    if !has_required_s3_ports() {
+        eprintln!("Skipping: required MinIO ports 9000/9001 are already in use");
         return;
     }
 
@@ -267,6 +317,10 @@ fn test_cli_s3_test_auto_start() {
             "Skipping: required local images missing for {} (minio/minio:latest, minio/mc:latest)",
             engine
         );
+        return;
+    }
+    if !has_required_s3_ports() {
+        eprintln!("Skipping: required MinIO ports 9000/9001 are already in use");
         return;
     }
 
