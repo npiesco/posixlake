@@ -92,6 +92,10 @@ jobs:
         run: cargo test --test recovery_test --verbose
       - name: Schema migration tests
         run: cargo test --test schema_migration_test --verbose
+      - name: Failure drill tests
+        run: cargo test --test failure_drill_test --verbose
+      - name: Ops CLI tests
+        run: cargo test --test ops_cli_test --verbose
 
   # Extended integration tests
   test-extended-integration:

@@ -941,3 +941,27 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 2. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 3. Regression: Ran `cargo test --workspace` successfully.
 4. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Phase 3: Operations and Reliability
+
+### Feature: CLI health and metrics commands (Phase 3)
+1. Added `serde::Serialize` derive to `DatabaseMetrics` and `HealthStatus` structs in `posixlake/src/database_ops.rs` for JSON output.
+2. Added `Health` and `Metrics` CLI subcommands in `posixlake/src/bin/posixlake.rs` with `--user`/`--password` auth support, outputting JSON to stdout via `serde_json::to_string_pretty`.
+3. Red: Added CLI integration tests in `tests/tests/ops_cli_test.rs`: `test_cli_health_returns_json`, `test_cli_metrics_returns_json`, `test_cli_health_with_auth`, `test_cli_metrics_nonexistent_db`.
+4. Green: All 4 CLI tests passed on first run.
+5. Lint: Ran `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+6. Regression: Ran `cargo test --test monitoring_test` — all 5 existing monitoring tests passed.
+
+### Feature: SLO definition (Phase 3)
+1. Created `docs/slo.md` defining availability (99.9% open, 99.5% query/insert), latency (p50/p99 targets for queries, inserts, health checks), durability (0 row loss, operator-defined RPO/RTO), error budget (0.5% per 24h), and monitoring integration examples using `posixlake health` and `posixlake metrics`.
+
+### Feature: Operational runbooks (Phase 3)
+1. Created `docs/runbooks/backup-restore.md` with full/incremental backup procedures, restore steps, verification checklist, and failure mode table.
+2. Created `docs/runbooks/upgrade-rollback.md` with pre-upgrade checklist, upgrade steps, rollback procedure, and post-upgrade verification.
+3. Created `docs/runbooks/incident-triage.md` with severity assessment matrix, common issue diagnostics (open failure, high error rate, slow queries, mount failures), escalation steps, and post-incident checklist.
+
+### Feature: Failure drill tests (Phase 3)
+1. Red: Added failure drill tests in `tests/tests/failure_drill_test.rs`: `test_recovery_after_partial_delta_log_corruption` (corrupt delta log, verify graceful open/error), `test_backup_restore_drill` (backup, destroy original, restore, verify 5 rows + healthy), `test_concurrent_write_safety` (5 concurrent inserts, verify DB stays healthy and queryable).
+2. Green: All 3 failure drill tests passed on first run.
+3. Lint: Ran `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+4. Regression: All monitoring tests (5) passed.

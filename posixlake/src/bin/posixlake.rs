@@ -130,6 +130,36 @@ enum Commands {
         mount_point: PathBuf,
     },
 
+    /// Check database health
+    Health {
+        /// Path to the database
+        #[arg(value_name = "DB_PATH")]
+        db_path: PathBuf,
+
+        /// Username for authentication (or set POSIXLAKE_USER env var)
+        #[arg(long, short = 'u')]
+        user: Option<String>,
+
+        /// Password for authentication (or set POSIXLAKE_PASSWORD env var)
+        #[arg(long)]
+        password: Option<String>,
+    },
+
+    /// Show database metrics
+    Metrics {
+        /// Path to the database
+        #[arg(value_name = "DB_PATH")]
+        db_path: PathBuf,
+
+        /// Username for authentication (or set POSIXLAKE_USER env var)
+        #[arg(long, short = 'u')]
+        user: Option<String>,
+
+        /// Password for authentication (or set POSIXLAKE_PASSWORD env var)
+        #[arg(long)]
+        password: Option<String>,
+    },
+
     /// Test S3/MinIO backend
     S3Test {
         /// S3 URI (e.g., s3://bucket/path)
@@ -545,6 +575,44 @@ async fn main() -> Result<()> {
                 }
                 Ok(())
             }
+        }
+
+        Commands::Health {
+            db_path,
+            user,
+            password,
+        } => {
+            let credentials = resolve_credentials(user, password);
+            let db = match credentials {
+                Some((u, p)) => {
+                    let u: &'static str = Box::leak(u.into_boxed_str());
+                    let p: &'static str = Box::leak(p.into_boxed_str());
+                    DatabaseOps::open_with_credentials(&db_path, Some((u, p))).await?
+                }
+                None => DatabaseOps::open(&db_path).await?,
+            };
+            let health = db.health_check().await;
+            println!("{}", serde_json::to_string_pretty(&health)?);
+            Ok(())
+        }
+
+        Commands::Metrics {
+            db_path,
+            user,
+            password,
+        } => {
+            let credentials = resolve_credentials(user, password);
+            let db = match credentials {
+                Some((u, p)) => {
+                    let u: &'static str = Box::leak(u.into_boxed_str());
+                    let p: &'static str = Box::leak(p.into_boxed_str());
+                    DatabaseOps::open_with_credentials(&db_path, Some((u, p))).await?
+                }
+                None => DatabaseOps::open(&db_path).await?,
+            };
+            let metrics = db.get_metrics().await;
+            println!("{}", serde_json::to_string_pretty(&metrics)?);
+            Ok(())
         }
 
         Commands::S3Test {

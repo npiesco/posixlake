@@ -34,7 +34,7 @@ pub struct DataSkippingStats {
 }
 
 /// Real-time database metrics for monitoring and observability
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DatabaseMetrics {
     pub total_queries: u64,
     pub total_inserts: u64,
@@ -47,7 +47,7 @@ pub struct DatabaseMetrics {
 }
 
 /// Database health status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HealthStatus {
     pub status: String,
     pub uptime_seconds: f64,
