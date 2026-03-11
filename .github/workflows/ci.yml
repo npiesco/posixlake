@@ -52,6 +52,10 @@ jobs:
         run: cargo build --workspace --verbose
       - name: Build Release
         run: cargo build --workspace --release --verbose
+      - name: Verify build metadata
+        shell: bash
+        run: |
+          ./target/release/posixlake-cli --version
 
   # Unit tests on multiple platforms
   test-unit:
@@ -69,14 +73,70 @@ jobs:
       - name: Run unit tests
         run: cargo test --lib --verbose
 
-  # Integration tests with MinIO (Linux only)
-  test-integration:
-    name: Integration Tests (Docker + MinIO)
+  # Core integration tests (auth, backup/restore, monitoring, NFS core)
+  test-core-integration:
+    name: Core Integration Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      
+      - name: Auth and RBAC tests
+        run: cargo test --test auth_test --verbose
+      - name: Backup and restore tests
+        run: cargo test --test backup_restore_test --verbose
+      - name: Monitoring tests
+        run: cargo test --test monitoring_test --verbose
+      - name: NFS core tests
+        run: cargo test --test nfs_test --verbose
+      - name: Recovery tests
+        run: cargo test --test recovery_test --verbose
+      - name: Schema migration tests
+        run: cargo test --test schema_migration_test --verbose
+
+  # Extended integration tests
+  test-extended-integration:
+    name: Extended Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Delta native tests
+        run: cargo test --test delta_native_test --verbose
+      - name: Merge tests
+        run: cargo test --test merge_test --verbose
+      - name: Optimize tests
+        run: cargo test --test optimize_test --verbose
+      - name: Vacuum tests
+        run: cargo test --test vacuum_test --verbose
+      - name: ZOrder tests
+        run: cargo test --test zorder_test --verbose
+      - name: Time travel tests
+        run: cargo test --test time_travel_test --verbose
+      - name: Write buffer tests
+        run: cargo test --test write_buffer_test --verbose
+      - name: Data skipping tests
+        run: cargo test --test data_skipping_test --verbose
+      - name: Import tests
+        run: |
+          cargo test --test csv_import_test --verbose
+          cargo test --test parquet_import_test --verbose
+      - name: Query and schema tests
+        run: |
+          cargo test --test query_schema_test --verbose
+          cargo test --test csv_schema_test --verbose
+          cargo test --test complex_types_test --verbose
+          cargo test --test column_stats_test --verbose
+      - name: Transaction tests
+        run: cargo test --test explicit_transaction_test --verbose
+
+  # S3 integration tests with MinIO (Linux only)
+  test-s3-integration:
+    name: S3 Integration Tests (Docker + MinIO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Start MinIO
         run: |
           docker run -d \
@@ -87,16 +147,16 @@ jobs:
             -e MINIO_ROOT_PASSWORD=minioadmin \
             minio/minio:latest \
             server /data --console-address ":9001"
-          
+
           # Wait for MinIO to be ready
           timeout 30 bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 1; done'
-      
+
       - name: Setup MinIO bucket
         run: |
           docker run --rm --network=host --entrypoint /bin/sh \
             minio/mc:latest \
             -c "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb myminio/posixlake-test || true"
-      
+
       - name: Run S3 integration tests
         env:
           MINIO_ENDPOINT: http://localhost:9000
@@ -104,7 +164,7 @@ jobs:
           MINIO_SECRET_KEY: minioadmin
           MINIO_BUCKET: posixlake-test
         run: cargo test --test s3_test --verbose
-      
+
       - name: Stop MinIO
         if: always()
         run: docker stop minio && docker rm minio
@@ -121,6 +181,23 @@ jobs:
       - name: Run cargo audit
         run: cargo audit --deny warnings
 
+  # SBOM generation
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx
+      - name: Generate CycloneDX SBOM
+        run: cargo cyclonedx --format json --output-pattern bom
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: "**/bom.json"
+
   # Documentation build
   docs:
     name: Documentation
@@ -128,28 +205,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Build documentation
         run: cargo doc --no-deps --workspace --verbose
+
+  # Release gate - all required checks must pass
+  release-gate:
+    name: Release Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - build
+      - test-unit
+      - test-core-integration
+      - test-extended-integration
+      - test-s3-integration
+      - audit
+      - sbom
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [ "${{ needs.fmt.result }}" != "success" ] || \
+             [ "${{ needs.clippy.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.test-unit.result }}" != "success" ] || \
+             [ "${{ needs.test-core-integration.result }}" != "success" ] || \
+             [ "${{ needs.test-extended-integration.result }}" != "success" ] || \
+             [ "${{ needs.test-s3-integration.result }}" != "success" ] || \
+             [ "${{ needs.audit.result }}" != "success" ] || \
+             [ "${{ needs.sbom.result }}" != "success" ]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+          echo "All release gate checks passed"
 
   # Bump version before publishing
   bump-version:
     name: Bump Python Package Version
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [fmt, clippy, test-unit, test-integration, audit]
+    needs: [release-gate]
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      
+
       - name: Bump version
         run: |
           cd bindings/python
@@ -166,7 +275,7 @@ jobs:
                   f.write(content)
               print(f'Bumped version to {new_version}')
           "
-      
+
       - name: Commit and push version bump
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
@@ -202,27 +311,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      
+
       - name: Install Python dependencies
         run: |
           pip install setuptools wheel twine uniffi-bindgen
-      
+
       - name: Build Rust library
         shell: bash
         run: |
           cargo build --release --target ${{ matrix.target }} -p posixlake
           ls -la target/${{ matrix.target }}/release/ | grep libposixlake || echo "Library not found!"
-      
+
       - name: Generate UniFFI bindings
         shell: bash
         run: |
@@ -235,7 +344,7 @@ jobs:
             --library ../target/${{ matrix.target }}/release/${{ matrix.lib }} \
             --language python \
             --out-dir ../bindings/python/posixlake
-      
+
       - name: Copy library to bindings
         shell: bash
         run: |
@@ -248,8 +357,7 @@ jobs:
             echo "Error: Library file not found in bindings/python/posixlake/"
             exit 1
           fi
-          echo "✓ Library file copied to posixlake package directory"
-      
+
       - name: Build Python wheel
         shell: bash
         run: |
@@ -260,9 +368,8 @@ jobs:
           else
             python setup.py bdist_wheel
           fi
-          echo "✓ Wheel built successfully"
           ls -lh dist/
-      
+
       - name: Verify wheel contents
         shell: bash
         run: |
@@ -271,7 +378,7 @@ jobs:
           wheel_file=$(ls dist/*.whl | head -1)
           echo "Inspecting wheel: $wheel_file"
           python -m zipfile -l "$wheel_file" | grep -E "\.(dylib|so|dll)" || echo "WARNING: No native library found in wheel!"
-      
+
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
@@ -279,4 +386,3 @@ jobs:
         run: |
           cd bindings/python
           twine upload dist/* --skip-existing
-

@@ -919,3 +919,25 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 4. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
 5. Regression again: Re-ran `cargo test --workspace` successfully.
 6. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
+### Phase 2: CI/CD and Release Integrity
+
+### Feature: Expanded CI release matrix (Phase 2)
+1. Restructured `.github/workflows/ci.yml` with separate jobs for core integration tests (auth, backup/restore, monitoring, NFS, recovery, schema migration), extended integration tests (delta native, merge, optimize, vacuum, zorder, time travel, write buffer, data skipping, imports, queries, transactions), and S3 integration tests.
+2. Added `release-gate` aggregation job requiring all quality checks (fmt, clippy, build, test-unit, test-core-integration, test-extended-integration, test-s3-integration, audit, sbom) to pass before version bump and publishing.
+3. Updated `bump-version` to depend on `release-gate` instead of individual jobs.
+
+### Feature: Reproducible build metadata (Phase 2)
+1. Updated `posixlake/build.rs` to inject `POSIXLAKE_BUILD_COMMIT`, `POSIXLAKE_BUILD_DATE`, `POSIXLAKE_BUILD_TARGET`, and `POSIXLAKE_BUILD_PROFILE` environment variables at build time via `cargo:rustc-env`.
+2. Updated CLI `--version` output to display commit hash, build date, target triple, profile, and rustc version via `long_version()` in `posixlake/src/bin/posixlake.rs`.
+3. Verified output: `posixlake 0.1.0 / commit: 12a1e24 / date: 2026-03-11 / target: x86_64-unknown-linux-gnu / profile: release / rustc: 1.91.1`.
+
+### Feature: SBOM generation in CI (Phase 2)
+1. Added `sbom` CI job using `cargo-cyclonedx` to generate CycloneDX JSON SBOM and upload as a build artifact.
+2. SBOM job is required by the `release-gate` aggregation.
+
+### Feature: Release documentation (Phase 2)
+1. Created `RELEASE.md` documenting the versioning policy (SemVer), release gate requirements, build metadata format, artifact inventory (CLI binary, Python wheel, sdist, SBOM), automated and manual release procedures, checksum generation, and deprecation policy.
+2. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+3. Regression: Ran `cargo test --workspace` successfully.
+4. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.

@@ -21,10 +21,37 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::signal;
 
+/// Build metadata for --version output
+fn long_version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| {
+        format!(
+            "{}\ncommit: {}\ndate: {}\ntarget: {}\nprofile: {}\nrustc: {}",
+            env!("CARGO_PKG_VERSION"),
+            env!("POSIXLAKE_BUILD_COMMIT"),
+            env!("POSIXLAKE_BUILD_DATE"),
+            env!("POSIXLAKE_BUILD_TARGET"),
+            env!("POSIXLAKE_BUILD_PROFILE"),
+            rustc_version(),
+        )
+    })
+}
+
+fn rustc_version() -> String {
+    std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 /// posixlake - POSIX Filesystem Database (NFS Server)
 #[derive(Parser)]
 #[command(name = "posixlake")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(long_version = long_version())]
 #[command(about = "Mount posixlake as a POSIX filesystem via NFS server", long_about = None)]
 struct Cli {
     #[command(subcommand)]
