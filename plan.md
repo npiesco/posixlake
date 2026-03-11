@@ -111,6 +111,11 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 - Deprecation policy (`docs/deprecation.md`)
 - Release notes template (`docs/release-notes-template.md`)
 
+### Feature: Support, release policy, and readiness checklist docs (Phase 0/5)
+1. Added `SUPPORT.md` with version support window, severity targets, and support boundaries for the self-hosted CLI.
+2. Added `RELEASE_POLICY.md` to codify SemVer, release prerequisites, required artifacts, deprecation, and compatibility rules.
+3. Added `PROD_READINESS.md` as the release sign-off checklist with current green/red status for security, release integrity, operations, compatibility, and supportability.
+
 ### Feature: Legacy upgrade compatibility and rollback coverage (Phase 4)
 1. Added `docs/compatibility.md` describing supported OS, architecture, Python, and upgrade/rollback paths for `0.1.x`.
 2. Added `tests/tests/upgrade_compat_test.rs` to validate `0.0.x`-style metadata open, metadata upgrade, and backup/restore rollback.
