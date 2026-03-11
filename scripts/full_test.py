@@ -6,7 +6,20 @@ import subprocess
 import time
 import os
 import sys
-from posixlake import DatabaseOps, Schema, Field, NfsServer
+from posixlake import (
+    DatabaseOps,
+    Schema,
+    Field,
+    NfsServer,
+    get_backup_metadata,
+    get_backup_metadata_with_credentials,
+    restore,
+    restore_to_transaction,
+    restore_to_transaction_with_credentials,
+    restore_with_credentials,
+    verify_backup,
+    verify_backup_with_credentials,
+)
 
 def run(cmd):
     """Run command and print output"""
@@ -17,6 +30,24 @@ def run(cmd):
     if result.stderr:
         print(f"stderr: {result.stderr}")
     return result.returncode
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+def parse_count_value(value):
+    value = str(value).strip()
+    if value.isdigit():
+        return int(value)
+
+    for line in value.splitlines():
+        line = line.strip().rstrip(",")
+        if line.isdigit():
+            return int(line)
+
+    raise RuntimeError(f"could not parse count value from {value!r}")
 
 def main():
     print("\n" + "="*70)
@@ -42,6 +73,136 @@ def main():
         print("Database created with 3 rows")
     except Exception as e:
         print(f"Failed to create database: {e}")
+        sys.exit(1)
+
+    # Test newly exposed Python surface on a real database
+    print("\nTesting Python API integration surface...")
+    try:
+        db.set_primary_key("id")
+        require(db.primary_key() == "id", "primary_key() did not persist")
+        print("✓ primary_key / set_primary_key")
+
+        schema_out = db.get_schema()
+        require(schema_out.primary_key == "id", "get_schema() missing primary key")
+        print("✓ get_schema() primary key metadata")
+
+        metrics = db.get_metrics()
+        require(metrics.total_inserts >= 1, "metrics.total_inserts did not advance")
+        print(f"✓ get_metrics() inserts={metrics.total_inserts}")
+
+        health = db.health_check()
+        require(health.status == "healthy", f"unexpected health status: {health.status}")
+        print(f"✓ health_check() status={health.status}")
+
+        version_rows = db.query_version("SELECT COUNT(*) AS cnt FROM data", 1)
+        require(
+            version_rows and parse_count_value(version_rows[0].values["cnt"]) == 3,
+            "query_version() failed",
+        )
+        print("✓ query_version()")
+
+        now_ms = int(time.time() * 1000)
+        timestamp_rows = db.query_timestamp("SELECT COUNT(*) AS cnt FROM data", now_ms)
+        require(
+            timestamp_rows and parse_count_value(timestamp_rows[0].values["cnt"]) >= 3,
+            "query_timestamp() failed",
+        )
+        print("✓ query_timestamp()")
+
+        backup_path = f"{test_dir}/backup"
+        incremental_path = f"{test_dir}/backup_incremental"
+        restore_path = f"{test_dir}/restore"
+        restore_txn_path = f"{test_dir}/restore_txn"
+
+        db.backup(backup_path)
+        backup_metadata = get_backup_metadata(backup_path)
+        require(backup_metadata.total_rows >= 3, "get_backup_metadata() returned wrong row count")
+        print(f"✓ get_backup_metadata() rows={backup_metadata.total_rows}")
+
+        verification = verify_backup(backup_path)
+        require(verification.schema_valid, "verify_backup() did not report valid schema")
+        print(f"✓ verify_backup() files={verification.files_verified}")
+
+        db.insert_json('[{"id": 4, "name": "Dora"}]')
+        db.backup_incremental(backup_path, incremental_path)
+        print("✓ backup_incremental()")
+
+        restore(backup_path, restore_path)
+        restored_db = DatabaseOps.open(restore_path)
+        restored_rows = restored_db.query("SELECT COUNT(*) AS cnt FROM data")
+        require(
+            restored_rows and parse_count_value(restored_rows[0].values["cnt"]) == 3,
+            "restore() returned wrong row count",
+        )
+        print("✓ restore()")
+
+        restore_to_transaction(backup_path, restore_txn_path, backup_metadata.timestamp)
+        restored_txn_db = DatabaseOps.open(restore_txn_path)
+        restored_txn_rows = restored_txn_db.query("SELECT COUNT(*) AS cnt FROM data")
+        require(
+            restored_txn_rows and parse_count_value(restored_txn_rows[0].values["cnt"]) == 3,
+            "restore_to_transaction() returned wrong row count",
+        )
+        print("✓ restore_to_transaction()")
+    except Exception as e:
+        print(f"✗ Python API integration surface failed: {e}")
+        sys.exit(1)
+
+    print("\nTesting auth-backed backup/restore helpers...")
+    try:
+        auth_schema = Schema(fields=[
+            Field(name="id", data_type="Int32", nullable=False),
+            Field(name="name", data_type="String", nullable=False),
+        ], primary_key="id")
+        auth_db_path = f"{test_dir}/auth_db"
+        auth_backup_path = f"{test_dir}/auth_backup"
+        auth_restore_path = f"{test_dir}/auth_restore"
+        auth_restore_txn_path = f"{test_dir}/auth_restore_txn"
+
+        auth_db = DatabaseOps.create_with_auth(auth_db_path, auth_schema, True)
+        auth_db.create_user("admin", "admin_pass", ["admin"])
+        admin_db = DatabaseOps.open_with_credentials(auth_db_path, "admin", "admin_pass")
+        admin_db.insert_json('[{"id": 1, "name": "Secured"}]')
+        admin_db.backup(auth_backup_path)
+
+        auth_metadata = get_backup_metadata_with_credentials(auth_backup_path, "admin", "admin_pass")
+        require(auth_metadata.total_rows >= 1, "get_backup_metadata_with_credentials() failed")
+        print(f"✓ get_backup_metadata_with_credentials() rows={auth_metadata.total_rows}")
+
+        auth_verification = verify_backup_with_credentials(auth_backup_path, "admin", "admin_pass")
+        require(auth_verification.schema_valid, "verify_backup_with_credentials() failed")
+        print(f"✓ verify_backup_with_credentials() files={auth_verification.files_verified}")
+
+        restore_with_credentials(auth_backup_path, auth_restore_path, "admin", "admin_pass")
+        auth_restored_db = DatabaseOps.open_with_credentials(auth_restore_path, "admin", "admin_pass")
+        auth_restored_rows = auth_restored_db.query("SELECT COUNT(*) AS cnt FROM data")
+        require(
+            auth_restored_rows and parse_count_value(auth_restored_rows[0].values["cnt"]) == 1,
+            "restore_with_credentials() returned wrong row count",
+        )
+        print("✓ restore_with_credentials()")
+
+        restore_to_transaction_with_credentials(
+            auth_backup_path,
+            auth_restore_txn_path,
+            auth_metadata.timestamp,
+            "admin",
+            "admin_pass",
+        )
+        auth_restored_txn_db = DatabaseOps.open_with_credentials(
+            auth_restore_txn_path,
+            "admin",
+            "admin_pass",
+        )
+        auth_restored_txn_rows = auth_restored_txn_db.query("SELECT COUNT(*) AS cnt FROM data")
+        require(
+            auth_restored_txn_rows
+            and parse_count_value(auth_restored_txn_rows[0].values["cnt"]) == 1,
+            "restore_to_transaction_with_credentials() returned wrong row count",
+        )
+        print("✓ restore_to_transaction_with_credentials()")
+    except Exception as e:
+        print(f"✗ Auth-backed backup/restore helpers failed: {e}")
         sys.exit(1)
 
     # Test complex data types
@@ -74,10 +235,7 @@ def main():
     
     # Mount filesystem (OS-specific command)
     print(f"\nMounting filesystem at {test_dir}/mount...")
-    if sys.platform == "darwin":
-        mount_cmd = f"sudo mount_nfs -o nolocks,vers=3,tcp,port={nfs_port},mountport={nfs_port} localhost:/ {test_dir}/mount"
-    else:  # Linux
-        mount_cmd = f"sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={nfs_port},mountport={nfs_port} localhost:/ {test_dir}/mount"
+    mount_cmd = " ".join(nfs.get_mount_command(f"{test_dir}/mount"))
     print(f"$ {mount_cmd}")
     ret = subprocess.run(mount_cmd, shell=True, capture_output=True, text=True)
     if ret.returncode != 0:
@@ -191,4 +349,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

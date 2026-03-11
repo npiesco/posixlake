@@ -509,6 +509,23 @@ pub struct DataSkippingStats {
     pub bytes_skipped: u64,
 }
 
+/// Backup metadata
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BackupMetadata {
+    pub timestamp: u64,
+    pub total_rows: u64,
+    pub total_files: u64,
+    pub total_size_bytes: u64,
+}
+
+/// Backup verification report
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct BackupVerificationReport {
+    pub files_verified: u64,
+    pub total_size_bytes: u64,
+    pub schema_valid: bool,
+}
+
 /// S3 configuration
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct S3Config {
@@ -1262,7 +1279,7 @@ impl NfsServer {
                     "nolocks,vers=3,tcp,port={},mountport={}",
                     self.port, self.port
                 ),
-                "localhost:/".to_string(),
+                "localhost:/share".to_string(),
                 mount_point,
             ]
         }
@@ -1280,7 +1297,7 @@ impl NfsServer {
                     "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                     self.port, self.port
                 ),
-                "localhost:/".to_string(),
+                "localhost:/share".to_string(),
                 mount_point,
             ]
         }
@@ -1345,6 +1362,25 @@ pub fn restore(backup_path: String, restore_path: String) -> Result<(), PosixLak
 }
 
 #[uniffi::export]
+pub fn restore_with_credentials(
+    backup_path: String,
+    restore_path: String,
+    username: String,
+    password: String,
+) -> Result<(), PosixLakeError> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+        message: e.to_string(),
+    })?;
+    let credentials = Some((username.as_str(), password.as_str()));
+    runtime.block_on(CoreDatabaseOps::restore_with_credentials(
+        &backup_path,
+        &restore_path,
+        credentials,
+    ))?;
+    Ok(())
+}
+
+#[uniffi::export]
 pub fn restore_to_transaction(
     backup_path: String,
     restore_path: String,
@@ -1359,4 +1395,95 @@ pub fn restore_to_transaction(
         transaction_id,
     ))?;
     Ok(())
+}
+
+#[uniffi::export]
+pub fn restore_to_transaction_with_credentials(
+    backup_path: String,
+    restore_path: String,
+    transaction_id: u64,
+    username: String,
+    password: String,
+) -> Result<(), PosixLakeError> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+        message: e.to_string(),
+    })?;
+    let credentials = Some((username.as_str(), password.as_str()));
+    runtime.block_on(CoreDatabaseOps::restore_to_transaction_with_credentials(
+        &backup_path,
+        &restore_path,
+        transaction_id,
+        credentials,
+    ))?;
+    Ok(())
+}
+
+#[uniffi::export]
+pub fn verify_backup(backup_path: String) -> Result<BackupVerificationReport, PosixLakeError> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+        message: e.to_string(),
+    })?;
+    let report = runtime.block_on(CoreDatabaseOps::verify_backup(&backup_path))?;
+    Ok(BackupVerificationReport {
+        files_verified: report.files_verified as u64,
+        total_size_bytes: report.total_size_bytes,
+        schema_valid: report.schema_valid,
+    })
+}
+
+#[uniffi::export]
+pub fn verify_backup_with_credentials(
+    backup_path: String,
+    username: String,
+    password: String,
+) -> Result<BackupVerificationReport, PosixLakeError> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+        message: e.to_string(),
+    })?;
+    let credentials = Some((username.as_str(), password.as_str()));
+    let report = runtime.block_on(CoreDatabaseOps::verify_backup_with_credentials(
+        &backup_path,
+        credentials,
+    ))?;
+    Ok(BackupVerificationReport {
+        files_verified: report.files_verified as u64,
+        total_size_bytes: report.total_size_bytes,
+        schema_valid: report.schema_valid,
+    })
+}
+
+#[uniffi::export]
+pub fn get_backup_metadata(backup_path: String) -> Result<BackupMetadata, PosixLakeError> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+        message: e.to_string(),
+    })?;
+    let metadata = runtime.block_on(CoreDatabaseOps::get_backup_metadata(&backup_path))?;
+    Ok(BackupMetadata {
+        timestamp: metadata.timestamp,
+        total_rows: metadata.total_rows,
+        total_files: metadata.total_files as u64,
+        total_size_bytes: metadata.total_size_bytes,
+    })
+}
+
+#[uniffi::export]
+pub fn get_backup_metadata_with_credentials(
+    backup_path: String,
+    username: String,
+    password: String,
+) -> Result<BackupMetadata, PosixLakeError> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+        message: e.to_string(),
+    })?;
+    let credentials = Some((username.as_str(), password.as_str()));
+    let metadata = runtime.block_on(CoreDatabaseOps::get_backup_metadata_with_credentials(
+        &backup_path,
+        credentials,
+    ))?;
+    Ok(BackupMetadata {
+        timestamp: metadata.timestamp,
+        total_rows: metadata.total_rows,
+        total_files: metadata.total_files as u64,
+        total_size_bytes: metadata.total_size_bytes,
+    })
 }
