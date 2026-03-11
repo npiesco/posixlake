@@ -108,6 +108,14 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 - Threat model doc (`docs/threat-model.md`)
 - Runbooks (`docs/runbooks/*.md`)
 - Compatibility matrix (`docs/compatibility.md`)
+- Deprecation policy (`docs/deprecation.md`)
+- Release notes template (`docs/release-notes-template.md`)
+
+### Feature: Legacy upgrade compatibility and rollback coverage (Phase 4)
+1. Added `docs/compatibility.md` describing supported OS, architecture, Python, and upgrade/rollback paths for `0.1.x`.
+2. Added `tests/tests/upgrade_compat_test.rs` to validate `0.0.x`-style metadata open, metadata upgrade, and backup/restore rollback.
+3. Added `docs/deprecation.md` plus `docs/release-notes-template.md` to define the deprecation process and communication cadence.
+4. Updated `.github/workflows/ci.yml` and `RELEASE.md` so upgrade compatibility remains part of the required gate and release flow.
 
 ## Risks
 1. NFS behavior differences across OSes can cause flaky operational behavior.

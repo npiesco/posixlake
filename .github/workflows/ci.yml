@@ -92,6 +92,8 @@ jobs:
         run: cargo test --test recovery_test --verbose
       - name: Schema migration tests
         run: cargo test --test schema_migration_test --verbose
+      - name: Upgrade compatibility tests
+        run: cargo test --test upgrade_compat_test --verbose
       - name: Failure drill tests
         run: cargo test --test failure_drill_test --verbose
       - name: Ops CLI tests

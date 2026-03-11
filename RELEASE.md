@@ -84,6 +84,9 @@ sha256sum target/release/posixlake-cli > posixlake-cli.sha256
 
 ## Deprecation Policy
 
-- Features marked deprecated will emit a compile-time or runtime warning for at least one minor release cycle before removal.
-- On-disk format changes require a migration path documented in the release notes.
-- Python binding API changes follow the same deprecation cycle as the Rust API.
+The detailed deprecation process lives in `docs/deprecation.md`.
+
+- Features marked deprecated remain supported for at least one minor release before removal.
+- Release notes must include a `Deprecated` section using `docs/release-notes-template.md`.
+- On-disk format changes require documented upgrade and rollback guidance.
+- Python binding API changes follow the same deprecation window as the Rust API.
