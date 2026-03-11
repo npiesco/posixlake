@@ -51,6 +51,19 @@ enum Commands {
         /// Create database by importing from Parquet file(s) (supports glob patterns)
         #[arg(long, conflicts_with_all = ["schema", "from_csv"])]
         from_parquet: Option<PathBuf>,
+
+        /// Enable authentication and RBAC on the new database
+        #[arg(long)]
+        auth: bool,
+
+        /// Admin username for the initial admin user (requires --auth)
+        #[arg(long, requires = "auth", default_value = "admin")]
+        admin_user: String,
+
+        /// Admin password for the initial admin user (requires --auth).
+        /// If omitted with --auth, reads from POSIXLAKE_ADMIN_PASSWORD env var.
+        #[arg(long, requires = "auth")]
+        admin_password: Option<String>,
     },
 
     /// Mount a database as a filesystem via NFS
@@ -66,6 +79,14 @@ enum Commands {
         /// NFS server port (default: 12049)
         #[arg(long, short = 'p', default_value = "12049")]
         port: u16,
+
+        /// Username for authentication (or set POSIXLAKE_USER env var)
+        #[arg(long, short = 'u')]
+        user: Option<String>,
+
+        /// Password for authentication (or set POSIXLAKE_PASSWORD env var)
+        #[arg(long)]
+        password: Option<String>,
     },
 
     /// Unmount a mounted database
@@ -164,13 +185,26 @@ async fn main() -> Result<()> {
             schema,
             from_csv,
             from_parquet,
+            auth,
+            admin_user,
+            admin_password,
         } => {
             match (schema, from_csv, from_parquet) {
                 (Some(schema_str), None, None) => {
                     // Create with explicit schema
                     eprintln!("Creating database at: {}", db_path.display());
                     let parsed_schema = parse_schema(&schema_str)?;
-                    let _db = DatabaseOps::create(&db_path, Arc::new(parsed_schema)).await?;
+                    let db = if auth {
+                        DatabaseOps::create_with_auth(&db_path, Arc::new(parsed_schema), true)
+                            .await?
+                    } else {
+                        DatabaseOps::create(&db_path, Arc::new(parsed_schema)).await?
+                    };
+                    if auth {
+                        let password = resolve_admin_password(admin_password)?;
+                        db.create_user(&admin_user, &password, &["admin"]).await?;
+                        eprintln!("  Auth enabled, admin user '{}' created", admin_user);
+                    }
                     eprintln!("Database created successfully with schema:");
                     eprintln!("  {}", schema_str);
                     Ok(())
@@ -178,7 +212,13 @@ async fn main() -> Result<()> {
                 (None, Some(csv_path), None) => {
                     // Create from CSV
                     eprintln!("Creating database from CSV: {}", csv_path.display());
-                    let _db = DatabaseOps::create_from_csv(&db_path, &csv_path).await?;
+                    let mut db = DatabaseOps::create_from_csv(&db_path, &csv_path).await?;
+                    if auth {
+                        db.enable_auth()?;
+                        let password = resolve_admin_password(admin_password)?;
+                        db.create_user(&admin_user, &password, &["admin"]).await?;
+                        eprintln!("  Auth enabled, admin user '{}' created", admin_user);
+                    }
                     eprintln!("Database created successfully from CSV");
                     eprintln!("  Source: {}", csv_path.display());
                     eprintln!("  Database: {}", db_path.display());
@@ -187,7 +227,13 @@ async fn main() -> Result<()> {
                 (None, None, Some(parquet_path)) => {
                     // Create from Parquet
                     eprintln!("Creating database from Parquet: {}", parquet_path.display());
-                    let _db = DatabaseOps::create_from_parquet(&db_path, &parquet_path).await?;
+                    let mut db = DatabaseOps::create_from_parquet(&db_path, &parquet_path).await?;
+                    if auth {
+                        db.enable_auth()?;
+                        let password = resolve_admin_password(admin_password)?;
+                        db.create_user(&admin_user, &password, &["admin"]).await?;
+                        eprintln!("  Auth enabled, admin user '{}' created", admin_user);
+                    }
                     eprintln!("Database created successfully from Parquet");
                     eprintln!("  Source: {}", parquet_path.display());
                     eprintln!("  Database: {}", db_path.display());
@@ -209,11 +255,22 @@ async fn main() -> Result<()> {
             db_path,
             mount_point,
             port,
+            user,
+            password,
         } => {
-            // Open database
+            // Open database with optional credentials
             eprintln!("Opening database: {}", db_path.display());
-            let db = DatabaseOps::open(&db_path).await?;
-            let db = Arc::new(db);
+            let credentials = resolve_credentials(user, password);
+            let db = match credentials {
+                Some((u, p)) => {
+                    eprintln!("  Authenticating as '{}'", u);
+                    // Leak into 'static for the Credentials type; these live for the process
+                    let u: &'static str = Box::leak(u.into_boxed_str());
+                    let p: &'static str = Box::leak(p.into_boxed_str());
+                    Arc::new(DatabaseOps::open_with_credentials(&db_path, Some((u, p))).await?)
+                }
+                None => Arc::new(DatabaseOps::open(&db_path).await?),
+            };
 
             // Start NFS server
             eprintln!("Starting NFS server on port {}", port);
@@ -1194,4 +1251,28 @@ fn parse_schema(schema_str: &str) -> Result<Schema> {
     }
 
     Ok(Schema::new(fields))
+}
+
+/// Resolve admin password from flag or POSIXLAKE_ADMIN_PASSWORD env var
+fn resolve_admin_password(flag: Option<String>) -> Result<String> {
+    flag.or_else(|| std::env::var("POSIXLAKE_ADMIN_PASSWORD").ok())
+        .ok_or_else(|| {
+            Error::InvalidOperation(
+                "Admin password required: use --admin-password or set POSIXLAKE_ADMIN_PASSWORD"
+                    .to_string(),
+            )
+        })
+}
+
+/// Resolve credentials from flags or POSIXLAKE_USER / POSIXLAKE_PASSWORD env vars
+fn resolve_credentials(
+    user_flag: Option<String>,
+    password_flag: Option<String>,
+) -> Option<(String, String)> {
+    let user = user_flag.or_else(|| std::env::var("POSIXLAKE_USER").ok());
+    let password = password_flag.or_else(|| std::env::var("POSIXLAKE_PASSWORD").ok());
+    match (user, password) {
+        (Some(u), Some(p)) => Some((u, p)),
+        _ => None,
+    }
 }

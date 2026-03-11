@@ -661,6 +661,24 @@ impl DatabaseOps {
         Ok(db)
     }
 
+    /// Enable authentication on an existing database
+    ///
+    /// Sets up user store, audit logger, and role manager. The caller
+    /// receives system-level (admin) access to create the initial user.
+    pub fn enable_auth(&mut self) -> Result<()> {
+        let users_path = self.base_path.join("_metadata").join("users.json");
+        let audit_path = self.base_path.join("_metadata").join("audit.json");
+
+        let user_store = crate::security::UserStore::new();
+        user_store.save(&users_path)?;
+
+        self.user_store = Some(Arc::new(tokio::sync::Mutex::new(user_store)));
+        self.audit_logger = Some(Arc::new(crate::security::AuditLogger::new(audit_path)?));
+        self.role_manager = Some(Arc::new(crate::security::RoleManager::new()));
+        self.auth_context = Some(Arc::new(crate::security::AuthContext::system()));
+        Ok(())
+    }
+
     /// Open an existing database
     /// Open existing Delta Lake database (delegates to open_delta_native)
     pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {

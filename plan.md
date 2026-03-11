@@ -877,6 +877,17 @@ This plan targets enterprise readiness for a local/self-hosted CLI component, no
 2. Created `docs/threat-model.md` covering trust boundaries (API, filesystem, NFS, S3), seven threat categories (unauthorized access, privilege escalation, credential compromise, audit tampering, data integrity, NFS exposure, SQL injection), residual risks, and operator recommendations.
 3. Created `docs/auth-modes.md` documenting auth-disabled vs auth-enabled behavior, detection mechanism, credential passing, the full permission matrix for all DatabaseOps methods, built-in roles, audit trail format, and planned CLI auth support.
 
+### Feature: CLI auth mode selection and credential passing (Phase 1)
+1. Added `--auth`, `--admin-user`, `--admin-password` flags to the `create` CLI subcommand so databases can be created with authentication enabled from the command line.
+2. Added `--user` / `--password` flags to the `mount` CLI subcommand, with fallback to `POSIXLAKE_USER` / `POSIXLAKE_PASSWORD` environment variables, so auth-enabled databases can be mounted with credentials.
+3. Added `DatabaseOps::enable_auth()` public method so any database (including CSV/Parquet imports) can have auth enabled after creation.
+4. Added `resolve_admin_password()` helper reading from flag or `POSIXLAKE_ADMIN_PASSWORD` env var with clear error on missing password.
+5. Added `resolve_credentials()` helper reading from flags or env vars with graceful None when both are absent.
+6. Added `cargo audit --deny warnings` CI job gating the release pipeline so high/critical dependency vulnerabilities block publishing.
+7. Lint: Ran `cargo fmt --all` and `cargo clippy --all-targets --all-features -- -D warnings` successfully.
+8. Regression: Ran `cargo test --workspace` successfully.
+9. Rebuild: Built release binary with `cargo build --release -p posixlake --bin posixlake-cli`.
+
 ### Feature: Audit trail for permission-denied base_path access (Phase 1)
 1. Red: Added integration test `test_base_path_permission_denied_is_audited` in `tests/tests/auth_test.rs`; validated failure (`base_path()` denied writer (no read) access but emitted no `BASE_PATH` audit entry).
 2. Green: Updated `DatabaseOps::base_path()` to log `BASE_PATH` with `success=false` via `futures::executor::block_on` when the read permission check fails.

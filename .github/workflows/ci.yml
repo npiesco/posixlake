@@ -109,6 +109,18 @@ jobs:
         if: always()
         run: docker stop minio && docker rm minio
 
+  # Dependency vulnerability audit
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run cargo audit
+        run: cargo audit --deny warnings
+
   # Documentation build
   docs:
     name: Documentation
@@ -125,7 +137,7 @@ jobs:
     name: Bump Python Package Version
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [fmt, clippy, test-unit, test-integration]
+    needs: [fmt, clippy, test-unit, test-integration, audit]
     permissions:
       contents: write
     steps:
