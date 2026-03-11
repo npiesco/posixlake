@@ -218,7 +218,7 @@ else:
     print("⚠ NFS server not ready, POSIX operations may fail")
 
 # Mount filesystem (requires sudo - run this in terminal)
-# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/posixlake
+# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/share /mnt/posixlake
 
 # Now use standard Unix tools to query and trigger Delta Lake operations:
 # $ cat /mnt/posixlake/data/data.csv  # Queries Parquet data, converts to CSV
@@ -256,27 +256,23 @@ db = DatabaseOps.create("/path/to/db", schema)
 
 # Insert initial data
 db.insert_json('[{"id": 1, "name": "Alice"}]')
-version_1 = db.get_current_version()
-print(f"Version 1: {version_1}")
 
 # Insert more data
 db.insert_json('[{"id": 2, "name": "Bob"}]')
-version_2 = db.get_current_version()
-print(f"Version 2: {version_2}")
 
-# Query by version (historical data)
-results_v1 = db.query_json_at_version("SELECT * FROM data", version_1)
-print(f"Data at version {version_1}: {results_v1}")
+# Query by version (creation is version 0, first insert is version 1, second insert is version 2)
+results_v1 = db.query_version_json("SELECT * FROM data", 1)
+print(f"Data at version 1: {results_v1}")
 # [{"id": 1, "name": "Alice"}]
 
-results_v2 = db.query_json_at_version("SELECT * FROM data", version_2)
-print(f"Data at version {version_2}: {results_v2}")
+results_v2 = db.query_version_json("SELECT * FROM data", 2)
+print(f"Data at version 2: {results_v2}")
 # [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
 
-# Query by timestamp
+# Query by timestamp (milliseconds since epoch)
 import time
-timestamp = int(time.time())
-results = db.query_json_at_timestamp("SELECT * FROM data", timestamp)
+timestamp = int(time.time() * 1000)
+results = db.query_timestamp_json("SELECT * FROM data", timestamp)
 print(f"Data at timestamp {timestamp}: {results}")
 ```
 
@@ -421,8 +417,8 @@ results = db.query_json("""
 """)
 
 # Time travel queries
-results = db.query_json_at_version("SELECT * FROM data", version=5)
-results = db.query_json_at_timestamp("SELECT * FROM data", timestamp=1234567890)
+results = db.query_version_json("SELECT * FROM data", version=5)
+results = db.query_timestamp_json("SELECT * FROM data", timestamp_ms=1234567890000)
 ```
 
 #### Row Deletion
@@ -442,22 +438,13 @@ db.delete_rows_where("1=1")
 posixlake supports Delta Lake's time travel feature, allowing you to query historical versions of your data:
 
 ```python
-# Get current version
-current_version = db.get_current_version()
-print(f"Current version: {current_version}")
-
 # Query by version
-results = db.query_json_at_version("SELECT * FROM data", version=10)
+results = db.query_version_json("SELECT * FROM data", version=10)
 
-# Query by timestamp
+# Query by timestamp (milliseconds since epoch)
 import time
-timestamp = int(time.time()) - 3600  # 1 hour ago
-results = db.query_json_at_timestamp("SELECT * FROM data", timestamp)
-
-# Get version history
-history = db.get_version_history()
-for entry in history:
-    print(f"Version {entry['version']}: {entry['timestamp']} - {entry['operation']}")
+timestamp_ms = int(time.time() * 1000) - 3_600_000  # 1 hour ago
+results = db.query_timestamp_json("SELECT * FROM data", timestamp_ms)
 ```
 
 ### Delta Lake Operations
@@ -523,7 +510,7 @@ else:
 
 ```bash
 # Mount command (requires sudo)
-sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/posixlake
+sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/share /mnt/posixlake
 
 # Verify mount
 ls -la /mnt/posixlake/
@@ -620,19 +607,18 @@ nfs.shutdown()
 ### Authentication & Security
 
 ```python
-from posixlake import DatabaseOps, Schema, Field, Credentials
+from posixlake import DatabaseOps, Schema, Field
 
 # Create database with authentication enabled
 schema = Schema(fields=[...], primary_key=None)
 db = DatabaseOps.create_with_auth("/path/to/db", schema, auth_enabled=True)
+db.create_user("admin", "secret", ["admin"])
 
 # Open with credentials
-credentials = Credentials(username="admin", password="secret")
-db = DatabaseOps.open_with_credentials("/path/to/db", credentials)
+db = DatabaseOps.open_with_credentials("/path/to/db", "admin", "secret")
 
 # User management
-db.create_user("alice", "password123", role="admin")
-db.delete_user("alice")
+db.create_user("alice", "password123", ["read", "write"])
 
 # Role-based access control
 # Permissions checked automatically on all operations
@@ -641,17 +627,42 @@ db.delete_user("alice")
 ### Backup & Restore
 
 ```python
+from posixlake import (
+    get_backup_metadata,
+    get_backup_metadata_with_credentials,
+    restore,
+    restore_to_transaction,
+    restore_to_transaction_with_credentials,
+    restore_with_credentials,
+    verify_backup,
+    verify_backup_with_credentials,
+)
+
 # Full backup
-backup_path = db.backup("/path/to/backup")
-print(f"Backup created: {backup_path}")
+db.backup("/path/to/backup")
 
 # Incremental backup
-backup_path = db.backup_incremental("/path/to/backup")
-print(f"Incremental backup created: {backup_path}")
+db.backup_incremental("/path/to/base_backup", "/path/to/incremental_backup")
 
-# Restore
-db.restore("/path/to/backup")
-print("✓ Database restored")
+# Backup inspection
+metadata = get_backup_metadata("/path/to/backup")
+report = verify_backup("/path/to/backup")
+
+# Restore helpers
+restore("/path/to/backup", "/path/to/restore")
+restore_to_transaction("/path/to/backup", "/path/to/restore_txn", metadata.timestamp)
+
+# Auth-enabled backup helpers
+metadata = get_backup_metadata_with_credentials("/path/to/auth_backup", "admin", "secret")
+report = verify_backup_with_credentials("/path/to/auth_backup", "admin", "secret")
+restore_with_credentials("/path/to/auth_backup", "/path/to/auth_restore", "admin", "secret")
+restore_to_transaction_with_credentials(
+    "/path/to/auth_backup",
+    "/path/to/auth_restore_txn",
+    metadata.timestamp,
+    "admin",
+    "secret",
+)
 ```
 
 ### Monitoring
@@ -659,15 +670,15 @@ print("✓ Database restored")
 ```python
 # Get real-time metrics
 metrics = db.get_metrics()
-print(f"Metrics: {metrics}")
+print(metrics.total_queries, metrics.total_inserts, metrics.uptime_seconds)
 
 # Health check
-is_healthy = db.health_check()
-print(f"Database healthy: {is_healthy}")
+health = db.health_check()
+print(health.status, health.total_files, health.total_size_bytes)
 
 # Data skipping statistics
 stats = db.get_data_skipping_stats()
-print(f"Data skipping stats: {stats}")
+print(stats.files_read, stats.files_skipped, stats.bytes_scanned)
 ```
 
 ---
@@ -687,28 +698,34 @@ Main class for database operations.
 | `create_from_parquet(db_path, parquet_path)` | Create from Parquet | `DatabaseOps` |
 | `open(path)` | Open existing database | `DatabaseOps` |
 | `create_with_auth(path, schema, auth_enabled)` | Create with authentication | `DatabaseOps` |
-| `open_with_credentials(path, credentials)` | Open with credentials | `DatabaseOps` |
+| `open_with_credentials(path, username, password)` | Open with credentials | `DatabaseOps` |
 | `create_with_s3(s3_path, schema, s3_config)` | Create on S3 | `DatabaseOps` |
 | `open_with_s3(s3_path, s3_config)` | Open from S3 | `DatabaseOps` |
 | `insert_json(json_data)` | Insert data from JSON | `u64` (rows inserted) |
 | `insert_buffered_json(json_data)` | Buffered insert | `u64` (rows inserted) |
 | `flush_write_buffer()` | Flush buffered writes | `None` |
 | `merge_json(json_data, key_column)` | MERGE (UPSERT) operation | `str` (JSON metrics) |
+| `query(sql)` | Execute SQL query | `list[Row]` |
 | `query_json(sql)` | Execute SQL query | `str` (JSON results) |
-| `query_json_at_version(sql, version)` | Time travel query by version | `str` (JSON results) |
-| `query_json_at_timestamp(sql, timestamp)` | Time travel query by timestamp | `str` (JSON results) |
+| `query_version(sql, version)` | Time travel query by version | `list[Row]` |
+| `query_version_json(sql, version)` | Time travel query by version | `str` (JSON results) |
+| `query_timestamp(sql, timestamp_ms)` | Time travel query by timestamp | `list[Row]` |
+| `query_timestamp_json(sql, timestamp_ms)` | Time travel query by timestamp | `str` (JSON results) |
 | `delete_rows_where(condition)` | Delete rows by condition | `u64` (rows deleted) |
-| `optimize()` | Compact Parquet files | `str` (result) |
-| `vacuum(retention_hours)` | Remove old files | `str` (result) |
-| `zorder(columns)` | Multi-dimensional clustering | `str` (result) |
-| `get_current_version()` | Get current version | `i64` |
-| `get_version_history()` | Get version history | `list` |
-| `get_data_skipping_stats()` | Get skipping statistics | `str` (JSON) |
-| `get_metrics()` | Get real-time metrics | `str` (JSON) |
-| `health_check()` | Health check | `bool` |
-| `backup(path)` | Full backup | `str` (backup path) |
-| `backup_incremental(path)` | Incremental backup | `str` (backup path) |
-| `restore(path)` | Restore from backup | `None` |
+| `optimize()` | Compact Parquet files | `None` |
+| `optimize_with_target_size(target_size_bytes)` | Compact with target size | `None` |
+| `optimize_with_filter(filter)` | Compact with filter | `None` |
+| `vacuum(retention_hours)` | Remove old files | `None` |
+| `vacuum_dry_run(retention_hours)` | Preview files to remove | `list[str]` |
+| `zorder(columns)` | Multi-dimensional clustering | `None` |
+| `get_data_skipping_stats()` | Get skipping statistics | `DataSkippingStats` |
+| `get_metrics()` | Get real-time metrics | `DatabaseMetrics` |
+| `health_check()` | Health check | `HealthStatus` |
+| `get_schema()` | Get database schema | `Schema` |
+| `primary_key()` | Get primary key column | `str | None` |
+| `set_primary_key(column_name)` | Persist primary key metadata | `None` |
+| `backup(path)` | Full backup | `None` |
+| `backup_incremental(base_backup_path, incremental_path)` | Incremental backup | `None` |
 
 ### Schema
 

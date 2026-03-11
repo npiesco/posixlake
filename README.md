@@ -402,7 +402,7 @@ print(results)
 
 # Mount as filesystem and use POSIX tools
 nfs = NfsServer(db, 12049)
-# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/ /mnt/posixlake
+# sudo mount_nfs -o nolocks,vers=3,tcp,port=12049,mountport=12049 localhost:/share /mnt/posixlake
 # cat /mnt/posixlake/data/data.csv | grep "Alice" | awk -F',' '{print $2}'
 ```
 
