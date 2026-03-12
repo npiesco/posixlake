@@ -247,54 +247,12 @@ jobs:
           fi
           echo "All release gate checks passed"
 
-  # Bump version before publishing
-  bump-version:
-    name: Bump Python Package Version
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [release-gate]
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Bump version
-        run: |
-          cd bindings/python
-          python -c "
-          import re
-          with open('setup.py', 'r') as f:
-              content = f.read()
-          match = re.search(r'version=\"(\d+)\.(\d+)\.(\d+)\"', content)
-          if match:
-              major, minor, patch = match.groups()
-              new_version = f'{major}.{minor}.{int(patch) + 1}'
-              content = re.sub(r'version=\"\d+\.\d+\.\d+\"', f'version=\"{new_version}\"', content)
-              with open('setup.py', 'w') as f:
-                  f.write(content)
-              print(f'Bumped version to {new_version}')
-          "
-
-      - name: Commit and push version bump
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add bindings/python/setup.py
-          git diff --staged --quiet || (git commit -m "Bump version [skip ci]" && git push)
-
   # Publish Python bindings to PyPI (only on main branch)
   publish-python:
     name: Publish Python Bindings
     runs-on: ${{ matrix.os }}
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [bump-version]
+    needs: [release-gate]
     permissions:
       contents: read
       id-token: write

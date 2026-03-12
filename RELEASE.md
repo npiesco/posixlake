@@ -8,7 +8,7 @@ posixlake follows [Semantic Versioning](https://semver.org/):
 - **MINOR**: New features, backward-compatible.
 - **PATCH**: Bug fixes, security patches.
 
-The Rust crate version lives in `posixlake/Cargo.toml`. The Python binding version lives in `bindings/python/setup.py` and is auto-bumped by CI on each main merge.
+The Rust crate version lives in `posixlake/Cargo.toml`. The Python binding version lives in `bindings/python/setup.py`. These versions should be updated explicitly in the release change that is meant to publish.
 
 ## Release Gate
 
@@ -62,7 +62,7 @@ Each release produces:
 
 1. Merge to `main`.
 2. CI runs full release gate.
-3. On gate pass: version bump, wheel build, PyPI publish.
+3. On gate pass: wheel build, signing, and PyPI publish for the committed version.
 
 ### Manual
 
