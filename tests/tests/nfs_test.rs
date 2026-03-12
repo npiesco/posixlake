@@ -194,10 +194,10 @@ async fn test_nfs_server_exports_database() {
         .await
         .unwrap();
 
-    // Server should export /posixlake path
+    // Server should export /share path
     let exports = server.list_exports().await;
     assert_eq!(exports.len(), 1, "Should have exactly one export");
-    assert_eq!(exports[0], "/posixlake", "Should export /posixlake");
+    assert_eq!(exports[0], "/share", "Should export /share");
 
     server.shutdown().await.unwrap();
 }
@@ -390,6 +390,12 @@ async fn mount_nfs_os(
     port: u16,
     mount_point: &Path,
 ) -> Result<std::path::PathBuf, String> {
+    let host = if host == "localhost" {
+        "127.0.0.1"
+    } else {
+        host
+    };
+
     // Check if we're running as root
     #[cfg(unix)]
     let is_root = unsafe { libc::geteuid() } == 0;
@@ -414,51 +420,99 @@ async fn mount_nfs_os(
 
     #[cfg(target_os = "macos")]
     {
-        let mut cmd = if is_root {
-            tokio::process::Command::new("mount_nfs")
-        } else {
-            let mut c = tokio::process::Command::new("sudo");
-            c.arg("-n"); // non-interactive - will fail if passwordless sudo not configured
-            c.arg("mount_nfs");
-            c
-        };
+        let remote = format!("{}:/share", host);
 
-        let status = cmd
-            .arg("-o")
-            .arg(format!(
-                "nolocks,vers=3,tcp,port={},mountport={}",
-                port, port
-            ))
-            .arg(format!("{}:/share", host))
-            .arg(mount_point.as_os_str())
-            .status()
-            .await
-            .map_err(|e| format!("Failed to execute mount_nfs: {}", e))?;
+        for attempt in 1..=5 {
+            let mut cmd = if is_root {
+                tokio::process::Command::new("mount_nfs")
+            } else {
+                let mut c = tokio::process::Command::new("sudo");
+                c.arg("-n"); // non-interactive - will fail if passwordless sudo not configured
+                c.arg("mount_nfs");
+                c
+            };
 
-        if status.success() {
-            Ok(mount_point.to_path_buf())
-        } else {
-            Err(format!(
-                "mount_nfs failed with exit code: {:?}",
-                status.code()
-            ))
+            let status = cmd
+                .arg("-o")
+                .arg(format!(
+                    "nolocks,vers=3,tcp,port={},mountport={}",
+                    port, port
+                ))
+                .arg(&remote)
+                .arg(mount_point.as_os_str())
+                .status()
+                .await
+                .map_err(|e| format!("Failed to execute mount_nfs: {}", e))?;
+
+            if status.success() {
+                return Ok(mount_point.to_path_buf());
+            }
+
+            if attempt < 5 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            } else {
+                return Err(format!(
+                    "mount_nfs failed with exit code: {:?}",
+                    status.code()
+                ));
+            }
         }
     }
 
     #[cfg(target_os = "linux")]
     {
+        let remote = format!("{}:/share", host);
+
         // In containers with privileged mode, use unshare to create a new mount namespace with full privileges
         if in_container && is_root {
             debug!("Detected privileged container environment, using unshare for mount namespace");
 
-            // Use unshare with --map-root-user to create a new user namespace with root privileges
-            // and --mount for mount namespace isolation, then perform the mount
-            let status = tokio::process::Command::new("unshare")
-                .arg("--mount")
-                .arg("--map-root-user")
-                .arg("--propagation")
-                .arg("unchanged")
-                .arg("mount")
+            for attempt in 1..=5 {
+                let status = tokio::process::Command::new("unshare")
+                    .arg("--mount")
+                    .arg("--map-root-user")
+                    .arg("--propagation")
+                    .arg("unchanged")
+                    .arg("mount")
+                    .arg("-t")
+                    .arg("nfs")
+                    .arg("-o")
+                    .arg(format!(
+                        "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
+                        port, port
+                    ))
+                    .arg(&remote)
+                    .arg(mount_point.as_os_str())
+                    .status()
+                    .await
+                    .map_err(|e| format!("Failed to execute unshare mount: {}", e))?;
+
+                if status.success() {
+                    return Ok(mount_point.to_path_buf());
+                }
+
+                if attempt < 5 {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                } else {
+                    return Err(format!(
+                        "unshare mount failed with exit code: {:?}",
+                        status.code()
+                    ));
+                }
+            }
+        }
+
+        for attempt in 1..=5 {
+            let mut cmd = if is_root {
+                tokio::process::Command::new("mount")
+            } else {
+                let mut c = tokio::process::Command::new("sudo");
+                c.arg("-n"); // non-interactive - will fail if passwordless sudo not configured
+                c.arg("mount");
+                c
+            };
+
+            let status = cmd
                 .arg("-t")
                 .arg("nfs")
                 .arg("-o")
@@ -466,51 +520,24 @@ async fn mount_nfs_os(
                     "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                     port, port
                 ))
-                .arg(format!("{}:/share", host))
+                .arg(&remote)
                 .arg(mount_point.as_os_str())
                 .status()
                 .await
-                .map_err(|e| format!("Failed to execute unshare mount: {}", e))?;
+                .map_err(|e| format!("Failed to execute mount: {}", e))?;
 
             if status.success() {
                 return Ok(mount_point.to_path_buf());
+            }
+
+            if attempt < 5 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             } else {
-                return Err(format!(
-                    "unshare mount failed with exit code: {:?}",
-                    status.code()
-                ));
+                return Err(format!("mount failed with exit code: {:?}", status.code()));
             }
         }
 
-        // Standard mount (bare metal or non-container)
-        let mut cmd = if is_root {
-            tokio::process::Command::new("mount")
-        } else {
-            let mut c = tokio::process::Command::new("sudo");
-            c.arg("-n"); // non-interactive - will fail if passwordless sudo not configured
-            c.arg("mount");
-            c
-        };
-
-        let status = cmd
-            .arg("-t")
-            .arg("nfs")
-            .arg("-o")
-            .arg(format!(
-                "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
-                port, port
-            ))
-            .arg(format!("{}:/share", host))
-            .arg(mount_point.as_os_str())
-            .status()
-            .await
-            .map_err(|e| format!("Failed to execute mount: {}", e))?;
-
-        if status.success() {
-            Ok(mount_point.to_path_buf())
-        } else {
-            Err(format!("mount failed with exit code: {:?}", status.code()))
-        }
+        unreachable!("linux mount retry loop must return on success or final failure");
     }
 
     #[cfg(target_os = "windows")]

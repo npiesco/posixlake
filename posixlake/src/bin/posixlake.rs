@@ -368,7 +368,7 @@ async fn main() -> Result<()> {
                     "nolocks,vers=3,tcp,port={},mountport={}",
                     port, port
                 ))
-                .arg("localhost:/")
+                .arg("localhost:/share")
                 .arg(mount_point.as_os_str())
                 .status();
 
@@ -382,7 +382,7 @@ async fn main() -> Result<()> {
                     "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
                     port, port
                 ))
-                .arg("localhost:/")
+                .arg("localhost:/share")
                 .arg(mount_point.as_os_str())
                 .status();
 
@@ -430,9 +430,9 @@ async fn main() -> Result<()> {
                         port
                     );
                     #[cfg(target_os = "macos")]
-                    eprintln!("  sudo mount_nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    eprintln!("  sudo mount_nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/share {}", port, port, mount_point.display());
                     #[cfg(target_os = "linux")]
-                    eprintln!("  sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    eprintln!("  sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={} localhost:/share {}", port, port, mount_point.display());
                     #[cfg(target_os = "windows")]
                     eprintln!(
                         "  mount -o {} \\\\localhost\\share {}",
@@ -456,9 +456,9 @@ async fn main() -> Result<()> {
                         port
                     );
                     #[cfg(target_os = "macos")]
-                    eprintln!("  sudo mount_nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    eprintln!("  sudo mount_nfs -o nolocks,vers=3,tcp,port={},mountport={} localhost:/share {}", port, port, mount_point.display());
                     #[cfg(target_os = "linux")]
-                    eprintln!("  sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={} localhost:/posixlake {}", port, port, mount_point.display());
+                    eprintln!("  sudo mount -t nfs -o nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={} localhost:/share {}", port, port, mount_point.display());
                     #[cfg(target_os = "windows")]
                     eprintln!(
                         "  mount -o {} \\\\localhost\\share {}",

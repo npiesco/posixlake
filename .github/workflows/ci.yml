@@ -197,12 +197,12 @@ jobs:
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx
       - name: Generate CycloneDX SBOM
-        run: cargo cyclonedx --format json --output-pattern bom
+        run: cargo cyclonedx --format json
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: sbom
-          path: "**/bom.json"
+          path: "**/*.cdx.json"
 
   # Documentation build
   docs:

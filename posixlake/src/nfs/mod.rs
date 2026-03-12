@@ -277,7 +277,7 @@ impl NfsServer {
 
     /// List exported paths (for testing)
     pub async fn list_exports(&self) -> Vec<String> {
-        vec!["/posixlake".to_string()]
+        vec!["/share".to_string()]
     }
 
     /// Read directory entries (for testing)

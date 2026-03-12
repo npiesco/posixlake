@@ -42,3 +42,4 @@ aws-lc-rs/
 .claude/
 data/
 graph.cache/
+*.cdx.json
