@@ -84,6 +84,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+      - name: Install Linux NFS client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nfs-common
       - name: Auth and RBAC tests
         run: cargo test --test auth_test --verbose
       - name: Backup and restore tests
