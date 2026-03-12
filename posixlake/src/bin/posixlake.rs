@@ -12,7 +12,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use clap::{Parser, Subcommand, ValueEnum};
 use posixlake::error::{Error, Result};
 #[cfg(target_os = "windows")]
-use posixlake::nfs::windows::MOUNT_OPTIONS;
+use posixlake::nfs::windows::{prepare_nfs_mount, MOUNT_OPTIONS};
 use posixlake::nfs::NfsServer;
 use posixlake::storage::s3::parse_s3_uri;
 use posixlake::DatabaseOps;
@@ -358,6 +358,9 @@ async fn main() -> Result<()> {
             }
 
             // Mount using OS NFS client
+            #[cfg(target_os = "windows")]
+            eprintln!("Mounting NFS at {}", mount_point.display());
+            #[cfg(not(target_os = "windows"))]
             eprintln!("Mounting NFS at {} (requires sudo)", mount_point.display());
 
             #[cfg(target_os = "macos")]
@@ -387,15 +390,41 @@ async fn main() -> Result<()> {
                 .status();
 
             #[cfg(target_os = "windows")]
-            let mount_status = std::process::Command::new("C:\\Windows\\System32\\mount.exe")
-                .arg("-o")
-                .arg("anon")
-                .arg("\\\\localhost\\share")
-                .arg(format!(
-                    "{}:",
-                    mount_point.to_string_lossy().chars().next().unwrap()
-                ))
-                .status();
+            let mount_status = {
+                let drive = format!("{}:", mount_point.to_string_lossy().chars().next().unwrap());
+                let drive_letter = drive.chars().next().unwrap();
+
+                prepare_nfs_mount(drive_letter).await;
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+                let mut last_status = None;
+                for attempt in 1..=10 {
+                    match std::process::Command::new("C:\\Windows\\System32\\mount.exe")
+                        .arg("-o")
+                        .arg(MOUNT_OPTIONS)
+                        .arg("\\\\localhost\\share")
+                        .arg(&drive)
+                        .status()
+                    {
+                        Ok(status) if status.success() => {
+                            last_status = Some(Ok(status));
+                            break;
+                        }
+                        Ok(status) => {
+                            last_status = Some(Ok(status));
+                        }
+                        Err(e) => {
+                            last_status = Some(Err(e));
+                        }
+                    }
+
+                    if attempt < 10 {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    }
+                }
+
+                last_status.expect("Windows mount retry loop must produce a result")
+            };
 
             match mount_status {
                 Ok(s) if s.success() => {
@@ -417,6 +446,21 @@ async fn main() -> Result<()> {
                         .arg(mount_point.as_os_str())
                         .status()
                         .ok();
+
+                    #[cfg(target_os = "windows")]
+                    {
+                        std::process::Command::new("umount")
+                            .arg("-f")
+                            .arg(mount_point.as_os_str())
+                            .status()
+                            .ok();
+                        std::process::Command::new("net")
+                            .args(["use"])
+                            .arg(mount_point.as_os_str())
+                            .args(["/delete", "/y"])
+                            .status()
+                            .ok();
+                    }
 
                     server.shutdown().await?;
                     eprintln!("Unmounted and shutdown complete");
