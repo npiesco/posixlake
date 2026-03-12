@@ -130,6 +130,23 @@ impl MetricsTracker {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn normalize_base_path(path: PathBuf) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{}", stripped));
+    }
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
+#[cfg(not(target_os = "windows"))]
+fn normalize_base_path(path: PathBuf) -> PathBuf {
+    path
+}
+
 // Transaction impl moved to src/transaction.rs
 
 impl DatabaseOps {
@@ -148,13 +165,13 @@ impl DatabaseOps {
         std::fs::create_dir_all(path.as_ref())?;
 
         // Canonicalize to absolute path (required for Url::from_directory_path)
-        let base_path = path.as_ref().canonicalize().map_err(|e| {
+        let base_path = normalize_base_path(path.as_ref().canonicalize().map_err(|e| {
             Error::Other(format!(
                 "Failed to canonicalize path '{}': {}",
                 path.as_ref().display(),
                 e
             ))
-        })?;
+        })?);
 
         info!(
             "Creating database in Delta Lake native mode at: {}",
@@ -240,13 +257,13 @@ impl DatabaseOps {
     /// Allows posixlake to read and write to existing Delta Lake tables
     pub async fn open_delta_native<P: AsRef<Path>>(path: P) -> Result<Self> {
         // Canonicalize to absolute path (required for Url::from_directory_path)
-        let base_path = path.as_ref().canonicalize().map_err(|e| {
+        let base_path = normalize_base_path(path.as_ref().canonicalize().map_err(|e| {
             Error::Other(format!(
                 "Failed to canonicalize path '{}': {}",
                 path.as_ref().display(),
                 e
             ))
-        })?;
+        })?);
         info!("Opening Delta Lake table at: {}", base_path.display());
 
         // Open Delta Lake table
