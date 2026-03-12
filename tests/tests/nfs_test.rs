@@ -421,8 +421,11 @@ async fn mount_nfs_os(
     #[cfg(target_os = "macos")]
     {
         let remote = format!("{}:/share", host);
+        let mount_options = format!("nolocks,vers=3,tcp,mountport={},port={}", port, port);
 
-        for attempt in 1..=5 {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        for attempt in 1..=10 {
             let mut cmd = if is_root {
                 tokio::process::Command::new("mount_nfs")
             } else {
@@ -432,28 +435,30 @@ async fn mount_nfs_os(
                 c
             };
 
-            let status = cmd
+            let output = cmd
                 .arg("-o")
-                .arg(format!(
-                    "nolocks,vers=3,tcp,port={},mountport={}",
-                    port, port
-                ))
+                .arg(&mount_options)
                 .arg(&remote)
                 .arg(mount_point.as_os_str())
-                .status()
+                .output()
                 .await
                 .map_err(|e| format!("Failed to execute mount_nfs: {}", e))?;
 
-            if status.success() {
+            if output.status.success() {
                 return Ok(mount_point.to_path_buf());
             }
 
-            if attempt < 5 {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+            if attempt < 10 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             } else {
                 return Err(format!(
-                    "mount_nfs failed with exit code: {:?}",
-                    status.code()
+                    "mount_nfs failed with exit code: {:?}, stdout: {}, stderr: {}",
+                    output.status.code(),
+                    stdout,
+                    stderr
                 ));
             }
         }
@@ -462,13 +467,19 @@ async fn mount_nfs_os(
     #[cfg(target_os = "linux")]
     {
         let remote = format!("{}:/share", host);
+        let mount_options = format!(
+            "nolock,noac,soft,timeo=10,retrans=2,vers=3,proto=tcp,mountproto=tcp,port={},mountport={}",
+            port, port
+        );
 
         // In containers with privileged mode, use unshare to create a new mount namespace with full privileges
         if in_container && is_root {
             debug!("Detected privileged container environment, using unshare for mount namespace");
 
-            for attempt in 1..=5 {
-                let status = tokio::process::Command::new("unshare")
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+            for attempt in 1..=10 {
+                let output = tokio::process::Command::new("unshare")
                     .arg("--mount")
                     .arg("--map-root-user")
                     .arg("--propagation")
@@ -477,32 +488,36 @@ async fn mount_nfs_os(
                     .arg("-t")
                     .arg("nfs")
                     .arg("-o")
-                    .arg(format!(
-                        "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
-                        port, port
-                    ))
+                    .arg(&mount_options)
                     .arg(&remote)
                     .arg(mount_point.as_os_str())
-                    .status()
+                    .output()
                     .await
                     .map_err(|e| format!("Failed to execute unshare mount: {}", e))?;
 
-                if status.success() {
+                if output.status.success() {
                     return Ok(mount_point.to_path_buf());
                 }
 
-                if attempt < 5 {
-                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+                if attempt < 10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 } else {
                     return Err(format!(
-                        "unshare mount failed with exit code: {:?}",
-                        status.code()
+                        "unshare mount failed with exit code: {:?}, stdout: {}, stderr: {}",
+                        output.status.code(),
+                        stdout,
+                        stderr
                     ));
                 }
             }
         }
 
-        for attempt in 1..=5 {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        for attempt in 1..=10 {
             let mut cmd = if is_root {
                 tokio::process::Command::new("mount")
             } else {
@@ -512,28 +527,33 @@ async fn mount_nfs_os(
                 c
             };
 
-            let status = cmd
+            let output = cmd
                 .arg("-t")
                 .arg("nfs")
                 .arg("-o")
-                .arg(format!(
-                    "nolock,noac,soft,timeo=10,retrans=2,vers=3,tcp,port={},mountport={}",
-                    port, port
-                ))
+                .arg(&mount_options)
                 .arg(&remote)
                 .arg(mount_point.as_os_str())
-                .status()
+                .output()
                 .await
                 .map_err(|e| format!("Failed to execute mount: {}", e))?;
 
-            if status.success() {
+            if output.status.success() {
                 return Ok(mount_point.to_path_buf());
             }
 
-            if attempt < 5 {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+            if attempt < 10 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             } else {
-                return Err(format!("mount failed with exit code: {:?}", status.code()));
+                return Err(format!(
+                    "mount failed with exit code: {:?}, stdout: {}, stderr: {}",
+                    output.status.code(),
+                    stdout,
+                    stderr
+                ));
             }
         }
 

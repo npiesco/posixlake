@@ -1068,7 +1068,7 @@ fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
     match run_command(&wsl_full_path, &wsl_args) {
         Ok(()) => return Ok(()),
         Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
+        Err(_err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
             return if is_up {
                 wsl_podman_direct_start(&distro, engine)
             } else {
@@ -1082,7 +1082,7 @@ fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
         match run_command(candidate, &wsl_args) {
             Ok(()) => return Ok(()),
             Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
+            Err(_err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
                 return if is_up {
                     wsl_podman_direct_start(&distro, engine)
                 } else {
@@ -1105,7 +1105,7 @@ fn run_wsl_command(engine: S3Engine, args: &[String]) -> Result<()> {
         match run_command(candidate, &cmd_args) {
             Ok(()) => return Ok(()),
             Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
+            Err(_err) if engine == S3Engine::Podman && is_compose && (is_up || is_down) => {
                 return if is_up {
                     wsl_podman_direct_start(&distro, engine)
                 } else {
