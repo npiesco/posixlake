@@ -2524,6 +2524,36 @@ impl DatabaseOps {
         // For Delta Lake, check _delta_log directory
         let delta_log_exists = self.base_path.join("_delta_log").exists();
 
+        let (total_files, total_rows, total_size_bytes) = if delta_log_exists {
+            let mut total_files = 0;
+            let mut total_size_bytes = 0;
+            crate::metadata::backup::count_parquet_files(
+                &self.base_path,
+                &mut total_files,
+                &mut total_size_bytes,
+            )
+            .ok();
+
+            let total_rows = self
+                .query_inner("SELECT COUNT(*) as count FROM data")
+                .await
+                .ok()
+                .and_then(|batches| batches.first().cloned())
+                .and_then(|batch| {
+                    batch
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<arrow::array::Int64Array>()
+                        .filter(|arr| !arr.is_empty() && !arr.is_null(0))
+                        .map(|arr| arr.value(0) as u64)
+                })
+                .unwrap_or(0);
+
+            (total_files, total_rows, total_size_bytes)
+        } else {
+            (0, 0, 0)
+        };
+
         HealthStatus {
             status: if delta_log_exists {
                 "healthy"
@@ -2532,9 +2562,9 @@ impl DatabaseOps {
             }
             .to_string(),
             uptime_seconds: self.metrics.start_time.elapsed().as_secs_f64(),
-            total_files: 0, // Delta Lake doesn't expose this directly without scanning
-            total_rows: 0,  // Would require scanning all parquet files
-            total_size_bytes: 0, // Would require scanning
+            total_files,
+            total_rows,
+            total_size_bytes,
         }
     }
 

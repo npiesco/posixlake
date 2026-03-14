@@ -1,5 +1,6 @@
 //! Integration tests for CLI health and metrics commands
 
+use std::fs;
 use std::process::Command;
 use std::sync::OnceLock;
 use tempfile::TempDir;
@@ -45,7 +46,7 @@ fn build_posixlake_binary() -> &'static std::path::PathBuf {
 fn create_test_db(dir: &std::path::Path) -> std::path::PathBuf {
     let db_path = dir.join("testdb");
     let binary = build_posixlake_binary();
-    let output = Command::new(binary)
+    let output = Command::new(&binary)
         .arg("create")
         .arg(&db_path)
         .arg("--schema")
@@ -57,6 +58,30 @@ fn create_test_db(dir: &std::path::Path) -> std::path::PathBuf {
         "create failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    db_path
+}
+
+fn create_test_db_from_csv(dir: &std::path::Path) -> std::path::PathBuf {
+    let db_path = dir.join("csvdb");
+    let csv_path = dir.join("input.csv");
+    let binary = build_posixlake_binary();
+
+    fs::write(&csv_path, "id,name\n1,Alice\n2,Bob\n3,Carol\n").expect("failed to write csv");
+
+    let output = Command::new(binary)
+        .arg("create")
+        .arg(&db_path)
+        .arg("--from-csv")
+        .arg(&csv_path)
+        .output()
+        .expect("failed to run create --from-csv");
+
+    assert!(
+        output.status.success(),
+        "create from csv failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     db_path
 }
 
@@ -129,7 +154,7 @@ fn test_cli_health_with_auth() {
     let binary = build_posixlake_binary();
 
     // Create with auth
-    let output = Command::new(binary)
+    let output = Command::new(&binary)
         .arg("create")
         .arg(&db_path)
         .arg("--schema")
@@ -146,7 +171,7 @@ fn test_cli_health_with_auth() {
     );
 
     // Health with valid credentials should succeed
-    let output = Command::new(binary)
+    let output = Command::new(&binary)
         .arg("health")
         .arg(&db_path)
         .arg("-u")
@@ -179,5 +204,46 @@ fn test_cli_metrics_nonexistent_db() {
     assert!(
         !output.status.success(),
         "metrics on nonexistent DB should fail"
+    );
+}
+
+/// CLI `health` reports real file, row, and size totals for populated databases
+#[test]
+fn test_cli_health_reports_real_database_totals() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = create_test_db_from_csv(tmp.path());
+    let binary = build_posixlake_binary();
+
+    let output = Command::new(&binary)
+        .arg("health")
+        .arg(&db_path)
+        .output()
+        .expect("failed to run health on populated db");
+
+    assert!(
+        output.status.success(),
+        "health failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("health output not valid JSON: {}\noutput: {}", e, stdout));
+
+    assert_eq!(json["status"], "healthy");
+    assert!(
+        json["total_files"].as_u64().unwrap() >= 1,
+        "expected at least one data file, got {}",
+        json["total_files"]
+    );
+    assert_eq!(
+        json["total_rows"].as_u64().unwrap(),
+        3,
+        "expected exact row count from imported CSV"
+    );
+    assert!(
+        json["total_size_bytes"].as_u64().unwrap() > 0,
+        "expected non-zero database size, got {}",
+        json["total_size_bytes"]
     );
 }

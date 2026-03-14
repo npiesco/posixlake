@@ -285,27 +285,39 @@ async fn mount_nfs_os(
         // Use prod helper to restart services and cleanup stale mount
         prepare_nfs_mount(letter).await;
 
-        let output = tokio::process::Command::new("mount")
-            .arg("-o")
-            .arg(MOUNT_OPTIONS)
-            .arg(format!("\\\\{}\\share", host))
-            .arg(format!("{}:", letter))
-            .output()
-            .await
-            .map_err(|e| format!("Failed to execute mount: {}", e))?;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
-        if output.status.success() {
-            Ok(std::path::PathBuf::from(format!("{}:\\", letter)))
-        } else {
+        let mut last_error = None;
+        for attempt in 1..=10 {
+            let output = tokio::process::Command::new("C:\\Windows\\System32\\mount.exe")
+                .arg("-o")
+                .arg(MOUNT_OPTIONS)
+                .arg(format!("\\\\{}\\share", host))
+                .arg(format!("{}:", letter))
+                .output()
+                .await
+                .map_err(|e| format!("Failed to execute mount: {}", e))?;
+
+            if output.status.success() {
+                return Ok(std::path::PathBuf::from(format!("{}:\\", letter)));
+            }
+
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            Err(format!(
-                "mount failed (exit {:?}): stdout={}, stderr={}",
+            last_error = Some(format!(
+                "mount failed (attempt {} exit {:?}): stdout={}, stderr={}",
+                attempt,
                 output.status.code(),
                 stdout.trim(),
                 stderr.trim()
-            ))
+            ));
+
+            if attempt < 10 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
         }
+
+        Err(last_error.unwrap_or_else(|| "mount failed for unknown reason".to_string()))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
