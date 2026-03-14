@@ -40,6 +40,8 @@ venv_spark/
 # Local development
 aws-lc-rs/
 .claude/
+.cosynt/
+.github/copilot-instructions.md
 data/
 graph.cache/
 *.cdx.json
