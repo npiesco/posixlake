@@ -4,7 +4,11 @@
 //! and stale mount cleanup. Required for reliable NFS operation on Windows.
 
 #[cfg(target_os = "windows")]
+use std::collections::HashSet;
+#[cfg(target_os = "windows")]
 use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 #[cfg(target_os = "windows")]
@@ -25,6 +29,27 @@ use tracing::info;
 /// - retry=2: retry twice on failure
 pub const MOUNT_OPTIONS: &str =
     "anon,nolock,mtype=soft,fileaccess=6,lang=ansi,rsize=128,wsize=128,timeout=60,retry=2";
+
+#[cfg(target_os = "windows")]
+fn tracked_test_drives() -> &'static Mutex<HashSet<char>> {
+    static TRACKED: OnceLock<Mutex<HashSet<char>>> = OnceLock::new();
+    TRACKED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+#[cfg(target_os = "windows")]
+fn remember_test_drive(drive_letter: char) {
+    if let Ok(mut drives) = tracked_test_drives().lock() {
+        drives.insert(drive_letter.to_ascii_uppercase());
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn snapshot_tracked_drives() -> Vec<char> {
+    tracked_test_drives()
+        .lock()
+        .map(|drives| drives.iter().copied().collect())
+        .unwrap_or_default()
+}
 
 /// Kill any processes listening on NFS-related ports.
 ///
@@ -142,8 +167,9 @@ pub async fn cleanup_after_test() {
         info!("Warning: Ports not free after shutdown, forcing cleanup");
         kill_processes_on_nfs_ports().await;
     }
-    // Restart NFS client services to clear any cached connection state
-    restart_nfs_services().await;
+    for drive_letter in snapshot_tracked_drives() {
+        cleanup_stale_mount(drive_letter).await;
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -236,6 +262,9 @@ pub async fn cleanup_stale_mount(_drive_letter: char) {
 #[cfg(target_os = "windows")]
 pub async fn ensure_clean_nfs_state() -> bool {
     info!("Ensuring clean NFS state...");
+    for drive_letter in snapshot_tracked_drives() {
+        cleanup_stale_mount(drive_letter).await;
+    }
     restart_nfs_services().await;
     kill_processes_on_nfs_ports().await
 }
@@ -250,6 +279,7 @@ pub async fn ensure_clean_nfs_state() -> bool {
 /// Restarts services and cleans up the specified drive letter.
 #[cfg(target_os = "windows")]
 pub async fn prepare_nfs_mount(drive_letter: char) {
+    remember_test_drive(drive_letter);
     restart_nfs_services().await;
     cleanup_stale_mount(drive_letter).await;
 }

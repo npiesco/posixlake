@@ -46,7 +46,7 @@ fn build_posixlake_binary() -> &'static std::path::PathBuf {
 fn create_test_db(dir: &std::path::Path) -> std::path::PathBuf {
     let db_path = dir.join("testdb");
     let binary = build_posixlake_binary();
-    let output = Command::new(&binary)
+    let output = Command::new(binary.as_path())
         .arg("create")
         .arg(&db_path)
         .arg("--schema")
@@ -154,7 +154,7 @@ fn test_cli_health_with_auth() {
     let binary = build_posixlake_binary();
 
     // Create with auth
-    let output = Command::new(&binary)
+    let output = Command::new(binary.as_path())
         .arg("create")
         .arg(&db_path)
         .arg("--schema")
@@ -171,7 +171,7 @@ fn test_cli_health_with_auth() {
     );
 
     // Health with valid credentials should succeed
-    let output = Command::new(&binary)
+    let output = Command::new(binary.as_path())
         .arg("health")
         .arg(&db_path)
         .arg("-u")
@@ -214,7 +214,7 @@ fn test_cli_health_reports_real_database_totals() {
     let db_path = create_test_db_from_csv(tmp.path());
     let binary = build_posixlake_binary();
 
-    let output = Command::new(&binary)
+    let output = Command::new(binary.as_path())
         .arg("health")
         .arg(&db_path)
         .output()

@@ -133,7 +133,7 @@ async fn test_single_filesystem_instance_for_all_operations() {
     let server = NfsServer::new(Arc::new(db), 2049).await.unwrap();
 
     // Mount
-    let mount_point = mount_nfs_os("localhost", 2049, &mount_point, Some('X'))
+    let mount_point = mount_nfs_os("localhost", 2049, &mount_point, Some('Q'))
         .await
         .expect("Mount must succeed");
     let _guard = MountGuard::new(mount_point.clone());
@@ -403,7 +403,7 @@ async fn mount_nfs_os(
         // Use prod helper to restart services and cleanup stale mount
         prepare_nfs_mount(letter).await;
 
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         let mut last_error = None;
         for attempt in 1..=10 {
@@ -431,7 +431,8 @@ async fn mount_nfs_os(
             ));
 
             if attempt < 10 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                prepare_nfs_mount(letter).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
 
@@ -473,7 +474,7 @@ async fn test_nfs_mv_rename_file() {
     let server = NfsServer::new(Arc::new(db), port).await.unwrap();
 
     println!("[MOUNT] Mounting NFS at {:?} on port {}", mount_point, port);
-    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('Z'))
+    let mount_point = mount_nfs_os("localhost", port, &mount_point, Some('U'))
         .await
         .expect("NFS mount must succeed");
 

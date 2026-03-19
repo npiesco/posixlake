@@ -423,7 +423,7 @@ async fn mount_nfs_os(
         let remote = format!("{}:/share", host);
         let mount_options = format!("nolocks,vers=3,tcp,mountport={},port={}", port, port);
 
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         for attempt in 1..=10 {
             let mut cmd = if is_root {
@@ -600,7 +600,8 @@ async fn mount_nfs_os(
             ));
 
             if attempt < 10 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                prepare_nfs_mount(letter).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
 

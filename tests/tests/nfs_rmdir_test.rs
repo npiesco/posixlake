@@ -285,7 +285,7 @@ async fn mount_nfs_os(
         // Use prod helper to restart services and cleanup stale mount
         prepare_nfs_mount(letter).await;
 
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         let mut last_error = None;
         for attempt in 1..=10 {
@@ -313,7 +313,8 @@ async fn mount_nfs_os(
             ));
 
             if attempt < 10 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                prepare_nfs_mount(letter).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
 

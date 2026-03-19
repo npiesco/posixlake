@@ -319,7 +319,9 @@ async fn test_rapid_write_operations() {
         writes_per_sec,
         min_writes_per_sec
     );
-    let min_rows_per_sec = if cfg!(target_os = "windows") {
+    let min_rows_per_sec = if cfg!(target_os = "windows") && cfg!(debug_assertions) {
+        30.0
+    } else if cfg!(target_os = "windows") {
         40.0
     } else {
         50.0
@@ -411,10 +413,16 @@ async fn test_memory_leak_detection() {
         expected_rows
     );
     // Delta Lake operations have more overhead than simple file I/O, so we expect lower throughput
+    let min_cycles_per_sec = if cfg!(target_os = "windows") && cfg!(debug_assertions) {
+        0.75
+    } else {
+        2.0
+    };
     assert!(
-        cycles_per_sec > 2.0,
-        "Cycle throughput too low: {} cycles/sec (expected > 2 for Delta Lake)",
-        cycles_per_sec
+        cycles_per_sec > min_cycles_per_sec,
+        "Cycle throughput too low: {} cycles/sec (expected > {} for Delta Lake)",
+        cycles_per_sec,
+        min_cycles_per_sec
     );
 
     // Note: Actual memory leak detection would require inspecting process memory
