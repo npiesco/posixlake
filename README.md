@@ -907,6 +907,56 @@ docker compose down
 
 For detailed testing documentation, see [tests/POSIX_TEST_SETUP.md](tests/POSIX_TEST_SETUP.md).
 
+### Production Readiness Checklist
+
+If you are evaluating whether posixlake is merely test-green or actually ready for a production rollout, use this checklist.
+
+**Baseline validation (developer/CI ready):**
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test
+```
+
+Passing the baseline suite means the repo is in a good mergeable state, but it is **not by itself sufficient** to claim production readiness.
+
+**Production-style validation (recommended before rollout):**
+
+```bash
+# Build the optimized artifact you plan to ship
+cargo build --release
+
+# Explicit backup / restore validation
+cargo test -p posixlake-integration-tests --test backup_restore_test -- --nocapture
+
+# Ignored stress suites (long-running)
+cargo test -p posixlake-integration-tests test_stress_100k_rows -- --ignored --nocapture
+cargo test -p posixlake-integration-tests test_stress_large_batch_delete -- --ignored --nocapture
+cargo test -p posixlake-integration-tests test_stress_1m_rows -- --ignored --nocapture
+cargo test -p posixlake-integration-tests test_1gb_csv_stress -- --ignored --nocapture
+```
+
+**What this proves:**
+- normal regression suite is green
+- release artifact builds successfully
+- backup, restore, and point-in-time restore work
+- large Windows NFS workflows remain stable under sustained load
+- CSV diff / delete paths complete successfully on very large datasets
+
+**What this still does not prove automatically:**
+- behavior in your exact production hardware / cloud environment
+- safe rollout without a canary
+- live operational monitoring / alerting coverage
+
+**Current Windows validation status used for this README:**
+- `cargo test` passed
+- `cargo build --release` passed
+- `backup_restore_test` passed
+- ignored NFS stress tests passed at 100K rows, 1M rows, 50K-row batch delete, and 30M-row / ~1GB CSV scale
+
+Practical interpretation: after the full checklist above passes, posixlake is reasonable to call **production-ready for a canary rollout**, not just “tests passed.”
+
 ## Features
 
 ### Delta Lake Integration
@@ -1014,8 +1064,13 @@ posixlake is designed for high-performance analytics workloads:
 The stress test suite is ignored by default due to long runtimes (~30 minutes). To run:
 
 ```bash
+# Medium / large NFS stress tests
+cargo test -p posixlake-integration-tests test_stress_100k_rows -- --ignored --nocapture
+cargo test -p posixlake-integration-tests test_stress_large_batch_delete -- --ignored --nocapture
+cargo test -p posixlake-integration-tests test_stress_1m_rows -- --ignored --nocapture
+
 # Run the 1GB CSV stress test
-cargo test test_1gb_csv_stress -- --ignored --nocapture
+cargo test -p posixlake-integration-tests test_1gb_csv_stress -- --ignored --nocapture
 
 # Run all tests including stress tests
 cargo test -- --ignored --nocapture
