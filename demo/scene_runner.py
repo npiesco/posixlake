@@ -149,10 +149,22 @@ def run_windows_client(pace: float) -> None:
     set_console_title(WINDOW_TITLES["windows_client"])
     target = WINDOWS_MOUNT_ROOT / "data" / "data.csv"
     time.sleep(settle_time(pace))
+
+    # Read the empty CSV facade (header only)
     run_powershell(f"Get-Content '{target}'", pace=pace)
+
+    # Seed 6 rows — varied data for a real-looking demo
     run_powershell(f"Add-Content -Path '{target}' -Value '1,Alice,30,NYC'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '2,Bob,25,SF'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '3,Carol,28,Chicago'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '4,David,35,Seattle'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '5,Eve,22,Boston'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '6,Frank,40,Denver'", pace=pace)
+
+    # Show all 6 rows
     run_powershell(f"Get-Content '{target}'", pace=pace)
+
+    # Bulk update — uppercase Alice via file overwrite (atomic Delta merge)
     run_powershell(
         f"Get-Content '{target}' | ForEach-Object {{ $_ -replace 'Alice','ALICE' }} | Set-Content '{WINDOWS_CLIENT_TEMP}' -Encoding ascii",
         pace=pace,
@@ -163,12 +175,18 @@ def run_windows_client(pace: float) -> None:
         timeout=120,
     )
     print_result(copy_result)
+
+    # Verify the merge — ALICE should appear
     run_powershell(f"Get-Content '{target}'", pace=pace)
+
+    # Show Delta Lake version history
     run_process(
         [str(WINDOWS_CLI), "status", str(WINDOWS_MOUNT)],
         display=f"& {WINDOWS_CLI.name} status {WINDOWS_MOUNT}",
         pace=pace,
     )
+
+    # Unmount
     run_process(
         [str(WINDOWS_CLI), "unmount", str(WINDOWS_MOUNT)],
         display=f"& {WINDOWS_CLI.name} unmount {WINDOWS_MOUNT}",
@@ -192,29 +210,60 @@ def run_wsl_client(pace: float) -> None:
     set_console_title(WINDOW_TITLES["wsl_client"])
     target = f"{WSL_MOUNT}/data/data.csv"
     time.sleep(settle_time(pace))
-    run_wsl_user(f"cat {target}", pace=pace, display=f"su - {WSL_USER} -c \"cat {target}\"")
-    run_wsl_user(f"grep ALICE {target}", pace=pace, display=f"su - {WSL_USER} -c \"grep ALICE {target}\"")
+
+    # Read — all 6 rows from Windows are visible
+    run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
+
+    # grep — find the uppercased row from the Windows merge
+    run_wsl_user(f"grep ALICE {target}", pace=pace, display=f"grep ALICE {target}")
+
+    # awk — extract just the name column
     run_wsl_user(
         f"awk -F, 'NR > 1 {{ print $2 }}' {target}",
         pace=pace,
-        display=f"su - {WSL_USER} -c \"awk -F, 'NR > 1 {{ print $2 }}' {target}\"",
+        display=f"awk -F, 'NR > 1 {{ print $2 }}' {target}",
+    )
+
+    # wc — count rows
+    run_wsl_user(f"wc -l {target}", pace=pace, display=f"wc -l {target}")
+
+    # sed — in-place edit: bump ALICE's age 31→32
+    run_wsl_user(
+        f"sed -i 's/ALICE,30/ALICE,32/' {target}",
+        pace=pace,
+        display=f"sed -i 's/ALICE,30/ALICE,32/' {target}",
+    )
+
+    # Append two new rows from Linux
+    run_wsl_user(
+        f"echo '7,Grace,29,Austin' >> {target}",
+        pace=pace,
+        display=f"echo '7,Grace,29,Austin' >> {target}",
     )
     run_wsl_user(
-        f"sed -i 's/ALICE,30/ALICE,31/' {target}",
+        f"echo '8,Hank,33,Portland' >> {target}",
         pace=pace,
-        display=f"su - {WSL_USER} -c \"sed -i 's/ALICE,30/ALICE,31/' {target}\"",
+        display=f"echo '8,Hank,33,Portland' >> {target}",
     )
+
+    # Show final state — 8 rows from both platforms
+    run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
+
+    # Sort by name to prove full POSIX tool compatibility
     run_wsl_user(
-        f"echo '3,Charlie,28,LA' >> {target}",
+        f"sort -t, -k2 {target}",
         pace=pace,
-        display=f"su - {WSL_USER} -c \"echo '3,Charlie,28,LA' >> {target}\"",
+        display=f"sort -t, -k2 {target}",
     )
-    run_wsl_user(f"cat {target}", pace=pace, display=f"su - {WSL_USER} -c \"cat {target}\"")
+
+    # Delta Lake status from Linux
     run_wsl_user(
         f"{wsl_cli_path()} status {WSL_MOUNT}",
         pace=pace,
-        display=f"su - {WSL_USER} -c \"{wsl_cli_path()} status {WSL_MOUNT}\"",
+        display=f"posixlake-cli status {WSL_MOUNT}",
     )
+
+    # Unmount
     run_wsl_root(f"{wsl_cli_path()} unmount {WSL_MOUNT}", pace=pace)
     time.sleep(settle_time(pace))
 
