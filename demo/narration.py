@@ -5,30 +5,37 @@ SCENES = [
         "id": "windows_server",
         "title": "Windows server",
         "narration": (
-            "The CLI creates a Delta Lake table and mounts it as a drive."
+            "We start natively on Windows. "
+            "The release CLI creates a fresh Delta Lake table with a typed schema, "
+            "then mounts it as a local drive letter through the built-in NFS server."
         ),
     },
     {
         "id": "windows_client",
         "title": "Windows client",
         "narration": (
-            "PowerShell seeds six rows, reads the CSV, then overwrites the file. "
-            "That overwrite becomes an atomic Delta Lake merge."
+            "In PowerShell, Get Content reads the CSV facade from the Delta table. "
+            "We seed six rows of sample data — Alice, Bob, Carol, David, Eve, and Frank — "
+            "each with an age and city. "
+            "A file overwrite replaces Alice with uppercase ALICE. "
+            "Posixlake turns that into an atomic Delta Lake merge. "
+            "The status command confirms the full version history."
         ),
     },
     {
         "id": "wsl_server",
         "title": "WSL server",
         "narration": (
-            "The same database, now mounted inside WSL."
+            "The Linux binary mounts the same database inside WSL."
         ),
     },
     {
         "id": "wsl_client",
         "title": "WSL client",
         "narration": (
-            "Cat, grep, awk, sed, sort — standard POSIX tools operating on the same table. "
-            "Two more rows are appended from Linux."
+            "Cat reads all six rows from Windows. "
+            "Grep finds ALICE, awk extracts names, sed edits in place. "
+            "Two more rows are appended from Linux, and sort confirms cross-platform parity."
         ),
     },
 ]
