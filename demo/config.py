@@ -64,11 +64,11 @@ WINDOW_TITLES = {
     "s3_cloud": "posixlake-demo-s3-cloud",
 }
 SEGMENTS = {
-    "windows_server": OUTPUT_DIR / "seg_01_windows_server.mp4",
-    "windows_client": OUTPUT_DIR / "seg_02_windows_client.mp4",
-    "wsl_server": OUTPUT_DIR / "seg_03_wsl_server.mp4",
-    "wsl_client": OUTPUT_DIR / "seg_04_wsl_client.mp4",
-    "s3_cloud": OUTPUT_DIR / "seg_05_s3_cloud.mp4",
+    "s3_cloud": OUTPUT_DIR / "seg_01_s3_cloud.mp4",
+    "windows_server": OUTPUT_DIR / "seg_02_windows_server.mp4",
+    "windows_client": OUTPUT_DIR / "seg_03_windows_client.mp4",
+    "wsl_server": OUTPUT_DIR / "seg_04_wsl_server.mp4",
+    "wsl_client": OUTPUT_DIR / "seg_05_wsl_client.mp4",
 }
 
 # S3/MinIO configuration

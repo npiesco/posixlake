@@ -379,6 +379,8 @@ def dry_run(pace: float) -> list[SegmentTiming]:
     clean_output()
     timings: list[SegmentTiming] = []
 
+    timings.append(SegmentTiming("s3_cloud", measure_scene_runtime("s3_cloud", pace, timeout=120)))
+
     windows_server = launch_scene("windows_server", pace, visible=False)
     try:
         seconds = measure_recorded_server_scene(windows_server, wait_for_windows_mount, SETTLE_SECONDS * pace)
@@ -394,8 +396,6 @@ def dry_run(pace: float) -> list[SegmentTiming]:
         timings.append(SegmentTiming("wsl_client", measure_scene_runtime("wsl_client", pace, timeout=240)))
     finally:
         terminate_process_tree(wsl_server)
-
-    timings.append(SegmentTiming("s3_cloud", measure_scene_runtime("s3_cloud", pace, timeout=120)))
 
     write_timings(TIMINGS_PATH, timings)
     print(f"[demo] dry run complete -> {TIMINGS_PATH}")
@@ -580,10 +580,25 @@ def record(pace: float) -> None:
     cam = CandycamClient()
     actual: dict[str, float] = {}
     clean_output()
+    # Allow ports to release after cleanup
+    time.sleep(3)
     cam.start()
     windows_server: subprocess.Popen[str] | None = None
     wsl_server: subprocess.Popen[str] | None = None
     try:
+        print("[record] === S3 Cloud ===")
+        s3_scene = launch_scene("s3_cloud", pace, visible=True)
+        try:
+            wait_for_window(WINDOW_TITLES["s3_cloud"], cam)
+            cam.record_window(SEGMENTS["s3_cloud"], WINDOW_TITLES["s3_cloud"])
+            started = time.monotonic()
+            s3_scene.wait(timeout=120)
+            actual["s3_cloud"] = time.monotonic() - started
+            cam.stop()
+            print(f"  recorded {actual['s3_cloud']:.1f}s")
+        finally:
+            terminate_process_tree(s3_scene)
+
         print("[record] === Windows Server ===")
         windows_server = launch_scene("windows_server", pace, visible=True)
         wait_for_window(WINDOW_TITLES["windows_server"], cam)
@@ -636,19 +651,6 @@ def record(pace: float) -> None:
         finally:
             terminate_process_tree(wsl_client)
             terminate_process_tree(wsl_server)
-
-        print("[record] === S3 Cloud ===")
-        s3_scene = launch_scene("s3_cloud", pace, visible=True)
-        try:
-            wait_for_window(WINDOW_TITLES["s3_cloud"], cam)
-            cam.record_window(SEGMENTS["s3_cloud"], WINDOW_TITLES["s3_cloud"])
-            started = time.monotonic()
-            s3_scene.wait(timeout=120)
-            actual["s3_cloud"] = time.monotonic() - started
-            cam.stop()
-            print(f"  recorded {actual['s3_cloud']:.1f}s")
-        finally:
-            terminate_process_tree(s3_scene)
     finally:
         terminate_process_tree(windows_server)
         terminate_process_tree(wsl_server)

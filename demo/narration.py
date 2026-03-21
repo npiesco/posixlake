@@ -2,12 +2,20 @@ from __future__ import annotations
 
 SCENES = [
     {
+        "id": "s3_cloud",
+        "title": "S3 cloud",
+        "narration": (
+            "Data starts in the cloud — "
+            "posixlake creates and queries a Delta table directly on S3."
+        ),
+    },
+    {
         "id": "windows_server",
         "title": "Windows server",
         "narration": (
-            "An ops team monitors IoT sensors across a facility. "
-            "The CLI provisions a typed Delta Lake table and serves it as a mounted drive — "
-            "no cloud console, no Spark cluster required."
+            "Now the same CLI runs locally. "
+            "It provisions a typed Delta table and mounts it as a Windows drive — "
+            "no cloud console, no Spark cluster."
         ),
     },
     {
@@ -15,10 +23,9 @@ SCENES = [
         "title": "Windows client",
         "narration": (
             "From PowerShell, the operator loads six sensor readings — "
-            "temperature, humidity, pressure, CO2, and flow — from across the plant. "
-            "Temp oh one shows an anomaly, so the operator flags it by uppercasing the sensor name. "
-            "A file overwrite triggers an atomic Delta merge. "
-            "The status command confirms every version is tracked automatically."
+            "temperature, humidity, pressure, CO2, and flow. "
+            "Temp oh one shows an anomaly, so the operator flags it. "
+            "A file overwrite triggers an atomic Delta merge, and status confirms version tracking."
         ),
     },
     {
@@ -35,14 +42,7 @@ SCENES = [
         "narration": (
             "Cat reads the latest state. Grep locates the flagged sensor, awk extracts names. "
             "Sed recalibrates the reading, two new sensors are appended, "
-            "and sort confirms one ACID table across both platforms."
-        ),
-    },
-    {
-        "id": "s3_cloud",
-        "title": "S3 cloud",
-        "narration": (
-            "Same CLI, now on S3 — full Delta ACID on object storage."
+            "and sort confirms one ACID table — cloud, Windows, and Linux."
         ),
     },
 ]
