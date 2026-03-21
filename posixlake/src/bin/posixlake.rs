@@ -677,8 +677,9 @@ async fn main() -> Result<()> {
             // Define schema
             let schema = Arc::new(Schema::new(vec![
                 Field::new("id", DataType::Int32, false),
-                Field::new("name", DataType::Utf8, false),
-                Field::new("email", DataType::Utf8, false),
+                Field::new("sensor", DataType::Utf8, false),
+                Field::new("reading", DataType::Int32, false),
+                Field::new("location", DataType::Utf8, false),
             ]));
 
             // Create database in S3
@@ -750,12 +751,9 @@ async fn main() -> Result<()> {
                 schema.clone(),
                 vec![
                     Arc::new(Int32Array::from(vec![1, 2, 3])),
-                    Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie"])),
-                    Arc::new(StringArray::from(vec![
-                        "alice@example.com",
-                        "bob@example.com",
-                        "charlie@example.com",
-                    ])),
+                    Arc::new(StringArray::from(vec!["temp_01", "humidity_02", "pressure_03"])),
+                    Arc::new(Int32Array::from(vec![72, 45, 1013])),
+                    Arc::new(StringArray::from(vec!["plant_north", "plant_south", "plant_east"])),
                 ],
             )?;
 

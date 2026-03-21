@@ -22,6 +22,7 @@ from config import (
     OUTPUT_DIR,
     RECORDING_PATH,
     REPO_ROOT,
+    S3_BUCKET,
     S3_ENDPOINT,
     SEGMENTS,
     TIMINGS_PATH,
@@ -227,6 +228,16 @@ def clean_output() -> None:
     )
     # Also clean Windows NFS mount if stale
     run(["net", "use", str(WINDOWS_MOUNT), "/delete", "/y"], timeout=10, check=False)
+
+    # Reset the MinIO bucket so s3-test creates fresh (not "already exists")
+    run(
+        ["podman", "exec", "posixlake-minio", "mc", "rb", "--force", f"local/{S3_BUCKET}"],
+        timeout=15, check=False,
+    )
+    run(
+        ["podman", "exec", "posixlake-minio", "mc", "mb", f"local/{S3_BUCKET}"],
+        timeout=15, check=False,
+    )
 
     for path in [
         TIMINGS_PATH,

@@ -5,17 +5,15 @@ SCENES = [
         "id": "s3_cloud",
         "title": "S3 cloud",
         "narration": (
-            "Data starts in the cloud — "
-            "posixlake creates and queries a Delta table directly on S3."
+            "Data starts in S3 — the CLI creates a Delta table, inserts readings, and queries them."
         ),
     },
     {
         "id": "windows_server",
         "title": "Windows server",
         "narration": (
-            "Now the same CLI runs locally. "
-            "It provisions a typed Delta table and mounts it as a Windows drive — "
-            "no cloud console, no Spark cluster."
+            "Operations pulls the table to a local drive. "
+            "One command creates the schema, another mounts it as a Windows NFS share."
         ),
     },
     {

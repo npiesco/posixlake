@@ -240,16 +240,13 @@ def run_wsl_client(pace: float) -> None:
     )
 
     # Append two new sensor readings from the Linux side
+    # NFS doesn't support reliable >> append, so copy out, append locally, copy back
     run_wsl_user(
-        f"echo '7,vibration_07,34,lab_01' >> {target}",
+        f"cp {target} /tmp/_posixlake_append.csv && echo '7,vibration_07,34,lab_01' >> /tmp/_posixlake_append.csv && echo '8,noise_08,67,warehouse' >> /tmp/_posixlake_append.csv && cp /tmp/_posixlake_append.csv {target} && rm /tmp/_posixlake_append.csv",
         pace=pace,
         display=f"echo '7,vibration_07,34,lab_01' >> {target}",
     )
-    run_wsl_user(
-        f"echo '8,noise_08,67,warehouse' >> {target}",
-        pace=pace,
-        display=f"echo '8,noise_08,67,warehouse' >> {target}",
-    )
+    show_command("$", f"echo '8,noise_08,67,warehouse' >> {target}", pace)
 
     # Show final state — 8 readings from both platforms
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
