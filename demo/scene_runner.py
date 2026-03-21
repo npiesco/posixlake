@@ -121,9 +121,9 @@ def run_windows_server(pace: float) -> None:
             "create",
             str(WINDOWS_DB_PATH),
             "--schema",
-            "id:Int32,name:String,age:Int32,city:String",
+            "id:Int32,sensor:String,reading:Int32,location:String",
         ],
-        display=f"& {WINDOWS_CLI.name} create {WINDOWS_DB_PATH} --schema id:Int32,name:String,age:Int32,city:String",
+        display=f"& {WINDOWS_CLI.name} create {WINDOWS_DB_PATH} --schema id:Int32,sensor:String,reading:Int32,location:String",
         pace=pace,
     )
     time.sleep(settle_time(pace))
@@ -153,20 +153,20 @@ def run_windows_client(pace: float) -> None:
     # Read the empty CSV facade (header only)
     run_powershell(f"Get-Content '{target}'", pace=pace)
 
-    # Seed 6 rows — varied data for a real-looking demo
-    run_powershell(f"Add-Content -Path '{target}' -Value '1,Alice,30,NYC'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '2,Bob,25,SF'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '3,Carol,28,Chicago'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '4,David,35,Seattle'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '5,Eve,22,Boston'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '6,Frank,40,Denver'", pace=pace)
+    # Seed 6 IoT sensor readings across the facility
+    run_powershell(f"Add-Content -Path '{target}' -Value '1,temp_01,72,plant_north'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '2,humidity_02,45,plant_south'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '3,pressure_03,1013,plant_east'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '4,temp_04,69,plant_west'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '5,co2_05,412,lab_01'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '6,flow_06,9,warehouse'", pace=pace)
 
-    # Show all 6 rows
+    # Show all 6 readings
     run_powershell(f"Get-Content '{target}'", pace=pace)
 
-    # Bulk update — uppercase Alice via file overwrite (atomic Delta merge)
+    # Flag anomaly — uppercase temp_01 to mark it for review (atomic Delta merge)
     run_powershell(
-        f"Get-Content '{target}' | ForEach-Object {{ $_ -replace 'Alice','ALICE' }} | Set-Content '{WINDOWS_CLIENT_TEMP}' -Encoding ascii",
+        f"Get-Content '{target}' | ForEach-Object {{ $_ -replace 'temp_01','TEMP_01' }} | Set-Content '{WINDOWS_CLIENT_TEMP}' -Encoding ascii",
         pace=pace,
     )
     show_command("PS>", f"cmd /c copy /Y {WINDOWS_CLIENT_TEMP} {target}", pace)
@@ -176,7 +176,7 @@ def run_windows_client(pace: float) -> None:
     )
     print_result(copy_result)
 
-    # Verify the merge — ALICE should appear
+    # Verify the merge — TEMP_01 flag should appear
     run_powershell(f"Get-Content '{target}'", pace=pace)
 
     # Show Delta Lake version history
@@ -211,46 +211,46 @@ def run_wsl_client(pace: float) -> None:
     target = f"{WSL_MOUNT}/data/data.csv"
     time.sleep(settle_time(pace))
 
-    # Read — all 6 rows from Windows are visible
+    # Read — all 6 sensor readings from Windows are visible
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
 
-    # grep — find the uppercased row from the Windows merge
-    run_wsl_user(f"grep ALICE {target}", pace=pace, display=f"grep ALICE {target}")
+    # grep — find the flagged anomaly from the Windows operator
+    run_wsl_user(f"grep TEMP_01 {target}", pace=pace, display=f"grep TEMP_01 {target}")
 
-    # awk — extract just the name column
+    # awk — extract just the sensor names
     run_wsl_user(
         f"awk -F, 'NR > 1 {{ print \\$2 }}' {target}",
         pace=pace,
         display=f"awk -F, 'NR > 1 {{ print $2 }}' {target}",
     )
 
-    # wc — count rows
+    # wc — count readings
     run_wsl_user(f"wc -l {target}", pace=pace, display=f"wc -l {target}")
 
-    # sed — in-place edit: bump ALICE's age 30→32
+    # sed — recalibrate the flagged sensor reading: 72→73
     # NFS doesn't support sed -i (temp-file rename), so stream through a tmp copy
     run_wsl_user(
-        f"sed 's/ALICE,30/ALICE,32/' {target} > /tmp/_posixlake_sed.csv && cp /tmp/_posixlake_sed.csv {target} && rm /tmp/_posixlake_sed.csv",
+        f"sed 's/TEMP_01,72/TEMP_01,73/' {target} > /tmp/_posixlake_sed.csv && cp /tmp/_posixlake_sed.csv {target} && rm /tmp/_posixlake_sed.csv",
         pace=pace,
-        display=f"sed -i 's/ALICE,30/ALICE,32/' {target}",
+        display=f"sed -i 's/TEMP_01,72/TEMP_01,73/' {target}",
     )
 
-    # Append two new rows from Linux
+    # Append two new sensor readings from the Linux side
     run_wsl_user(
-        f"echo '7,Grace,29,Austin' >> {target}",
+        f"echo '7,vibration_07,34,lab_01' >> {target}",
         pace=pace,
-        display=f"echo '7,Grace,29,Austin' >> {target}",
+        display=f"echo '7,vibration_07,34,lab_01' >> {target}",
     )
     run_wsl_user(
-        f"echo '8,Hank,33,Portland' >> {target}",
+        f"echo '8,noise_08,67,warehouse' >> {target}",
         pace=pace,
-        display=f"echo '8,Hank,33,Portland' >> {target}",
+        display=f"echo '8,noise_08,67,warehouse' >> {target}",
     )
 
-    # Show final state — 8 rows from both platforms
+    # Show final state — 8 readings from both platforms
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
 
-    # Sort by name to prove full POSIX tool compatibility
+    # Sort by sensor name to prove full POSIX tool compatibility
     run_wsl_user(
         f"sort -t, -k2 {target}",
         pace=pace,

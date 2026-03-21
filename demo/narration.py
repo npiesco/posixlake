@@ -5,37 +5,37 @@ SCENES = [
         "id": "windows_server",
         "title": "Windows server",
         "narration": (
-            "We start natively on Windows. "
-            "The release CLI creates a fresh Delta Lake table with a typed schema, "
-            "then mounts it as a local drive letter through the built-in NFS server."
+            "An ops team monitors IoT sensors across a facility. "
+            "The CLI provisions a typed Delta Lake table and serves it as a mounted drive — "
+            "no cloud console, no Spark cluster required."
         ),
     },
     {
         "id": "windows_client",
         "title": "Windows client",
         "narration": (
-            "In PowerShell, Get Content reads the CSV facade from the Delta table. "
-            "We seed six rows of sample data — Alice, Bob, Carol, David, Eve, and Frank — "
-            "each with an age and city. "
-            "A file overwrite replaces Alice with uppercase ALICE. "
-            "Posixlake turns that into an atomic Delta Lake merge. "
-            "The status command confirms the full version history."
+            "From PowerShell, the operator loads six sensor readings — "
+            "temperature, humidity, pressure, CO2, and flow — from across the plant. "
+            "Temp oh one shows an anomaly, so the operator flags it by uppercasing the sensor name. "
+            "A file overwrite triggers an atomic Delta merge. "
+            "The status command confirms every version is tracked automatically."
         ),
     },
     {
         "id": "wsl_server",
         "title": "WSL server",
         "narration": (
-            "The Linux binary mounts the same database inside WSL."
+            "A Linux engineer mounts the exact same table from WSL — "
+            "no export, no data copy."
         ),
     },
     {
         "id": "wsl_client",
         "title": "WSL client",
         "narration": (
-            "Cat reads all six rows from Windows. "
-            "Grep finds ALICE, awk extracts names, sed edits in place. "
-            "Two more rows are appended from Linux, and sort confirms cross-platform parity."
+            "Cat reads the latest state. Grep locates the flagged sensor, awk extracts names. "
+            "Sed recalibrates the reading, two new sensors are appended, "
+            "and sort confirms one ACID table across both platforms."
         ),
     },
 ]
