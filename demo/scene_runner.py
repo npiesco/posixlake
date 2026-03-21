@@ -219,7 +219,7 @@ def run_wsl_client(pace: float) -> None:
 
     # awk — extract just the name column
     run_wsl_user(
-        f"awk -F, 'NR > 1 {{ print $2 }}' {target}",
+        f"awk -F, 'NR > 1 {{ print \\$2 }}' {target}",
         pace=pace,
         display=f"awk -F, 'NR > 1 {{ print $2 }}' {target}",
     )
@@ -227,9 +227,10 @@ def run_wsl_client(pace: float) -> None:
     # wc — count rows
     run_wsl_user(f"wc -l {target}", pace=pace, display=f"wc -l {target}")
 
-    # sed — in-place edit: bump ALICE's age 31→32
+    # sed — in-place edit: bump ALICE's age 30→32
+    # NFS doesn't support sed -i (temp-file rename), so stream through a tmp copy
     run_wsl_user(
-        f"sed -i 's/ALICE,30/ALICE,32/' {target}",
+        f"sed 's/ALICE,30/ALICE,32/' {target} > /tmp/_posixlake_sed.csv && cp /tmp/_posixlake_sed.csv {target} && rm /tmp/_posixlake_sed.csv",
         pace=pace,
         display=f"sed -i 's/ALICE,30/ALICE,32/' {target}",
     )
