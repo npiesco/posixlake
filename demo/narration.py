@@ -38,4 +38,11 @@ SCENES = [
             "and sort confirms one ACID table across both platforms."
         ),
     },
+    {
+        "id": "s3_cloud",
+        "title": "S3 cloud",
+        "narration": (
+            "Same CLI, now on S3 — full Delta ACID on object storage."
+        ),
+    },
 ]

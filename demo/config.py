@@ -61,13 +61,22 @@ WINDOW_TITLES = {
     "windows_client": "posixlake-demo-windows-client",
     "wsl_server": "posixlake-demo-wsl-server",
     "wsl_client": "posixlake-demo-wsl-client",
+    "s3_cloud": "posixlake-demo-s3-cloud",
 }
 SEGMENTS = {
     "windows_server": OUTPUT_DIR / "seg_01_windows_server.mp4",
     "windows_client": OUTPUT_DIR / "seg_02_windows_client.mp4",
     "wsl_server": OUTPUT_DIR / "seg_03_wsl_server.mp4",
     "wsl_client": OUTPUT_DIR / "seg_04_wsl_client.mp4",
+    "s3_cloud": OUTPUT_DIR / "seg_05_s3_cloud.mp4",
 }
+
+# S3/MinIO configuration
+S3_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
+S3_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+S3_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+S3_BUCKET = os.getenv("MINIO_BUCKET", "posixlake-test")
+S3_DB_PATH = os.getenv("POSIXLAKE_DEMO_S3_PATH", f"s3://{S3_BUCKET}/demo_iot_sensors")
 
 
 def windows_to_wsl(path: Path) -> str:

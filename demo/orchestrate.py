@@ -22,6 +22,7 @@ from config import (
     OUTPUT_DIR,
     RECORDING_PATH,
     REPO_ROOT,
+    S3_ENDPOINT,
     SEGMENTS,
     TIMINGS_PATH,
     WINDOW_TITLES,
@@ -215,6 +216,18 @@ def ensure_output_dirs() -> None:
 
 def clean_output() -> None:
     ensure_output_dirs()
+
+    # Kill any lingering posixlake-cli processes inside WSL — they survive
+    # Windows-side taskkill and hold stale NFS mounts.
+    run(
+        ["wsl.exe", "-d", WSL_DISTRO, "-u", "root", "--", "bash", "-lc",
+         "pkill -f posixlake-cli || true; umount -f " + shlex.quote(WSL_MOUNT) + " 2>/dev/null; true"],
+        timeout=15,
+        check=False,
+    )
+    # Also clean Windows NFS mount if stale
+    run(["net", "use", str(WINDOWS_MOUNT), "/delete", "/y"], timeout=10, check=False)
+
     for path in [
         TIMINGS_PATH,
         ACTUAL_TIMINGS_PATH,
@@ -280,6 +293,18 @@ def preflight(require_recording: bool) -> None:
             raise RuntimeError(
                 "candycam capture module is not importable in the current uv environment"
             )
+
+    # Verify MinIO/S3 is reachable for the S3 cloud scene
+    import urllib.request
+    try:
+        urllib.request.urlopen(f"{S3_ENDPOINT}/minio/health/live", timeout=5)
+    except Exception:
+        raise RuntimeError(
+            f"MinIO is not reachable at {S3_ENDPOINT}. "
+            "Start it with: podman run -d --name posixlake-minio -p 9000:9000 -p 9001:9001 "
+            "-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin "
+            "minio/minio:latest server /data --console-address ':9001'"
+        )
 
 
 def launch_scene(scene_id: str, pace: float, *, visible: bool) -> subprocess.Popen[str]:
@@ -369,6 +394,8 @@ def dry_run(pace: float) -> list[SegmentTiming]:
         timings.append(SegmentTiming("wsl_client", measure_scene_runtime("wsl_client", pace, timeout=240)))
     finally:
         terminate_process_tree(wsl_server)
+
+    timings.append(SegmentTiming("s3_cloud", measure_scene_runtime("s3_cloud", pace, timeout=120)))
 
     write_timings(TIMINGS_PATH, timings)
     print(f"[demo] dry run complete -> {TIMINGS_PATH}")
@@ -609,6 +636,19 @@ def record(pace: float) -> None:
         finally:
             terminate_process_tree(wsl_client)
             terminate_process_tree(wsl_server)
+
+        print("[record] === S3 Cloud ===")
+        s3_scene = launch_scene("s3_cloud", pace, visible=True)
+        try:
+            wait_for_window(WINDOW_TITLES["s3_cloud"], cam)
+            cam.record_window(SEGMENTS["s3_cloud"], WINDOW_TITLES["s3_cloud"])
+            started = time.monotonic()
+            s3_scene.wait(timeout=120)
+            actual["s3_cloud"] = time.monotonic() - started
+            cam.stop()
+            print(f"  recorded {actual['s3_cloud']:.1f}s")
+        finally:
+            terminate_process_tree(s3_scene)
     finally:
         terminate_process_tree(windows_server)
         terminate_process_tree(wsl_server)

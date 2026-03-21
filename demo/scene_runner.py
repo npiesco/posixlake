@@ -10,6 +10,10 @@ from pathlib import Path
 
 from config import (
     REPO_ROOT,
+    S3_ACCESS_KEY,
+    S3_DB_PATH,
+    S3_ENDPOINT,
+    S3_SECRET_KEY,
     WINDOW_TITLES,
     WINDOWS_CLI,
     WINDOWS_DB_PATH,
@@ -269,11 +273,38 @@ def run_wsl_client(pace: float) -> None:
     time.sleep(settle_time(pace))
 
 
+def run_s3_cloud(pace: float) -> None:
+    set_console_title(WINDOW_TITLES["s3_cloud"])
+    time.sleep(settle_time(pace))
+
+    # Show the S3 test command — creates, inserts, queries, reopens on MinIO
+    run_process(
+        [
+            str(WINDOWS_CLI),
+            "s3-test",
+            S3_DB_PATH,
+            "--endpoint",
+            S3_ENDPOINT,
+            "--access-key",
+            S3_ACCESS_KEY,
+            "--secret-key",
+            S3_SECRET_KEY,
+        ],
+        display=(
+            f"& {WINDOWS_CLI.name} s3-test {S3_DB_PATH}"
+            f" --endpoint {S3_ENDPOINT}"
+        ),
+        pace=pace,
+        timeout=120,
+    )
+    time.sleep(settle_time(pace))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a single posixlake demo scene")
     parser.add_argument(
         "scene",
-        choices=["windows_server", "windows_client", "wsl_server", "wsl_client"],
+        choices=["windows_server", "windows_client", "wsl_server", "wsl_client", "s3_cloud"],
     )
     parser.add_argument("--pace", type=float, default=1.0)
     args = parser.parse_args()
@@ -284,8 +315,10 @@ def main() -> None:
         run_windows_client(args.pace)
     elif args.scene == "wsl_server":
         run_wsl_server(args.pace)
-    else:
+    elif args.scene == "wsl_client":
         run_wsl_client(args.pace)
+    else:
+        run_s3_cloud(args.pace)
 
 
 if __name__ == "__main__":
