@@ -12,6 +12,7 @@ __all__ = [
     'NfsServer',
     'Schema',
     'Field',
-    'DataType',
+    'HealthStatus',
     'PosixLakeError',
+    'S3Config',
 ]
