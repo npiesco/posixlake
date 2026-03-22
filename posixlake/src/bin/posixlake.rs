@@ -62,9 +62,9 @@ struct Cli {
 enum Commands {
     /// Create a new Delta Lake database
     Create {
-        /// Path for the new database
+        /// Path for the new database (local path or s3://bucket/prefix)
         #[arg(value_name = "DB_PATH")]
-        db_path: PathBuf,
+        db_path: String,
 
         /// Schema definition: "col1:Type1,col2:Type2,..."
         /// Supported types: Int64, Int32, Float64, Float32, String, Boolean
@@ -91,13 +91,25 @@ enum Commands {
         /// If omitted with --auth, reads from POSIXLAKE_ADMIN_PASSWORD env var.
         #[arg(long, requires = "auth")]
         admin_password: Option<String>,
+
+        /// S3 endpoint URL (or set AWS_ENDPOINT_URL env var)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// S3 access key (or set AWS_ACCESS_KEY_ID env var)
+        #[arg(long)]
+        access_key: Option<String>,
+
+        /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
+        #[arg(long)]
+        secret_key: Option<String>,
     },
 
     /// Mount a database as a filesystem via NFS
     Mount {
-        /// Path to the database directory
+        /// Path to the database directory (local path or s3://bucket/prefix)
         #[arg(value_name = "DB_PATH")]
-        db_path: PathBuf,
+        db_path: String,
 
         /// Mount point directory
         #[arg(value_name = "MOUNT_POINT")]
@@ -114,6 +126,18 @@ enum Commands {
         /// Password for authentication (or set POSIXLAKE_PASSWORD env var)
         #[arg(long)]
         password: Option<String>,
+
+        /// S3 endpoint URL (or set AWS_ENDPOINT_URL env var)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// S3 access key (or set AWS_ACCESS_KEY_ID env var)
+        #[arg(long)]
+        access_key: Option<String>,
+
+        /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
+        #[arg(long)]
+        secret_key: Option<String>,
     },
 
     /// Unmount a mounted database
@@ -132,9 +156,9 @@ enum Commands {
 
     /// Check database health
     Health {
-        /// Path to the database
+        /// Path to the database (local path or s3://bucket/prefix)
         #[arg(value_name = "DB_PATH")]
-        db_path: PathBuf,
+        db_path: String,
 
         /// Username for authentication (or set POSIXLAKE_USER env var)
         #[arg(long, short = 'u')]
@@ -143,13 +167,25 @@ enum Commands {
         /// Password for authentication (or set POSIXLAKE_PASSWORD env var)
         #[arg(long)]
         password: Option<String>,
+
+        /// S3 endpoint URL (or set AWS_ENDPOINT_URL env var)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// S3 access key (or set AWS_ACCESS_KEY_ID env var)
+        #[arg(long)]
+        access_key: Option<String>,
+
+        /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
+        #[arg(long)]
+        secret_key: Option<String>,
     },
 
     /// Show database metrics
     Metrics {
-        /// Path to the database
+        /// Path to the database (local path or s3://bucket/prefix)
         #[arg(value_name = "DB_PATH")]
-        db_path: PathBuf,
+        db_path: String,
 
         /// Username for authentication (or set POSIXLAKE_USER env var)
         #[arg(long, short = 'u')]
@@ -158,6 +194,18 @@ enum Commands {
         /// Password for authentication (or set POSIXLAKE_PASSWORD env var)
         #[arg(long)]
         password: Option<String>,
+
+        /// S3 endpoint URL (or set AWS_ENDPOINT_URL env var)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// S3 access key (or set AWS_ACCESS_KEY_ID env var)
+        #[arg(long)]
+        access_key: Option<String>,
+
+        /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
+        #[arg(long)]
+        secret_key: Option<String>,
     },
 
     /// Test S3/MinIO backend
@@ -245,17 +293,33 @@ async fn main() -> Result<()> {
             auth,
             admin_user,
             admin_password,
+            endpoint,
+            access_key,
+            secret_key,
         } => {
+            let is_s3 = db_path.starts_with("s3://");
             match (schema, from_csv, from_parquet) {
                 (Some(schema_str), None, None) => {
                     // Create with explicit schema
-                    eprintln!("Creating database at: {}", db_path.display());
+                    eprintln!("Creating database at: {}", db_path);
                     let parsed_schema = parse_schema(&schema_str)?;
-                    let db = if auth {
-                        DatabaseOps::create_with_auth(&db_path, Arc::new(parsed_schema), true)
+                    let db = if is_s3 {
+                        let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
+                        DatabaseOps::create_with_s3(
+                            &db_path,
+                            Arc::new(parsed_schema),
+                            &ep,
+                            &ak,
+                            &sk,
+                        )
+                        .await?
+                    } else if auth {
+                        let local_path = PathBuf::from(&db_path);
+                        DatabaseOps::create_with_auth(&local_path, Arc::new(parsed_schema), true)
                             .await?
                     } else {
-                        DatabaseOps::create(&db_path, Arc::new(parsed_schema)).await?
+                        let local_path = PathBuf::from(&db_path);
+                        DatabaseOps::create(&local_path, Arc::new(parsed_schema)).await?
                     };
                     if auth {
                         let password = resolve_admin_password(admin_password)?;
@@ -268,8 +332,9 @@ async fn main() -> Result<()> {
                 }
                 (None, Some(csv_path), None) => {
                     // Create from CSV
+                    let local_path = PathBuf::from(&db_path);
                     eprintln!("Creating database from CSV: {}", csv_path.display());
-                    let mut db = DatabaseOps::create_from_csv(&db_path, &csv_path).await?;
+                    let mut db = DatabaseOps::create_from_csv(&local_path, &csv_path).await?;
                     if auth {
                         db.enable_auth()?;
                         let password = resolve_admin_password(admin_password)?;
@@ -278,13 +343,14 @@ async fn main() -> Result<()> {
                     }
                     eprintln!("Database created successfully from CSV");
                     eprintln!("  Source: {}", csv_path.display());
-                    eprintln!("  Database: {}", db_path.display());
+                    eprintln!("  Database: {}", db_path);
                     Ok(())
                 }
                 (None, None, Some(parquet_path)) => {
                     // Create from Parquet
+                    let local_path = PathBuf::from(&db_path);
                     eprintln!("Creating database from Parquet: {}", parquet_path.display());
-                    let mut db = DatabaseOps::create_from_parquet(&db_path, &parquet_path).await?;
+                    let mut db = DatabaseOps::create_from_parquet(&local_path, &parquet_path).await?;
                     if auth {
                         db.enable_auth()?;
                         let password = resolve_admin_password(admin_password)?;
@@ -293,7 +359,7 @@ async fn main() -> Result<()> {
                     }
                     eprintln!("Database created successfully from Parquet");
                     eprintln!("  Source: {}", parquet_path.display());
-                    eprintln!("  Database: {}", db_path.display());
+                    eprintln!("  Database: {}", db_path);
                     Ok(())
                 }
                 (None, None, None) => {
@@ -314,19 +380,28 @@ async fn main() -> Result<()> {
             port,
             user,
             password,
+            endpoint,
+            access_key,
+            secret_key,
         } => {
+            let is_s3 = db_path.starts_with("s3://");
             // Open database with optional credentials
-            eprintln!("Opening database: {}", db_path.display());
+            eprintln!("Opening database: {}", db_path);
             let credentials = resolve_credentials(user, password);
-            let db = match credentials {
-                Some((u, p)) => {
-                    eprintln!("  Authenticating as '{}'", u);
-                    // Leak into 'static for the Credentials type; these live for the process
-                    let u: &'static str = Box::leak(u.into_boxed_str());
-                    let p: &'static str = Box::leak(p.into_boxed_str());
-                    Arc::new(DatabaseOps::open_with_credentials(&db_path, Some((u, p))).await?)
+            let db = if is_s3 {
+                let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
+                Arc::new(DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?)
+            } else {
+                let local_path = PathBuf::from(&db_path);
+                match credentials {
+                    Some((u, p)) => {
+                        eprintln!("  Authenticating as '{}'", u);
+                        let u: &'static str = Box::leak(u.into_boxed_str());
+                        let p: &'static str = Box::leak(p.into_boxed_str());
+                        Arc::new(DatabaseOps::open_with_credentials(&local_path, Some((u, p))).await?)
+                    }
+                    None => Arc::new(DatabaseOps::open(&local_path).await?),
                 }
-                None => Arc::new(DatabaseOps::open(&db_path).await?),
             };
 
             // Start NFS server
@@ -625,15 +700,25 @@ async fn main() -> Result<()> {
             db_path,
             user,
             password,
+            endpoint,
+            access_key,
+            secret_key,
         } => {
+            let is_s3 = db_path.starts_with("s3://");
             let credentials = resolve_credentials(user, password);
-            let db = match credentials {
-                Some((u, p)) => {
-                    let u: &'static str = Box::leak(u.into_boxed_str());
-                    let p: &'static str = Box::leak(p.into_boxed_str());
-                    DatabaseOps::open_with_credentials(&db_path, Some((u, p))).await?
+            let db = if is_s3 {
+                let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
+                DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?
+            } else {
+                let local_path = PathBuf::from(&db_path);
+                match credentials {
+                    Some((u, p)) => {
+                        let u: &'static str = Box::leak(u.into_boxed_str());
+                        let p: &'static str = Box::leak(p.into_boxed_str());
+                        DatabaseOps::open_with_credentials(&local_path, Some((u, p))).await?
+                    }
+                    None => DatabaseOps::open(&local_path).await?,
                 }
-                None => DatabaseOps::open(&db_path).await?,
             };
             let health = db.health_check().await;
             println!("{}", serde_json::to_string_pretty(&health)?);
@@ -644,15 +729,25 @@ async fn main() -> Result<()> {
             db_path,
             user,
             password,
+            endpoint,
+            access_key,
+            secret_key,
         } => {
+            let is_s3 = db_path.starts_with("s3://");
             let credentials = resolve_credentials(user, password);
-            let db = match credentials {
-                Some((u, p)) => {
-                    let u: &'static str = Box::leak(u.into_boxed_str());
-                    let p: &'static str = Box::leak(p.into_boxed_str());
-                    DatabaseOps::open_with_credentials(&db_path, Some((u, p))).await?
+            let db = if is_s3 {
+                let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
+                DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?
+            } else {
+                let local_path = PathBuf::from(&db_path);
+                match credentials {
+                    Some((u, p)) => {
+                        let u: &'static str = Box::leak(u.into_boxed_str());
+                        let p: &'static str = Box::leak(p.into_boxed_str());
+                        DatabaseOps::open_with_credentials(&local_path, Some((u, p))).await?
+                    }
+                    None => DatabaseOps::open(&local_path).await?,
                 }
-                None => DatabaseOps::open(&db_path).await?,
             };
             let metrics = db.get_metrics().await;
             println!("{}", serde_json::to_string_pretty(&metrics)?);
@@ -1412,4 +1507,31 @@ fn resolve_credentials(
         (Some(u), Some(p)) => Some((u, p)),
         _ => None,
     }
+}
+
+/// Resolve S3 credentials from flags or AWS_* env vars.
+/// Returns (endpoint, access_key, secret_key).
+fn resolve_s3_credentials(
+    endpoint_flag: Option<String>,
+    access_key_flag: Option<String>,
+    secret_key_flag: Option<String>,
+) -> Result<(String, String, String)> {
+    let endpoint = endpoint_flag
+        .or_else(|| std::env::var("AWS_ENDPOINT_URL").ok())
+        .unwrap_or_else(|| "http://localhost:9000".to_string());
+    let access_key = access_key_flag
+        .or_else(|| std::env::var("AWS_ACCESS_KEY_ID").ok())
+        .ok_or_else(|| {
+            Error::InvalidOperation(
+                "S3 access key required: use --access-key or set AWS_ACCESS_KEY_ID".to_string(),
+            )
+        })?;
+    let secret_key = secret_key_flag
+        .or_else(|| std::env::var("AWS_SECRET_ACCESS_KEY").ok())
+        .ok_or_else(|| {
+            Error::InvalidOperation(
+                "S3 secret key required: use --secret-key or set AWS_SECRET_ACCESS_KEY".to_string(),
+            )
+        })?;
+    Ok((endpoint, access_key, secret_key))
 }
