@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 from config import (
-    REPO_ROOT,
+    OUTPUT_DIR,
     S3_ACCESS_KEY,
     S3_DB_PATH,
     S3_ENDPOINT,
     S3_SECRET_KEY,
     WINDOW_TITLES,
     WINDOWS_CLI,
-    WINDOWS_DB_PATH,
     WINDOWS_MOUNT,
     WINDOWS_MOUNT_ROOT,
     WINDOWS_NFS_PORT,
@@ -24,13 +22,11 @@ from config import (
     WSL_MOUNT,
     WSL_NFS_PORT,
     WSL_USER,
-    windows_to_wsl,
     wsl_cli_path,
-    wsl_db_path,
 )
 
 SETTLE_SECONDS = 2.0
-WINDOWS_CLIENT_TEMP = WINDOWS_DB_PATH.parent / "windows_update.csv"
+WINDOWS_CLIENT_TEMP = OUTPUT_DIR / "windows_update.csv"
 
 
 def set_console_title(title: str) -> None:
@@ -117,33 +113,26 @@ def run_wsl_user(command: str, *, pace: float, timeout: int = 240, display: str 
 
 def run_windows_server(pace: float) -> None:
     set_console_title(WINDOW_TITLES["windows_server"])
-    if WINDOWS_DB_PATH.exists():
-        shutil.rmtree(WINDOWS_DB_PATH)
-    run_process(
-        [
-            str(WINDOWS_CLI),
-            "create",
-            str(WINDOWS_DB_PATH),
-            "--schema",
-            "id:Int32,sensor:String,reading:Int32,location:String",
-        ],
-        display=f"& {WINDOWS_CLI.name} create {WINDOWS_DB_PATH} --schema id:Int32,sensor:String,reading:Int32,location:String",
-        pace=pace,
-    )
-    time.sleep(settle_time(pace))
+    # Mount the S3-backed Delta table as a Windows NFS drive
     show_command(
         "PS>",
-        f"& {WINDOWS_CLI.name} mount {WINDOWS_DB_PATH} {WINDOWS_MOUNT} --port {WINDOWS_NFS_PORT}",
+        f"& {WINDOWS_CLI.name} mount {S3_DB_PATH} {WINDOWS_MOUNT} --port {WINDOWS_NFS_PORT} --endpoint {S3_ENDPOINT}",
         pace,
     )
     subprocess.run(
         [
             str(WINDOWS_CLI),
             "mount",
-            str(WINDOWS_DB_PATH),
+            S3_DB_PATH,
             str(WINDOWS_MOUNT),
             "--port",
             str(WINDOWS_NFS_PORT),
+            "--endpoint",
+            S3_ENDPOINT,
+            "--access-key",
+            S3_ACCESS_KEY,
+            "--secret-key",
+            S3_SECRET_KEY,
         ],
         check=True,
     )
@@ -203,9 +192,14 @@ def run_wsl_server(pace: float) -> None:
     set_console_title(WINDOW_TITLES["wsl_server"])
     run_wsl_root(f"mkdir -p {WSL_MOUNT}", pace=pace)
     time.sleep(settle_time(pace))
-    show_command("$", f"{wsl_cli_path()} mount {wsl_db_path()} {WSL_MOUNT} --port {WSL_NFS_PORT}", pace)
+    # Mount the S3-backed Delta table via NFS from Linux
+    mount_cmd = (
+        f"{wsl_cli_path()} mount {S3_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT}"
+        f" --endpoint {S3_ENDPOINT} --access-key {S3_ACCESS_KEY} --secret-key {S3_SECRET_KEY}"
+    )
+    show_command("$", f"{wsl_cli_path()} mount {S3_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT} --endpoint {S3_ENDPOINT}", pace)
     subprocess.run(
-        wsl_root_command(f"{wsl_cli_path()} mount {wsl_db_path()} {WSL_MOUNT} --port {WSL_NFS_PORT}"),
+        wsl_root_command(mount_cmd),
         check=True,
     )
 
@@ -274,12 +268,14 @@ def run_s3_cloud(pace: float) -> None:
     set_console_title(WINDOW_TITLES["s3_cloud"])
     time.sleep(settle_time(pace))
 
-    # Show the S3 test command — creates, inserts, queries, reopens on MinIO
+    # Create the IoT Delta table directly on S3
     run_process(
         [
             str(WINDOWS_CLI),
-            "s3-test",
+            "create",
             S3_DB_PATH,
+            "--schema",
+            "id:Int32,sensor:String,reading:Int32,location:String",
             "--endpoint",
             S3_ENDPOINT,
             "--access-key",
@@ -288,11 +284,30 @@ def run_s3_cloud(pace: float) -> None:
             S3_SECRET_KEY,
         ],
         display=(
-            f"& {WINDOWS_CLI.name} s3-test {S3_DB_PATH}"
+            f"& {WINDOWS_CLI.name} create {S3_DB_PATH}"
+            f" --schema id:Int32,sensor:String,reading:Int32,location:String"
             f" --endpoint {S3_ENDPOINT}"
         ),
         pace=pace,
         timeout=120,
+    )
+
+    # Verify with health check
+    run_process(
+        [
+            str(WINDOWS_CLI),
+            "health",
+            S3_DB_PATH,
+            "--endpoint",
+            S3_ENDPOINT,
+            "--access-key",
+            S3_ACCESS_KEY,
+            "--secret-key",
+            S3_SECRET_KEY,
+        ],
+        display=f"& {WINDOWS_CLI.name} health {S3_DB_PATH} --endpoint {S3_ENDPOINT}",
+        pace=pace,
+        timeout=60,
     )
     time.sleep(settle_time(pace))
 

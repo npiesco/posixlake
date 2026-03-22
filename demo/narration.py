@@ -5,15 +5,16 @@ SCENES = [
         "id": "s3_cloud",
         "title": "S3 cloud",
         "narration": (
-            "Data starts in S3 — the CLI creates a Delta table, inserts readings, and queries them."
+            "The table lives in S3. "
+            "One command creates a typed Delta schema directly on object storage."
         ),
     },
     {
         "id": "windows_server",
         "title": "Windows server",
         "narration": (
-            "Operations pulls the table to a local drive. "
-            "One command creates the schema, another mounts it as a Windows NFS share."
+            "Now an operator mounts that same S3 table as a Windows drive — "
+            "no download, no local copy."
         ),
     },
     {
@@ -23,14 +24,15 @@ SCENES = [
             "From PowerShell, the operator loads six sensor readings — "
             "temperature, humidity, pressure, CO2, and flow. "
             "Temp oh one shows an anomaly, so the operator flags it. "
-            "A file overwrite triggers an atomic Delta merge, and status confirms version tracking."
+            "A file overwrite triggers an atomic Delta merge. "
+            "Every change writes back to S3."
         ),
     },
     {
         "id": "wsl_server",
         "title": "WSL server",
         "narration": (
-            "A Linux engineer mounts the exact same table from WSL — "
+            "A Linux engineer mounts the exact same S3 table from WSL — "
             "no export, no data copy."
         ),
     },
@@ -39,8 +41,8 @@ SCENES = [
         "title": "WSL client",
         "narration": (
             "Cat reads the latest state. Grep locates the flagged sensor, awk extracts names. "
-            "Sed recalibrates the reading, two new sensors are appended, "
-            "and sort confirms one ACID table — cloud, Windows, and Linux."
+            "Sed recalibrates the reading, two new sensors are appended. "
+            "Sort confirms one ACID table — S3, Windows, and Linux."
         ),
     },
 ]
