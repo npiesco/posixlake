@@ -406,6 +406,26 @@ nfs = NfsServer(db, 12049)
 # cat /mnt/posixlake/data/data.csv | grep "Alice" | awk -F',' '{print $2}'
 ```
 
+**Python test scripts in this repo:**
+
+```bash
+# Comprehensive pip/package integration coverage
+python scripts/test_pip_package.py
+
+# Python S3/MinIO integration coverage via UniFFI
+python scripts/test_python_s3.py
+
+# Full manual filesystem/NFS test, which now also invokes the Python S3 test
+python scripts/full_test.py
+```
+
+If you are using the repository's Python environment, run them with the bindings venv interpreter instead:
+
+```bash
+bindings/python/.venv/Scripts/python.exe scripts/test_python_s3.py
+bindings/python/.venv/Scripts/python.exe scripts/full_test.py
+```
+
 See [Python Bindings Documentation](bindings/python/README.md) for complete API reference.
 
 ### Creating a Database
@@ -889,6 +909,15 @@ cargo test s3_test
 
 # Python bindings test
 python3 posixlake/examples/python_example.py
+
+# Python package integration test
+python scripts/test_pip_package.py
+
+# Python S3/MinIO integration test via UniFFI
+python scripts/test_python_s3.py
+
+# Full manual NFS/POSIX test, also runs the Python S3 integration test
+python scripts/full_test.py
 
 # Delta Lake interoperability test (requires PySpark)
 python3 posixlake/examples/interop_test_spark_posixlake.py

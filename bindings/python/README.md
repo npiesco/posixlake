@@ -187,6 +187,32 @@ print(results)
 # All data stored in S3 with Delta Lake ACID transactions
 ```
 
+### Running the Python S3 Integration Test
+
+The repository includes a real S3/MinIO integration script at [scripts/test_python_s3.py](../../scripts/test_python_s3.py). It exercises the UniFFI-exposed Python surface for:
+
+- `DatabaseOps.create_with_s3()`
+- `DatabaseOps.open_with_s3()`
+- `DatabaseOps.health_check()`
+- `insert_json()` / `query_json()` persistence across reopen
+- `merge_json()` against an S3-backed table
+
+It expects MinIO on `http://localhost:9000` with bucket `posixlake-test`.
+
+From the repo root:
+
+```bash
+python scripts/test_python_s3.py
+```
+
+If you are using the repo-managed Python environment, run:
+
+```bash
+bindings/python/.venv/Scripts/python.exe scripts/test_python_s3.py
+```
+
+The larger manual integration harness at [scripts/full_test.py](../../scripts/full_test.py) also invokes this S3 script as part of its run.
+
 ### Example 4: POSIX Access via NFS Server
 
 ```python
