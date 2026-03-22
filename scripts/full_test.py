@@ -6,6 +6,7 @@ import subprocess
 import time
 import os
 import sys
+from pathlib import Path
 from posixlake import (
     DatabaseOps,
     Schema,
@@ -100,6 +101,22 @@ def main():
             "query_version() failed",
         )
         print("✓ query_version()")
+
+
+        def run_python_s3_integration():
+            repo_root = Path(__file__).resolve().parents[1]
+            script_path = repo_root / "scripts" / "test_python_s3.py"
+
+            print("\nRunning Python S3 integration test...")
+            result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True)
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(f"stderr: {result.stderr}")
+            if result.returncode != 0:
+                raise RuntimeError("Python S3 integration test failed")
+
+
 
         now_ms = int(time.time() * 1000)
         timestamp_rows = db.query_timestamp("SELECT COUNT(*) AS cnt FROM data", now_ms)
@@ -203,6 +220,13 @@ def main():
         print("✓ restore_to_transaction_with_credentials()")
     except Exception as e:
         print(f"✗ Auth-backed backup/restore helpers failed: {e}")
+        sys.exit(1)
+
+    try:
+        run_python_s3_integration()
+        print("✓ Python S3 integration test")
+    except Exception as e:
+        print(f"✗ Python S3 integration test failed: {e}")
         sys.exit(1)
 
     # Test complex data types
