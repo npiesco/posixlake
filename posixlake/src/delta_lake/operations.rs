@@ -49,10 +49,10 @@ pub async fn optimize_table(
 
     // Add target file size if provided
     if let Some(size) = target_size {
-        optimize_builder = optimize_builder
-            .with_target_size(std::num::NonZeroU64::new(size).ok_or_else(|| {
-                Error::Other("Target size must be non-zero".to_string())
-            })?);
+        optimize_builder = optimize_builder.with_target_size(
+            std::num::NonZeroU64::new(size)
+                .ok_or_else(|| Error::Other("Target size must be non-zero".to_string()))?,
+        );
     }
 
     // Note: Filter support requires PartitionFilter construction
@@ -174,9 +174,7 @@ pub async fn vacuum_dry_run(
     let retention_duration = ChronoDuration::try_hours(retention_hours as i64)
         .ok_or_else(|| Error::Other(format!("Invalid retention hours: {}", retention_hours)))?;
 
-    let mut vacuum_builder = table
-        .vacuum()
-        .with_retention_period(retention_duration);
+    let mut vacuum_builder = table.vacuum().with_retention_period(retention_duration);
 
     // If retention is less than 168 hours (7 days), disable the safety check
     if retention_hours < 168 {

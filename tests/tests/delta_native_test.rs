@@ -76,14 +76,14 @@ async fn test_open_existing_delta_table_with_fsdb() {
     .unwrap();
 
     // Write using delta-rs
-    use deltalake::DeltaOps;
+    use deltalake::DeltaTable;
     use url::Url;
 
     // Create directory first
     std::fs::create_dir_all(&db_path).unwrap();
 
     let table_url = Url::from_directory_path(&db_path).unwrap();
-    let ops = DeltaOps::try_from_uri(table_url).await.unwrap();
+    let ops: DeltaTable = DeltaTable::try_from_url(table_url).await.unwrap();
 
     let schema_fields = vec![
         deltalake::kernel::StructField::new("id", deltalake::kernel::DataType::INTEGER, false),
@@ -91,13 +91,13 @@ async fn test_open_existing_delta_table_with_fsdb() {
     ];
     let delta_schema = deltalake::kernel::StructType::try_new(schema_fields).unwrap();
 
-    let table = ops
+    let table: DeltaTable = ops
         .create()
         .with_columns(delta_schema.fields().cloned())
         .await
         .unwrap();
 
-    DeltaOps(table).write(vec![batch]).await.unwrap();
+    table.write(vec![batch]).await.unwrap();
 
     // Now open with posixlake in Delta native mode
     let db = DatabaseOps::open_delta_native(db_path.clone())
