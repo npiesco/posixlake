@@ -7,15 +7,15 @@ edition = "2024"
 posixlake = { path = "../posixlake" }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
-arrow = "56.2.0"
-parquet = "56.2.0"
+arrow = "57"
+parquet = "57"
 tokio = { version = "1.48.0", features = ["full"] }
 tempfile = "3.23.0"
 tracing.workspace = true
 serial_test = "3.2.0"
 libc = "0.2.177"
 serde_json.workspace = true
-deltalake = { version = "0.29.4", features = ["datafusion"] }
+deltalake = { version = "0.31.1", features = ["datafusion"] }
 url = "2.5.7"
 reqwest = "0.12.24"
 

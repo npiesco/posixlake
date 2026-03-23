@@ -304,7 +304,8 @@ async fn main() -> Result<()> {
                     eprintln!("Creating database at: {}", db_path);
                     let parsed_schema = parse_schema(&schema_str)?;
                     let db = if is_s3 {
-                        let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
+                        let (ep, ak, sk) =
+                            resolve_s3_credentials(endpoint, access_key, secret_key)?;
                         DatabaseOps::create_with_s3(
                             &db_path,
                             Arc::new(parsed_schema),
@@ -350,7 +351,8 @@ async fn main() -> Result<()> {
                     // Create from Parquet
                     let local_path = PathBuf::from(&db_path);
                     eprintln!("Creating database from Parquet: {}", parquet_path.display());
-                    let mut db = DatabaseOps::create_from_parquet(&local_path, &parquet_path).await?;
+                    let mut db =
+                        DatabaseOps::create_from_parquet(&local_path, &parquet_path).await?;
                     if auth {
                         db.enable_auth()?;
                         let password = resolve_admin_password(admin_password)?;
@@ -398,7 +400,9 @@ async fn main() -> Result<()> {
                         eprintln!("  Authenticating as '{}'", u);
                         let u: &'static str = Box::leak(u.into_boxed_str());
                         let p: &'static str = Box::leak(p.into_boxed_str());
-                        Arc::new(DatabaseOps::open_with_credentials(&local_path, Some((u, p))).await?)
+                        Arc::new(
+                            DatabaseOps::open_with_credentials(&local_path, Some((u, p))).await?,
+                        )
                     }
                     None => Arc::new(DatabaseOps::open(&local_path).await?),
                 }
@@ -846,9 +850,17 @@ async fn main() -> Result<()> {
                 schema.clone(),
                 vec![
                     Arc::new(Int32Array::from(vec![1, 2, 3])),
-                    Arc::new(StringArray::from(vec!["temp_01", "humidity_02", "pressure_03"])),
+                    Arc::new(StringArray::from(vec![
+                        "temp_01",
+                        "humidity_02",
+                        "pressure_03",
+                    ])),
                     Arc::new(Int32Array::from(vec![72, 45, 1013])),
-                    Arc::new(StringArray::from(vec!["plant_north", "plant_south", "plant_east"])),
+                    Arc::new(StringArray::from(vec![
+                        "plant_north",
+                        "plant_south",
+                        "plant_east",
+                    ])),
                 ],
             )?;
 

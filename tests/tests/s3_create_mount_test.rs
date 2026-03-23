@@ -65,7 +65,11 @@ fn build_posixlake_binary() -> &'static std::path::PathBuf {
             "posixlake-cli"
         };
         let binary_path = target_dir.join("debug").join(binary_name);
-        assert!(binary_path.exists(), "binary not found at {:?}", binary_path);
+        assert!(
+            binary_path.exists(),
+            "binary not found at {:?}",
+            binary_path
+        );
         binary_path
     })
 }
@@ -111,11 +115,8 @@ fn posixlake_binary() -> std::path::PathBuf {
 }
 
 fn minio_is_ready() -> bool {
-    std::net::TcpStream::connect_timeout(
-        &"127.0.0.1:9000".parse().unwrap(),
-        Duration::from_secs(2),
-    )
-    .is_ok()
+    std::net::TcpStream::connect_timeout(&"127.0.0.1:9000".parse().unwrap(), Duration::from_secs(2))
+        .is_ok()
 }
 
 fn unique_s3_path(test_name: &str) -> String {

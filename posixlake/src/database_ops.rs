@@ -181,7 +181,7 @@ impl DatabaseOps {
         // Initialize Delta Lake table using delta-rs
         let _delta_table = {
             use deltalake::kernel::{StructField, StructType};
-            use deltalake::DeltaOps;
+            use deltalake::DeltaTable;
             use url::Url;
 
             // Convert Arrow schema to Delta Lake schema
@@ -201,11 +201,11 @@ impl DatabaseOps {
             let table_url = Url::from_directory_path(&base_path)
                 .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
 
-            let ops = DeltaOps::try_from_uri(table_url)
+            let ops = DeltaTable::try_from_url(table_url)
                 .await
                 .map_err(Error::DeltaTable)?;
 
-            let table = ops
+            let table: DeltaTable = ops
                 .create()
                 .with_columns(delta_schema.fields().cloned())
                 .await
@@ -362,7 +362,7 @@ impl DatabaseOps {
     ) -> Result<Self> {
         use crate::storage::s3::{create_delta_storage_options, get_s3_cache_path, parse_s3_url};
         use deltalake::kernel::{StructField, StructType};
-        use deltalake::DeltaOps;
+        use deltalake::DeltaTable;
 
         info!("Creating Delta Lake database on S3 at: {}", s3_path);
 
@@ -385,11 +385,11 @@ impl DatabaseOps {
         // Create Delta table on S3
         let s3_url = parse_s3_url(s3_path)?;
         let ops =
-            DeltaOps::try_from_uri_with_storage_options(s3_url.clone(), storage_options.clone())
+            DeltaTable::try_from_url_with_storage_options(s3_url.clone(), storage_options.clone())
                 .await
                 .map_err(Error::DeltaTable)?;
 
-        let _table = ops
+        let _table: DeltaTable = ops
             .create()
             .with_columns(delta_schema.fields().cloned())
             .await
@@ -1248,7 +1248,7 @@ impl DatabaseOps {
         use crate::storage::s3::parse_s3_url;
         use deltalake::operations::write::SchemaMode;
         use deltalake::protocol::SaveMode;
-        use deltalake::{open_table, open_table_with_storage_options, DeltaOps};
+        use deltalake::{open_table, open_table_with_storage_options};
         use url::Url;
 
         info!("Inserting {} rows to Delta Lake", batch.num_rows());
@@ -1272,7 +1272,7 @@ impl DatabaseOps {
         // Write the batch using DeltaOps with schema merging enabled for evolution
         let row_count = batch.num_rows() as u64;
 
-        DeltaOps(table)
+        table
             .write(vec![batch])
             .with_save_mode(SaveMode::Append)
             .with_schema_mode(SchemaMode::Merge)
@@ -1319,7 +1319,17 @@ impl DatabaseOps {
 
         // Create DataFusion context and register the table
         let ctx = SessionContext::new();
-        ctx.register_table("data", Arc::new(table))
+        let table_provider = deltalake::delta_datafusion::DeltaTableProvider::try_new(
+            table
+                .snapshot()
+                .map_err(Error::DeltaTable)?
+                .snapshot()
+                .clone(),
+            table.log_store(),
+            deltalake::delta_datafusion::DeltaScanConfig::default(),
+        )
+        .map_err(|e| Error::InvalidOperation(format!("Failed to create table provider: {}", e)))?;
+        ctx.register_table("data", Arc::new(table_provider))
             .map_err(|e| Error::InvalidOperation(e.to_string()))?;
 
         // Execute the SQL query
@@ -1340,7 +1350,7 @@ impl DatabaseOps {
 
     /// Delete rows from Delta Lake using native DELETE operation
     async fn delete_delta_native(&self, where_clause: &str) -> Result<usize> {
-        use deltalake::{open_table, DeltaOps};
+        use deltalake::open_table;
         use url::Url;
 
         info!("Deleting from Delta Lake where: {}", where_clause);
@@ -1371,7 +1381,7 @@ impl DatabaseOps {
         let table = open_table(table_url).await.map_err(Error::DeltaTable)?;
 
         // Execute DELETE operation
-        DeltaOps(table)
+        table
             .delete()
             .with_predicate(where_clause)
             .await
@@ -1624,7 +1634,7 @@ impl DatabaseOps {
                 let url = Url::parse(s3_url)
                     .map_err(|e| Error::Other(format!("Invalid S3 URL: {}", e)))?;
 
-                let builder = deltalake::DeltaTableBuilder::from_uri(url)
+                let builder = deltalake::DeltaTableBuilder::from_url(url)
                     .map_err(|e| {
                         error!("Failed to create Delta table builder from S3 URL: {}", e);
                         Error::DeltaTable(e)
@@ -1653,7 +1663,7 @@ impl DatabaseOps {
             let url = Url::from_file_path(table_path)
                 .map_err(|_| Error::Other(format!("Invalid file path: {}", table_path)))?;
 
-            deltalake::DeltaTableBuilder::from_uri(url)
+            deltalake::DeltaTableBuilder::from_url(url)
                 .map_err(|e| {
                     error!("Failed to create Delta table builder from path: {}", e);
                     Error::DeltaTable(e)
@@ -1669,7 +1679,17 @@ impl DatabaseOps {
 
         // Create DataFusion context and register table
         let ctx = SessionContext::new();
-        ctx.register_table("data", Arc::new(table))?;
+        let table_provider = deltalake::delta_datafusion::DeltaTableProvider::try_new(
+            table
+                .snapshot()
+                .map_err(Error::DeltaTable)?
+                .snapshot()
+                .clone(),
+            table.log_store(),
+            deltalake::delta_datafusion::DeltaScanConfig::default(),
+        )
+        .map_err(|e| Error::Other(format!("Failed to create table provider: {}", e)))?;
+        ctx.register_table("data", Arc::new(table_provider))?;
 
         // Execute query
         let df = ctx.sql(sql).await?;
@@ -1759,7 +1779,7 @@ impl DatabaseOps {
                 let url = Url::parse(s3_url)
                     .map_err(|e| Error::Other(format!("Invalid S3 URL: {}", e)))?;
 
-                let builder = deltalake::DeltaTableBuilder::from_uri(url)
+                let builder = deltalake::DeltaTableBuilder::from_url(url)
                     .map_err(|e| {
                         error!("Failed to create Delta table builder from S3 URL: {}", e);
                         Error::DeltaTable(e)
@@ -1792,7 +1812,7 @@ impl DatabaseOps {
             let url = Url::from_file_path(table_path)
                 .map_err(|_| Error::Other(format!("Invalid file path: {}", table_path)))?;
 
-            deltalake::DeltaTableBuilder::from_uri(url)
+            deltalake::DeltaTableBuilder::from_url(url)
                 .map_err(|e| {
                     error!("Failed to create Delta table builder from path: {}", e);
                     Error::DeltaTable(e)
@@ -1815,7 +1835,17 @@ impl DatabaseOps {
 
         // Create DataFusion context and register table
         let ctx = SessionContext::new();
-        ctx.register_table("data", Arc::new(table))?;
+        let table_provider = deltalake::delta_datafusion::DeltaTableProvider::try_new(
+            table
+                .snapshot()
+                .map_err(Error::DeltaTable)?
+                .snapshot()
+                .clone(),
+            table.log_store(),
+            deltalake::delta_datafusion::DeltaScanConfig::default(),
+        )
+        .map_err(|e| Error::Other(format!("Failed to create table provider: {}", e)))?;
+        ctx.register_table("data", Arc::new(table_provider))?;
 
         // Execute query
         let df = ctx.sql(sql).await?;

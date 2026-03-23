@@ -16,7 +16,7 @@ path = "src/bin/uniffi_bindgen.rs"
 
 [dependencies]
 uniffi = { version = "0.29", features = ["cli", "tokio"] }
-arrow = "56.2.0"
+arrow = "57"
 async-trait = "0.1.85"
 bincode = "2.0.1"
 bytes = "1.11.1"
@@ -25,7 +25,7 @@ clap = { version = "4.5", features = ["derive"] }
 crc = "3.3.0"
 csv = "1.4.0"
 ctrlc = "3.4"
-datafusion = "50.3.0"
+datafusion = "52.1.0"
 futures = "0.3.31"
 lazy_static = "1.5.0"
 md5 = "0.8.0"
@@ -35,7 +35,7 @@ moka = { version = "0.12.11", features = ["future"] }
 nfsserve = { git = "https://github.com/npiesco/nfsserve.git", branch = "main" }
 nom = "8.0.0"
 object_store = { version = "0.12.4", features = ["aws", "http"] }
-parquet = "56.2.0"
+parquet = "57"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sled = "0.34.7"
@@ -46,7 +46,7 @@ tracing-subscriber = { workspace = true }
 url = "2.5.7"
 uuid = { workspace = true }
 bcrypt = "0.15"
-deltalake = { version = "0.29.4", features = ["datafusion", "s3"] }
+deltalake = { version = "0.31.1", features = ["datafusion", "s3"] }
 libc = "0.2.178"
 glob = "0.3.3"
 

@@ -3,7 +3,7 @@
 //! Implements MERGE (UPSERT) operations for Delta Lake.
 //! MERGE allows INSERT, UPDATE, and DELETE in a single atomic transaction.
 //!
-//! Note: delta-rs 0.29.4 doesn't have native MERGE support, so we implement it
+//! Note: delta-rs 0.31 doesn't have native MERGE support, so we implement it
 //! using a combination of DataFusion queries and Delta Lake write/delete operations.
 
 use crate::{Error, Result};
@@ -11,7 +11,7 @@ use arrow::record_batch::RecordBatch;
 use datafusion::prelude::*;
 use deltalake::operations::write::SchemaMode;
 use deltalake::protocol::SaveMode;
-use deltalake::{DeltaOps, DeltaTable};
+use deltalake::DeltaTable;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -164,8 +164,18 @@ impl MergeBuilder {
         // Create DataFusion context for query execution
         let ctx = SessionContext::new();
 
-        // Register target table directly
-        ctx.register_table("target", Arc::new(self.target.clone()))
+        // Register target table via DeltaTableProvider (DeltaTable no longer implements TableProvider)
+        let target_provider = deltalake::delta_datafusion::DeltaTableProvider::try_new(
+            self.target
+                .snapshot()
+                .map_err(Error::DeltaTable)?
+                .snapshot()
+                .clone(),
+            self.target.log_store(),
+            deltalake::delta_datafusion::DeltaScanConfig::default(),
+        )
+        .map_err(|e| Error::Other(format!("Failed to create table provider: {}", e)))?;
+        ctx.register_table("target", Arc::new(target_provider))
             .map_err(|e| Error::Other(format!("Failed to register target table: {}", e)))?;
 
         // Register source data
@@ -273,7 +283,7 @@ impl MergeBuilder {
             let delete_predicate = format!("{} IN ({})", id_col_name, id_list);
 
             // DELETE returns the updated table - use it for subsequent operations
-            let (updated_table, _metrics) = DeltaOps(table_ref)
+            let (updated_table, _metrics) = table_ref
                 .delete()
                 .with_predicate(delete_predicate)
                 .await
@@ -292,7 +302,7 @@ impl MergeBuilder {
                 all_batches_to_insert.len()
             );
 
-            DeltaOps(table_ref)
+            table_ref
                 .write(all_batches_to_insert)
                 .with_save_mode(SaveMode::Append)
                 .with_schema_mode(SchemaMode::Merge)

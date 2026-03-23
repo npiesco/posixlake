@@ -4,7 +4,7 @@
 //! that improve performance and manage storage.
 
 use crate::{Error, Result};
-use deltalake::{open_table, open_table_with_storage_options, DeltaOps};
+use deltalake::{open_table, open_table_with_storage_options};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing::info;
@@ -45,11 +45,14 @@ pub async fn optimize_table(
     };
 
     // Build optimize operation
-    let mut optimize_builder = DeltaOps(table).optimize();
+    let mut optimize_builder = table.optimize();
 
     // Add target file size if provided
     if let Some(size) = target_size {
-        optimize_builder = optimize_builder.with_target_size(size);
+        optimize_builder = optimize_builder
+            .with_target_size(std::num::NonZeroU64::new(size).ok_or_else(|| {
+                Error::Other("Target size must be non-zero".to_string())
+            })?);
     }
 
     // Note: Filter support requires PartitionFilter construction
@@ -101,7 +104,7 @@ pub async fn vacuum_table(
     };
 
     // Build VACUUM operation
-    let mut vacuum_builder = DeltaOps(table).vacuum();
+    let mut vacuum_builder = table.vacuum();
 
     // Set retention period (Delta Lake uses chrono::Duration in hours)
     let retention_duration = ChronoDuration::try_hours(retention_hours as i64)
@@ -171,7 +174,7 @@ pub async fn vacuum_dry_run(
     let retention_duration = ChronoDuration::try_hours(retention_hours as i64)
         .ok_or_else(|| Error::Other(format!("Invalid retention hours: {}", retention_hours)))?;
 
-    let mut vacuum_builder = DeltaOps(table)
+    let mut vacuum_builder = table
         .vacuum()
         .with_retention_period(retention_duration);
 
@@ -227,7 +230,7 @@ pub async fn zorder_table(
     // Build Z-ORDER operation
     // Z-ORDER is part of the optimize operation with OptimizeType::ZOrder
     let column_strings: Vec<String> = columns.iter().map(|s| s.to_string()).collect();
-    let optimize_builder = DeltaOps(table)
+    let optimize_builder = table
         .optimize()
         .with_type(OptimizeType::ZOrder(column_strings));
 
