@@ -271,10 +271,19 @@ impl MergeBuilder {
             let id_col_name = self.id_column_name(&target_schema)?;
             let is_string = self.id_column_is_string(&target_schema);
 
+            let is_int32 = self.id_column_is_int32(&target_schema);
             let id_list = if is_string {
                 all_ids_to_delete
                     .iter()
                     .map(|id| format!("'{}'", id.replace('\'', "''")))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else if is_int32 {
+                // Delta kernel 0.19+ is strict: bare literals are Int64,
+                // so Int32 columns need explicit CAST.
+                all_ids_to_delete
+                    .iter()
+                    .map(|id| format!("CAST({} AS INT)", id))
                     .collect::<Vec<_>>()
                     .join(", ")
             } else {
@@ -618,6 +627,32 @@ impl MergeBuilder {
             .iter()
             .find(|f| f.name() == col_name)
             .map(|f| matches!(f.data_type(), DataType::Utf8 | DataType::LargeUtf8))
+            .unwrap_or(false)
+    }
+
+    /// Check if the ID column is Int32 (needs CAST in predicates for delta kernel 0.19+)
+    /// The delta kernel is strict about type comparisons: bare integer literals are Int64,
+    /// so Int32 columns need explicit CAST to avoid "Invalid comparison: Int32 <= Int64".
+    fn id_column_is_int32(&self, schema: &arrow::datatypes::Schema) -> bool {
+        use arrow::datatypes::DataType;
+
+        let col_name = self
+            .primary_key
+            .as_deref()
+            .or_else(|| {
+                schema
+                    .fields()
+                    .iter()
+                    .find(|f| matches!(f.data_type(), DataType::Int32 | DataType::Int64))
+                    .map(|f| f.name().as_str())
+            })
+            .unwrap_or("");
+
+        schema
+            .fields()
+            .iter()
+            .find(|f| f.name() == col_name)
+            .map(|f| matches!(f.data_type(), DataType::Int32))
             .unwrap_or(false)
     }
 }

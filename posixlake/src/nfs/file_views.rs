@@ -733,7 +733,23 @@ impl CsvFileView {
 
         // Handle deletes separately if needed (MERGE doesn't support DELETE from source in our impl)
         if !delete_ids.is_empty() {
-            let delete_where = format!("{} IN ({})", id_column_name, delete_ids.join(", "));
+            // Delta kernel 0.19+ is strict about type comparisons: bare integer
+            // literals are Int64, so Int32 columns need explicit CAST to avoid
+            // "Invalid comparison operation: Int32 <= Int64".
+            let id_field = schema.fields().iter().find(|f| f.name() == id_column_name);
+            let needs_int32_cast = id_field
+                .map(|f| matches!(f.data_type(), arrow::datatypes::DataType::Int32))
+                .unwrap_or(false);
+            let id_values = if needs_int32_cast {
+                delete_ids
+                    .iter()
+                    .map(|id| format!("CAST({} AS INT)", id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                delete_ids.join(", ")
+            };
+            let delete_where = format!("{} IN ({})", id_column_name, id_values);
             debug!("Executing DELETE: {}", delete_where);
             let deleted_count = self.db.delete_rows_where(&delete_where).await?;
             info!("Deleted {} rows", deleted_count);
