@@ -1,6 +1,6 @@
 # Compatibility Matrix
 
-This document defines the compatibility contract for `posixlake` `0.1.x`.
+This document defines the compatibility contract for `posixlake` `0.3.x`.
 
 ## Support Levels
 
@@ -41,7 +41,7 @@ Notes:
 
 ## Upgrade and Rollback Contract
 
-`posixlake` `0.1.x` guarantees:
+`posixlake` `0.3.x` guarantees:
 
 - Databases created by legacy `0.0.x` metadata layouts that omit newer optional fields such as `primary_key` can be opened by current builds.
 - Opening a legacy database must not rewrite or corrupt existing data files.
@@ -50,11 +50,11 @@ Notes:
 
 Validated paths:
 
-- Legacy metadata open: `0.0.x-style schema.json -> 0.1.x open/query`
-- Metadata upgrade: `0.0.x-style schema.json -> 0.1.x set_primary_key -> reopen`
-- Rollback: `0.0.x-style backup -> 0.1.x metadata/data change -> restore -> legacy state recovered`
+- Legacy metadata open: `0.0.x-style schema.json -> 0.3.x open/query`
+- Metadata upgrade: `0.0.x-style schema.json -> 0.3.x set_primary_key -> reopen`
+- Rollback: `0.0.x-style backup -> 0.3.x metadata/data change -> restore -> legacy state recovered`
 
-## Non-Goals for 0.1.x
+## Non-Goals for 0.3.x
 
 - Cross-minor downgrade in place is not supported.
 - Mixed-version concurrent writers are not supported.

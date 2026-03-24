@@ -33,7 +33,7 @@ All jobs must pass the `release-gate` aggregation job before version bump and pu
 Every release binary embeds provenance metadata, visible via `posixlake-cli --version`:
 
 ```
-0.1.0
+0.3.0
 commit: abc1234
 date: 2026-03-11
 target: x86_64-unknown-linux-gnu
