@@ -1,6 +1,6 @@
 [package]
 name = "posixlake"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 
 [lib]
@@ -31,8 +31,8 @@ lazy_static = "1.5.0"
 md5 = "0.8.0"
 memmap2 = "0.9.9"
 moka = { version = "0.12.11", features = ["future"] }
-# NFS server implementation (replacing FUSE)
-nfsserve = { git = "https://github.com/npiesco/nfsserve.git", branch = "main" }
+# NFS server implementation (replacing FUSE), pinned to an immutable revision for reproducible builds
+nfsserve = { git = "https://github.com/npiesco/nfsserve.git", rev = "7a05778bfb26720a2de5eab5142f460f202e8709" }
 nom = "8.0.0"
 object_store = { version = "0.12.4", features = ["aws", "http"] }
 parquet = "57"

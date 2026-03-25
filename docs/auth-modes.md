@@ -133,10 +133,16 @@ Denied operations are also logged:
 }
 ```
 
-## CLI Support (Planned)
+## CLI Support
 
-The CLI does not currently expose authentication flags. Auth is available through the Rust API and Python bindings. Planned CLI additions:
+The CLI already exposes authentication flags for database creation and access:
 
-- `posixlake create --auth` to create auth-enabled databases.
-- `--user` / `--password` flags or `POSIXLAKE_USER` / `POSIXLAKE_PASSWORD` environment variables for credential passing.
-- `posixlake user create|grant|revoke` subcommands for user management.
+- `posixlake create --auth --admin-user <user> --admin-password <password>` creates an auth-enabled database.
+- `posixlake mount --user <user> --password <password>` passes credentials for authenticated mounts.
+- `posixlake health --user <user> --password <password>` and `posixlake metrics --user <user> --password <password>` authenticate read operations.
+
+Environment variables are also supported where documented by the CLI:
+
+- `POSIXLAKE_ADMIN_PASSWORD`
+- `POSIXLAKE_USER`
+- `POSIXLAKE_PASSWORD`

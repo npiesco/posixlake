@@ -3543,7 +3543,7 @@ dependencies = [
 [[package]]
 name = "nfsserve"
 version = "0.10.2"
-source = "git+https://github.com/npiesco/nfsserve.git?branch=main#7a05778bfb26720a2de5eab5142f460f202e8709"
+source = "git+https://github.com/npiesco/nfsserve.git?rev=7a05778bfb26720a2de5eab5142f460f202e8709#7a05778bfb26720a2de5eab5142f460f202e8709"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3974,7 +3974,7 @@ checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "posixlake"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arrow",
  "async-trait",
@@ -6339,8 +6339,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "aws-lc-sys"
-version = "0.37.0"
-source = "git+https://github.com/npiesco/aws-lc-rs?branch=main#f2bb2224a85e40120e9b9818e2b99b08205c4ed3"

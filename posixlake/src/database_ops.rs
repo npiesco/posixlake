@@ -9,6 +9,7 @@ use crate::{Error, Result};
 use arrow::array::{Array, RecordBatch};
 use arrow::datatypes::{Schema, SchemaRef};
 use std::collections::HashMap;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -145,6 +146,74 @@ fn normalize_base_path(path: PathBuf) -> PathBuf {
 #[cfg(not(target_os = "windows"))]
 fn normalize_base_path(path: PathBuf) -> PathBuf {
     path
+}
+
+fn validate_relative_data_path(file_path: &str) -> Result<&Path> {
+    let path = Path::new(file_path);
+
+    if path.as_os_str().is_empty() {
+        return Err(Error::InvalidOperation(
+            "Path must not be empty".to_string(),
+        ));
+    }
+
+    if path.is_absolute() {
+        return Err(Error::InvalidOperation(format!(
+            "Absolute paths are not allowed: {}",
+            file_path
+        )));
+    }
+
+    for component in path.components() {
+        match component {
+            Component::CurDir | Component::Normal(_) => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(Error::InvalidOperation(format!(
+                    "Path escapes database root: {}",
+                    file_path
+                )));
+            }
+        }
+    }
+
+    Ok(path)
+}
+
+fn collect_parquet_files_recursive(base_path: &Path) -> Result<Vec<String>> {
+    fn walk(base_path: &Path, current_dir: &Path, files: &mut Vec<String>) -> Result<()> {
+        for entry in std::fs::read_dir(current_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_dir() {
+                let name = entry.file_name();
+                if matches!(name.to_str(), Some("_delta_log" | "_metadata")) {
+                    continue;
+                }
+                walk(base_path, &path, files)?;
+                continue;
+            }
+
+            if file_type.is_file() && path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                let relative = path.strip_prefix(base_path).map_err(|e| {
+                    Error::InvalidOperation(format!(
+                        "Failed to strip database prefix from '{}': {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+                files.push(relative.to_string_lossy().to_string());
+            }
+        }
+
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    walk(base_path, base_path, &mut files)?;
+    files.sort();
+    Ok(files)
 }
 
 // Transaction impl moved to src/transaction.rs
@@ -881,8 +950,10 @@ impl DatabaseOps {
     }
 
     /// Get the base path of the database
-    pub fn base_path(&self) -> &std::path::Path {
-        if let Err(e) = self.check_permission(&crate::security::Permission::Read) {
+    pub fn base_path(&self) -> Result<&std::path::Path> {
+        let result = self.check_permission(&crate::security::Permission::Read);
+
+        if let Err(e) = &result {
             if let Some(auth_ctx) = &self.auth_context {
                 if let Some(logger) = &self.audit_logger {
                     let _ = futures::executor::block_on(logger.log(
@@ -893,27 +964,37 @@ impl DatabaseOps {
                     ));
                 }
             }
-            return std::path::Path::new("");
         }
-        &self.base_path
+
+        result.map(|_| self.base_path.as_path())
+    }
+
+    pub(crate) fn resolve_data_path(&self, file_path: &str) -> Result<PathBuf> {
+        let relative_path = validate_relative_data_path(file_path)?;
+        let full_path = self.base_path.join(relative_path);
+
+        let canonical_path = full_path.canonicalize().map_err(|e| {
+            Error::InvalidOperation(format!(
+                "Failed to resolve path '{}' inside database root: {}",
+                file_path, e
+            ))
+        })?;
+
+        if !canonical_path.starts_with(&self.base_path) {
+            return Err(Error::InvalidOperation(format!(
+                "Path escapes database root: {}",
+                file_path
+            )));
+        }
+
+        Ok(canonical_path)
     }
 
     /// List Parquet data files in the database directory
     pub fn list_parquet_files(&self) -> Result<Vec<String>> {
         let result = (|| {
             self.check_permission(&crate::security::Permission::Read)?;
-            let mut files = Vec::new();
-            let entries = std::fs::read_dir(&self.base_path)?;
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                    if let Some(name) = path.file_name() {
-                        files.push(name.to_string_lossy().to_string());
-                    }
-                }
-            }
-            files.sort();
-            Ok(files)
+            collect_parquet_files_recursive(&self.base_path)
         })();
 
         match &result {
@@ -1865,13 +1946,7 @@ impl DatabaseOps {
             self.check_permission(&crate::security::Permission::Read)?;
             info!("Querying specific file: {}", file_path);
 
-            let full_path = self.base_path.join(file_path);
-            if !full_path.exists() {
-                return Err(Error::RecordNotFound(format!(
-                    "File not found: {}",
-                    file_path
-                )));
-            }
+            let full_path = self.resolve_data_path(file_path)?;
 
             let reader = ParquetReader::new();
             let batch = reader.read_batch(&full_path)?;

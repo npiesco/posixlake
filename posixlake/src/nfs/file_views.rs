@@ -1252,28 +1252,22 @@ impl StatsFile {
 
     /// Generate statistics JSON (Delta Lake mode)
     pub async fn generate_content(&self) -> Result<Vec<u8>> {
-        // For Delta Lake, scan the base directory and query for row count
-        let base_path = self.db.base_path();
-
-        // Count parquet files in the table directory
+        // Count parquet data files visible through the database abstraction.
         let mut total_files = 0;
         let mut total_size_bytes = 0;
         let mut file_stats = Vec::new();
 
-        if let Ok(entries) = std::fs::read_dir(base_path) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                    if let Ok(metadata) = std::fs::metadata(&path) {
-                        total_files += 1;
-                        let size = metadata.len();
-                        total_size_bytes += size;
+        for relative_path in self.db.list_parquet_files()? {
+            if let Ok(path) = self.db.resolve_data_path(&relative_path) {
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    total_files += 1;
+                    let size = metadata.len();
+                    total_size_bytes += size;
 
-                        file_stats.push(serde_json::json!({
-                            "path": path.file_name().unwrap().to_string_lossy(),
-                            "size_bytes": size,
-                        }));
-                    }
+                    file_stats.push(serde_json::json!({
+                        "path": relative_path,
+                        "size_bytes": size,
+                    }));
                 }
             }
         }

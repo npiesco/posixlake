@@ -10,7 +10,9 @@ use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use posixlake::database_ops::DatabaseOps;
+use std::path::Path;
 use std::sync::Arc;
+use tempfile::TempDir;
 
 fn setup_logging() {
     let _ = tracing_subscriber::fmt()
@@ -4554,18 +4556,23 @@ async fn test_open_without_credentials_hides_base_path() {
         .await
         .expect("Failed to open with admin credentials");
     assert_eq!(
-        authed_db.base_path(),
-        std::path::Path::new(&db_path),
+        authed_db
+            .base_path()
+            .expect("Authenticated caller should read real base path"),
+        Path::new(&db_path),
         "Authenticated caller should read real base path"
     );
 
     let opened = DatabaseOps::open(&db_path)
         .await
         .expect("Open should succeed but remain unauthenticated");
-    assert_eq!(
-        opened.base_path(),
-        std::path::Path::new(""),
-        "Unauthenticated caller should not see real base path"
+    let err = opened
+        .base_path()
+        .expect_err("Unauthenticated caller should not see real base path");
+    assert!(
+        format!("{}", err).contains("Authentication required"),
+        "Expected authentication error, got: {}",
+        err
     );
 
     cleanup_test_db(&db_path);
@@ -5436,12 +5443,14 @@ async fn test_base_path_permission_denied_is_audited() {
         .await
         .expect("Failed to open with writer credentials");
 
-    // writer has no read permission, so base_path should return empty
-    let path = writer_db.base_path();
-    assert_eq!(
-        path,
-        std::path::Path::new(""),
-        "Writer should get empty path for base_path"
+    // writer has no read permission, so base_path should return an error
+    let err = writer_db
+        .base_path()
+        .expect_err("Writer should not be able to read base_path");
+    assert!(
+        format!("{}", err).contains("Permission denied"),
+        "Expected permission denied error, got: {}",
+        err
     );
 
     let admin_db = DatabaseOps::open_with_credentials(&db_path, Some(("admin", "admin_pass")))
@@ -5468,6 +5477,132 @@ async fn test_base_path_permission_denied_is_audited() {
     );
 
     cleanup_test_db(&db_path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_query_file_rejects_path_traversal_outside_database_root() {
+    setup_logging();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("primary_db");
+    let outside_db_path = temp_dir.path().join("outside_db");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone())
+        .await
+        .expect("Failed to create primary database");
+    let outside_db = DatabaseOps::create(&outside_db_path, schema.clone())
+        .await
+        .expect("Failed to create outside database");
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["outside"])),
+        ],
+    )
+    .unwrap();
+    outside_db
+        .insert(batch)
+        .await
+        .expect("Failed to insert into outside database");
+
+    let outside_file = outside_db
+        .list_parquet_files()
+        .expect("Outside database should list its parquet files")
+        .into_iter()
+        .next()
+        .expect("Outside database should contain a parquet file");
+
+    let traversal_path = format!("../outside_db/{}", outside_file);
+    let query_result = db.query_file(&traversal_path).await;
+    assert!(
+        query_result.is_err(),
+        "query_file should reject traversal outside the database root"
+    );
+
+    let err = format!("{}", query_result.unwrap_err());
+    assert!(
+        err.contains("escapes database root"),
+        "Expected traversal rejection error, got: {}",
+        err
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_list_parquet_files_recurses_into_partition_dirs() {
+    setup_logging();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("partitioned_db");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone())
+        .await
+        .expect("Failed to create database");
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1])),
+            Arc::new(StringArray::from(vec!["Alice"])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.expect("Insert should succeed");
+
+    let root_file = db
+        .list_parquet_files()
+        .expect("Should list root parquet files")
+        .into_iter()
+        .next()
+        .expect("Expected a parquet file");
+
+    let nested_dir = db_path.join("country=us").join("year=2026");
+    std::fs::create_dir_all(&nested_dir).expect("Should create partition directories");
+
+    let nested_file_path = nested_dir.join(
+        Path::new(&root_file)
+            .file_name()
+            .expect("Parquet file should have a file name"),
+    );
+    std::fs::copy(db_path.join(&root_file), &nested_file_path)
+        .expect("Should copy parquet file into nested partition directory");
+
+    let files = db
+        .list_parquet_files()
+        .expect("Should recurse into nested partition directories");
+    let nested_relative = "country=us/year=2026/".to_string()
+        + nested_file_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .as_ref();
+
+    assert!(
+        files.iter().any(|file| file == &nested_relative),
+        "Expected recursive listing to include nested parquet file, got: {:?}",
+        files
+    );
+
+    let batches = db
+        .query_file(&nested_relative)
+        .await
+        .expect("Nested parquet file should be readable");
+    assert_eq!(
+        batches[0].num_rows(),
+        1,
+        "Copied parquet file should be readable"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

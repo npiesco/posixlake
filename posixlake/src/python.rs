@@ -1068,8 +1068,8 @@ impl DatabaseOps {
     }
 
     /// Get database base path
-    pub fn get_base_path(&self) -> String {
-        format!("{}", self.inner.base_path().display())
+    pub fn get_base_path(&self) -> Result<String, PosixLakeError> {
+        Ok(format!("{}", self.inner.base_path()?.display()))
     }
 }
 

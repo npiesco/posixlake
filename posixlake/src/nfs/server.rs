@@ -155,31 +155,15 @@ impl PosixLakeFilesystem {
 
     /// Refresh Parquet file cache (Delta Lake mode)
     pub(crate) async fn refresh_parquet_files(&self) -> std::result::Result<(), nfsstat3> {
-        // For Delta Lake, scan the base directory for parquet files
-        // Delta Lake stores parquet files in the root table directory
         let mut parquet_files = self.parquet_files.lock().await;
         parquet_files.clear();
 
-        let base_path = self.db.base_path();
-
-        // Scan for .parquet files in the base directory
-        match std::fs::read_dir(base_path) {
-            Ok(entries) => {
+        match self.db.list_parquet_files() {
+            Ok(files) => {
                 let mut file_id = PARQUET_FILE_ID_START;
-
-                for entry in entries.flatten() {
-                    let path = entry.path();
-
-                    // Check if it's a parquet file
-                    if path.is_file()
-                        && path.extension().and_then(|s| s.to_str()) == Some("parquet")
-                    {
-                        if let Some(filename) = path.file_name() {
-                            let filename_str = filename.to_string_lossy().to_string();
-                            parquet_files.insert(file_id, filename_str);
-                            file_id += 1;
-                        }
-                    }
+                for file in files {
+                    parquet_files.insert(file_id, file);
+                    file_id += 1;
                 }
 
                 info!(
@@ -189,7 +173,7 @@ impl PosixLakeFilesystem {
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to read Delta Lake directory: {}", e);
+                error!("Failed to enumerate Delta Lake parquet files: {}", e);
                 Err(nfsstat3::NFS3ERR_IO)
             }
         }
@@ -338,7 +322,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 let parquet_files = self.parquet_files.lock().await;
                 if let Some(file_path) = parquet_files.get(&id) {
                     // Get file size directly from filesystem
-                    let full_path = self.db.base_path().join(file_path);
+                    let full_path = self
+                        .db
+                        .resolve_data_path(file_path)
+                        .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
                     if let Ok(metadata) = std::fs::metadata(&full_path) {
                         Self::file_attr(id, metadata.len())
                     } else {
@@ -497,7 +484,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
             100..=999 => {
                 let parquet_files = self.parquet_files.lock().await;
                 if let Some(path) = parquet_files.get(&id) {
-                    let full_path = self.db.base_path().join(path);
+                    let full_path = self
+                        .db
+                        .resolve_data_path(path)
+                        .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
                     let metadata = std::fs::metadata(&full_path).ok();
                     let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
                     let attr = fattr3 {
@@ -1266,7 +1256,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
                             .into();
 
                         // Get real file size from filesystem
-                        let full_path = self.db.base_path().join(file_path);
+                        let full_path = self
+                            .db
+                            .resolve_data_path(file_path)
+                            .map_err(|_| nfsstat3::NFS3ERR_NOENT)?;
                         let size = std::fs::metadata(&full_path)
                             .map(|m| m.len())
                             .unwrap_or(1024); // Fallback to 1024 if not found
