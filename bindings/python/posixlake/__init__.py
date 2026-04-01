@@ -15,4 +15,5 @@ __all__ = [
     'HealthStatus',
     'PosixLakeError',
     'S3Config',
+    'AzureConfig',
 ]

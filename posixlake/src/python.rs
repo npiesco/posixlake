@@ -535,6 +535,14 @@ pub struct S3Config {
     pub region: String,
 }
 
+/// Azure Blob Storage / ADLS Gen2 configuration
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct AzureConfig {
+    pub account_name: String,
+    pub account_key: String,
+    pub endpoint: String,
+}
+
 /// Main DatabaseOps wrapper for Python
 #[derive(uniffi::Object)]
 pub struct DatabaseOps {
@@ -716,6 +724,57 @@ impl DatabaseOps {
             &s3_config.endpoint,
             &s3_config.access_key_id,
             &s3_config.secret_access_key,
+        ))?;
+        Ok(Arc::new(Self {
+            inner: Arc::new(db),
+            runtime,
+        }))
+    }
+
+    /// Create a new database on Azure Blob Storage / ADLS Gen2
+    #[uniffi::constructor]
+    pub fn create_with_azure(
+        azure_path: String,
+        schema: Schema,
+        azure_config: AzureConfig,
+    ) -> Result<Arc<Self>, PosixLakeError> {
+        let arrow_schema = schema.to_arrow_schema()?;
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
+        let db = runtime.block_on(CoreDatabaseOps::create_with_azure(
+            &azure_path,
+            arrow_schema,
+            &azure_config.account_name,
+            &azure_config.account_key,
+            &azure_config.endpoint,
+        ))?;
+        Ok(Arc::new(Self {
+            inner: Arc::new(db),
+            runtime,
+        }))
+    }
+
+    /// Open an existing database on Azure Blob Storage / ADLS Gen2
+    #[uniffi::constructor]
+    pub fn open_with_azure(
+        azure_path: String,
+        azure_config: AzureConfig,
+    ) -> Result<Arc<Self>, PosixLakeError> {
+        let runtime =
+            Arc::new(
+                tokio::runtime::Runtime::new().map_err(|e| PosixLakeError::Other {
+                    message: e.to_string(),
+                })?,
+            );
+        let db = runtime.block_on(CoreDatabaseOps::open_with_azure(
+            &azure_path,
+            &azure_config.account_name,
+            &azure_config.account_key,
+            &azure_config.endpoint,
         ))?;
         Ok(Arc::new(Self {
             inner: Arc::new(db),

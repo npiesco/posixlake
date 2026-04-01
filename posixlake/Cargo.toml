@@ -34,7 +34,7 @@ moka = { version = "0.12.11", features = ["future"] }
 # NFS server implementation (replacing FUSE), pinned to an immutable revision for reproducible builds
 nfsserve = { git = "https://github.com/npiesco/nfsserve.git", rev = "7a05778bfb26720a2de5eab5142f460f202e8709" }
 nom = "8.0.0"
-object_store = { version = "0.12.4", features = ["aws", "http"] }
+object_store = { version = "0.12.4", features = ["aws", "azure", "http"] }
 parquet = "57"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -46,7 +46,7 @@ tracing-subscriber = { workspace = true }
 url = "2.5.7"
 uuid = { workspace = true }
 bcrypt = "0.15"
-deltalake = { version = "0.31.1", features = ["datafusion", "s3"] }
+deltalake = { version = "0.31.1", features = ["azure", "datafusion", "s3"] }
 libc = "0.2.178"
 glob = "0.3.3"
 
