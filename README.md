@@ -190,6 +190,20 @@ cat /mnt/s3-data/data/data.csv | awk -F',' '{sum+=$3} END {print sum}'
 echo "new,record,123" >> /mnt/s3-data/data/data.csv
 ```
 
+**Works with Azure Blob Storage / ADLS Gen2 too!**
+
+```bash
+# Mount Azure-backed Delta table
+posixlake-cli mount az://my-container/delta-table /mnt/azure-data \
+  --azure-account myaccount --azure-key mykey
+
+# Same UNIX tools, same API, cloud storage
+grep "pattern" /mnt/azure-data/data/data.csv
+
+# Writes go to Azure with Delta Lake ACID transactions
+echo "new,record,123" >> /mnt/azure-data/data/data.csv
+```
+
 ### Delta Lake Native Format
 
 **Every posixlake database IS a Delta Lake table:**
@@ -226,8 +240,9 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 - **Delta Lake Native**: Every database IS a Delta Lake table - readable by Spark/Databricks/Athena immediately
 - **ACID Transactions**: All POSIX writes go through proper ACID transactions
 - **Pure Rust NFS Server**: Zero dependencies - no FUSE, no kernel modules, works everywhere
-- **Unified Storage Abstraction**: NFS server works with **both local and S3 backends** - mount S3 Delta tables as POSIX filesystem!
+- **Unified Storage Abstraction**: NFS server works with **local, S3, and Azure backends** - mount cloud Delta tables as POSIX filesystem!
 - **S3 Backend**: Store Delta Lake tables on S3/MinIO with transparent local caching - use `grep` on S3 data!
+- **Azure Backend**: Store Delta Lake tables on Azure Blob Storage / ADLS Gen2 with transparent local caching
 - **SQL Support**: Full SQL via DataFusion when you need it
 - **Fast**: Columnar Parquet with Snappy compression, query pruning, memory-mapped I/O
 
@@ -240,8 +255,9 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 - **Pure Rust NFS Server**: Zero external dependencies - OS has NFS client built-in
 - **Delta Lake Format**: Native `_delta_log/` transaction logs - Spark/Databricks/Athena compatible
 - **ACID Everywhere**: Even `echo >>` goes through proper transactions with conflict detection
-- **Storage Abstraction Layer**: Unified backend for Local/S3/NFS - same API, any storage
+- **Storage Abstraction Layer**: Unified backend for Local/S3/Azure - same API, any storage
 - **S3 + NFS Integration**: Mount S3-backed Delta tables as POSIX filesystem - `grep` works on cloud data!
+- **Azure + NFS Integration**: Mount Azure Blob/ADLS Gen2 Delta tables as POSIX filesystem
 - **Schema Evolution**: Add columns dynamically - old data gets NULL automatically
 - **Note**: Metadata operations (`touch`, `chmod`, `chown`) are silently ignored as timestamps/permissions reflect Delta Lake commits and database-layer RBAC. Symlinks (`ln -s`) return NFS3ERR_NOTSUPP - use SQL views instead.
 

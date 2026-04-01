@@ -286,7 +286,10 @@ enum Commands {
         account_name: String,
 
         /// Azure storage account key (default: Azurite well-known key)
-        #[arg(long, default_value = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")]
+        #[arg(
+            long,
+            default_value = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+        )]
         account_key: String,
 
         /// Azurite endpoint (default: http://127.0.0.1:10000)
@@ -1137,8 +1140,13 @@ async fn main() -> Result<()> {
                 Ok(db) => db,
                 Err(err) if should_open_existing_db(&err) => {
                     eprintln!("      Database already exists; opening...");
-                    DatabaseOps::open_with_azure(&azure_path, &account_name, &account_key, &endpoint)
-                        .await?
+                    DatabaseOps::open_with_azure(
+                        &azure_path,
+                        &account_name,
+                        &account_key,
+                        &endpoint,
+                    )
+                    .await?
                 }
                 Err(err) => return Err(err),
             };

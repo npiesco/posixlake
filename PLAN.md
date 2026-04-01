@@ -75,83 +75,50 @@ Delta Lake + object_store natively handle Azure auth/transport. The raw Azure SD
 [x] 4.5 `cargo clippy` — clean, no warnings
 [x] 4.6 `cargo fmt --all` — clean
 
-### Phase 8 — Integration Tests (partial)
+### Phase 8 — Integration Tests
 [x] 8.1 Create `tests/tests/azure_test.rs` — 4 integration tests hitting live Azurite:
     - `test_azure_create_database` ✅
     - `test_azure_insert_and_query` ✅
     - `test_azure_reopen_database` ✅
     - `test_azure_multiple_inserts` ✅
+[x] 8.2 Create `tests/tests/azure_cli_test.rs` — 3 CLI integration tests:
+    - `test_create_with_azure_uri` ✅
+    - `test_create_with_azure_env_vars` ✅
+    - `test_health_with_azure_uri` ✅
+[x] 8.3 `cargo test` — all 98 tests pass (91 lib + 4 Azure + 3 Azure CLI)
 
-### Phase 5 — CLI Support (NEXT)
-[ ] 5.1 Add Azure detection to `Commands::Create` — detect `az://` prefix alongside `s3://`
-    (`posixlake.rs:300`), add `--azure-account`, `--azure-key`, `--azure-endpoint` flags
-    (or env vars `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURITE_ENDPOINT`)
-[ ] 5.2 Add `resolve_azure_credentials()` helper — mirror `resolve_s3_credentials` (`posixlake.rs:1526-1549`)
-[ ] 5.3 Wire `Commands::Create` handler: if `is_azure`, call `DatabaseOps::create_with_azure()`
-    (`posixlake.rs:306-316`)
-[ ] 5.4 Wire `Commands::Mount` handler: if `is_azure`, call `DatabaseOps::open_with_azure()`
-    (`posixlake.rs:389-396`)
-[ ] 5.5 Wire `Commands::Health` handler — add Azure open path (`posixlake.rs:711-716`)
-[ ] 5.6 Wire `Commands::Metrics` handler — add Azure open path (`posixlake.rs:740-744`)
-[ ] 5.7 Add `AzureTest` subcommand — mirror `S3Test` (`posixlake.rs:211-228`)
-[ ] 5.8 Add `Azure` management subcommand with `Start`/`Stop` for Azurite via Podman
-    — mirror `S3`/`S3Commands` (`posixlake.rs:230-268`)
-[ ] 5.9 `cargo build` — confirm Phase 5 compiles
+### Phase 5 — CLI Support
+[x] 5.1 Add `az://` detection + `--azure-account`, `--azure-key`, `--azure-endpoint` flags to Create, Mount, Health, Metrics
+[x] 5.2 Add `resolve_azure_credentials()` helper
+[x] 5.3 Wire Create handler for Azure
+[x] 5.4 Wire Mount handler for Azure
+[x] 5.5 Wire Health handler for Azure
+[x] 5.6 Wire Metrics handler for Azure
+[x] 5.7 Add `AzureTest` subcommand
+[x] 5.8 Add `Azure` management subcommand (Start/Stop Azurite via Podman)
+[x] 5.9 `cargo build` — compiles cleanly
 
 ### Phase 6 — Python Bindings (UniFFI)
-[ ] 6.1 Add `AzureConfig` struct in `python.rs` — mirror `S3Config` (`python.rs:529-536`):
-    ```rust
-    pub struct AzureConfig {
-        pub account_name: String,
-        pub account_key: String,
-    }
-    ```
-[ ] 6.2 Add `create_with_azure(azure_path, schema, azure_config)` constructor
-    — mirror `create_with_s3` (`python.rs:589-614`)
-[ ] 6.3 Add `open_with_azure(azure_path, azure_config)` constructor
-    — mirror `open_with_s3` (`python.rs:705-724`)
-[ ] 6.4 Export `AzureConfig` from Python `__init__.py` (`bindings/python/posixlake/__init__.py`)
-[ ] 6.5 `cargo build` — confirm Phase 6 compiles
+[x] 6.1 Add `AzureConfig` struct in `python.rs`
+[x] 6.2 Add `create_with_azure` constructor
+[x] 6.3 Add `open_with_azure` constructor
+[x] 6.4 Export `AzureConfig` from `__init__.py`
+[x] 6.5 `cargo build` — compiles cleanly
 
 ### Phase 7 — Podman / Azurite Setup
-[ ] 7.1 Add `azurite` service to `docker-compose.yml` — mirror `minio` service (lines 2-20):
-    ```yaml
-    azurite:
-      image: mcr.microsoft.com/azure-storage/azurite:latest
-      container_name: posixlake-azurite
-      ports:
-        - "10000:10000"   # Blob
-        - "10001:10001"   # Queue
-        - "10002:10002"   # Table
-      command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
-    ```
-[ ] 7.2 Add `azurite-init` service to create a test container — mirror `minio-init` (lines 22-35)
-
-### Phase 8 — Integration Tests
-[ ] 8.1 Create `tests/tests/azure_test.rs` — mirror `s3_test.rs` structure:
-    - `is_azurite_available()` — probe `http://localhost:10000` (mirrors `s3_test.rs:23-40`)
-    - `get_azurite_config()` — read `AZURITE_ENDPOINT`, `AZURE_STORAGE_ACCOUNT_NAME`,
-      `AZURE_STORAGE_ACCOUNT_KEY` env vars (mirrors `s3_test.rs:68-76`)
-    - `create_test_schema()` / `create_test_batch()` — reuse pattern (mirrors `s3_test.rs:78-100`)
-    - `test_azure_create_database` (mirrors `s3_test.rs:102-145`)
-    - `test_azure_insert_and_query` (mirrors `s3_test.rs:147-200`)
-    - `test_azure_reopen_database` (mirrors `s3_test.rs:202-260`)
-    - `test_azure_multiple_inserts` (mirrors `s3_test.rs:262-307`)
-[ ] 8.2 Create `tests/tests/azure_cli_test.rs` — mirror `s3_cli_test.rs`:
-    - Azurite start/stop via compose
-    - CLI azure-test auto-start
-[ ] 8.3 Add `reqwest` dep to `tests/Cargo.toml` if not already present (it is — line 20)
-[ ] 8.4 `cargo nextest run` — confirm all new + existing tests pass
+[x] 7.1 Add `azurite` service to `docker-compose.yml`
+[x] 7.2 Add `azurite-init` service to create test container
 
 ### Phase 9 — Documentation
-[ ] 9.1 Update `README.md` — add Azure section alongside S3 documentation
-[ ] 9.2 Update CLI `--help` text — ensure Azure flags have clear descriptions
-[ ] 9.3 Add `AZURE_TEST_SETUP.md` in `tests/` — mirror `tests/POSIX_TEST_SETUP.md` for Azure/Azurite
+[x] 9.1 Update `README.md` — add Azure sections (mount, feature list, storage abstraction)
+[x] 9.2 CLI `--help` text updated with Azure flag descriptions
+[x] 9.3 Create `tests/AZURE_TEST_SETUP.md` — Azurite setup instructions
 
 ### Phase 10 — Final Verification
-[ ] 10.1 `cargo build` — clean build
-[ ] 10.2 `cargo nextest run` — full regression suite passes
-[ ] 10.3 `cargo clippy` — no new warnings (warnings are errors via `.cargo/config.toml`)
+[x] 10.1 `cargo build` — clean build ✅
+[x] 10.2 `cargo test` — 98 tests pass, 0 failures ✅
+[x] 10.3 `cargo clippy` — no warnings ✅
+[x] 10.4 `cargo fmt` — clean ✅
 
 ## Files Modified (Summary)
 
