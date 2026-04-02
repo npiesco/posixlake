@@ -45,3 +45,4 @@ aws-lc-rs/
 data/
 graph.cache/
 *.cdx.json
+.az-*/

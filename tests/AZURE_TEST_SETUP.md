@@ -58,7 +58,7 @@ posixlake-cli azure start
 posixlake-cli azure stop
 
 # Test Azure backend end-to-end
-posixlake-cli azure-test az://posixlake-test/my-test-db
+posixlake-cli azure-test az://my-test-db
 ```
 
 ### Via docker-compose

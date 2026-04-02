@@ -2,7 +2,7 @@
   <h1>posixlake Python Bindings</h1>
   <p><strong>High-performance Delta Lake database with Python API and POSIX interface</strong></p>
   
-  <p><em>Python API for posixlake (File Store Database) - Access Delta Lake operations, SQL queries, time travel, and use Unix commands (`cat`, `grep`, `awk`, `wc`, `head`, `tail`, `sort`, `cut`, `echo >>`, `sed -i`, `vim`, `mkdir`, `mv`, `cp`, `rmdir`, `rm`) to query and trigger Delta Lake transactions. Mount databases as POSIX filesystems where standard Unix tools execute ACID operations. Works with local filesystem directories and object storage/S3. Built on Rust for maximum performance.</em></p>
+  <p><em>Python API for posixlake (File Store Database) - Access Delta Lake operations, SQL queries, time travel, and use Unix commands (`cat`, `grep`, `awk`, `wc`, `head`, `tail`, `sort`, `cut`, `echo >>`, `sed -i`, `vim`, `mkdir`, `mv`, `cp`, `rmdir`, `rm`) to query and trigger Delta Lake transactions. Mount databases as POSIX filesystems where standard Unix tools execute ACID operations. Works with local filesystem directories, S3/MinIO, Azure Blob Storage, and Microsoft Fabric OneLake. Built on Rust for maximum performance.</em></p>
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![PyPI](https://img.shields.io/badge/PyPI-posixlake-3776AB?logo=pypi&logoColor=white)](https://pypi.org/project/posixlake/)
@@ -13,6 +13,8 @@
 [![Arrow](https://img.shields.io/badge/Arrow-56.2-red?logo=apache)](https://arrow.apache.org)
 [![DataFusion](https://img.shields.io/badge/DataFusion-50.3-purple?logo=apache)](https://datafusion.apache.org)
 [![S3 Compatible](https://img.shields.io/badge/S3-Compatible-569A31?logo=amazons3&logoColor=white)](.)
+[![Azure](https://img.shields.io/badge/Azure-Blob%20Storage-0078D4?logo=microsoftazure&logoColor=white)](.)
+[![Fabric](https://img.shields.io/badge/Fabric-OneLake-742774?logo=microsoftazure&logoColor=white)](.)
 [![NFS Server](https://img.shields.io/badge/NFS-Pure%20Rust-orange)](.)
 </div>
 
@@ -25,7 +27,7 @@
 - **CSV/Parquet Import**: Create databases from CSV (auto schema inference) or Parquet files
 - **Buffered Inserts**: 10x performance improvement for small batch writes
 - **NFS Server**: Mount Delta Lake as POSIX filesystem - standard Unix tools work directly
-- **Storage Backends**: Works with local filesystem and S3/MinIO - same unified API
+- **Storage Backends**: Works with local filesystem, S3/MinIO, and Azure Blob Storage (Azurite) - same unified API
 - **Performance**: Rust-powered engine with buffered inserts (~10x faster for small batches)
 - **No Special Drivers**: Uses OS built-in NFS client - zero installation
 - **Delta Lake Compatible**: Tables readable by Spark, Databricks, and Athena immediately
@@ -187,7 +189,51 @@ print(results)
 # All data stored in S3 with Delta Lake ACID transactions
 ```
 
-### Running the Python S3 Integration Test
+### Example 3b: Azure Blob Storage / Azurite Backend
+
+```python
+from posixlake import DatabaseOps, Schema, Field, AzureConfig
+
+schema = Schema(fields=[
+    Field(name="id", data_type="Int32", nullable=False),
+    Field(name="name", data_type="String", nullable=False),
+    Field(name="value", data_type="Float64", nullable=True),
+], primary_key="id")
+
+# Create database on Azure (Azurite for local testing)
+azure_config = AzureConfig(
+    account_name="devstoreaccount1",
+    account_key="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+    endpoint="http://127.0.0.1:10000"
+)
+
+db = DatabaseOps.create_with_azure("az://posixlake-test", schema, azure_config)
+
+# Same API works with Azure!
+db.insert_json('[{"id": 1, "name": "Alice", "value": 123.45}]')
+results = db.query_json("SELECT * FROM data WHERE value > 100")
+print(results)
+
+# All data stored in Azure Blob Storage with Delta Lake ACID transactions
+```
+
+### Running the Python Azure Integration Test
+
+The repository includes a real Azure/Azurite integration script at [scripts/test_python_azure.py](../../scripts/test_python_azure.py). It exercises the UniFFI-exposed Python surface for:
+
+- `DatabaseOps.create_with_azure()`
+- `DatabaseOps.open_with_azure()`
+- `DatabaseOps.health_check()`
+- `insert_json()` / `query_json()` persistence across reopen
+- `merge_json()` against an Azure-backed table
+
+It expects Azurite on `http://127.0.0.1:10000`; the script auto-creates a unique Azure container per test database.
+
+From the repo root:
+
+```bash
+python scripts/test_python_azure.py
+```
 
 The repository includes a real S3/MinIO integration script at [scripts/test_python_s3.py](../../scripts/test_python_s3.py). It exercises the UniFFI-exposed Python surface for:
 
@@ -403,6 +449,15 @@ s3_config = S3Config(
 )
 db = DatabaseOps.create_with_s3("s3://bucket/db-path", schema, s3_config)
 db = DatabaseOps.open_with_s3("s3://bucket/db-path", s3_config)
+
+# Azure Blob Storage backend
+azure_config = AzureConfig(
+    account_name="devstoreaccount1",
+    account_key="...",
+    endpoint="http://127.0.0.1:10000"
+)
+db = DatabaseOps.create_with_azure("az://container-name", schema, azure_config)
+db = DatabaseOps.open_with_azure("az://container-name", azure_config)
 ```
 
 #### Data Insertion

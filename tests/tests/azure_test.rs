@@ -94,9 +94,9 @@ async fn test_azure_create_database() {
         return;
     }
 
-    let (endpoint, account_name, account_key, container) = get_azure_config();
+    let (endpoint, account_name, account_key, _container) = get_azure_config();
 
-    let azure_path = format!("az://{}/test_db_{}", container, uuid::Uuid::new_v4());
+    let azure_path = format!("az://plt{}", uuid::Uuid::new_v4().simple());
 
     println!("Creating database at Azure path: {}", azure_path);
     println!("Azurite endpoint: {}", endpoint);
@@ -134,8 +134,8 @@ async fn test_azure_insert_and_query() {
         return;
     }
 
-    let (endpoint, account_name, account_key, container) = get_azure_config();
-    let azure_path = format!("az://{}/test_db_{}", container, uuid::Uuid::new_v4());
+    let (endpoint, account_name, account_key, _container) = get_azure_config();
+    let azure_path = format!("az://plt{}", uuid::Uuid::new_v4().simple());
 
     let schema = create_test_schema();
     let db = DatabaseOps::create_with_azure(
@@ -186,8 +186,8 @@ async fn test_azure_reopen_database() {
         return;
     }
 
-    let (endpoint, account_name, account_key, container) = get_azure_config();
-    let azure_path = format!("az://{}/test_db_{}", container, uuid::Uuid::new_v4());
+    let (endpoint, account_name, account_key, _container) = get_azure_config();
+    let azure_path = format!("az://plt{}", uuid::Uuid::new_v4().simple());
 
     let schema = create_test_schema();
 
@@ -244,8 +244,8 @@ async fn test_azure_multiple_inserts() {
         return;
     }
 
-    let (endpoint, account_name, account_key, container) = get_azure_config();
-    let azure_path = format!("az://{}/test_db_{}", container, uuid::Uuid::new_v4());
+    let (endpoint, account_name, account_key, _container) = get_azure_config();
+    let azure_path = format!("az://plt{}", uuid::Uuid::new_v4().simple());
 
     let schema = create_test_schema();
     let db = DatabaseOps::create_with_azure(

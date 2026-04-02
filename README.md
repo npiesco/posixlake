@@ -3,7 +3,7 @@
   <h1>posixlake</h1>
   <p><strong>Cross-platform POSIX and ACID compliant directory-based database built with Rust</strong></p>
   
-  <p><em>A columnar database engine where UNIX tools (cat, grep, awk, wc, head, tail, sort, cut, echo >>, sed -i, vim, mkdir, mv, cp, rmdir, rm) trigger Delta Lake operations including MERGE (UPSERT), ACID transactions, and native format storage. Works with local filesystem directories and object storage/S3. Built on Apache Arrow, Parquet, and DataFusion for high-performance analytics workloads.</em></p>
+  <p><em>A columnar database engine where UNIX tools (cat, grep, awk, wc, head, tail, sort, cut, echo >>, sed -i, vim, mkdir, mv, cp, rmdir, rm) trigger Delta Lake operations including MERGE (UPSERT), ACID transactions, and native format storage. Works with local filesystem directories, S3/MinIO, Azure Blob Storage, and Microsoft Fabric OneLake. Built on Apache Arrow, Parquet, and DataFusion for high-performance analytics workloads.</em></p>
 
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
 [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-Native%20Format-00ADD8?logo=delta&logoColor=white)](https://delta.io)
@@ -17,6 +17,8 @@
 [![Parquet](https://img.shields.io/badge/Parquet-56.2-blue?logo=apache)](https://parquet.apache.org)
 [![DataFusion](https://img.shields.io/badge/DataFusion-50.3-purple?logo=apache)](https://datafusion.apache.org)
 [![S3 Compatible](https://img.shields.io/badge/S3-Compatible-569A31?logo=amazons3&logoColor=white)](.)
+[![Azure](https://img.shields.io/badge/Azure-Blob%20Storage-0078D4?logo=microsoftazure&logoColor=white)](.)
+[![Fabric](https://img.shields.io/badge/Fabric-OneLake-742774?logo=microsoftazure&logoColor=white)](.)
 [![NFS Server](https://img.shields.io/badge/NFS-Pure%20Rust-orange)](.)
 </div>
 
@@ -24,7 +26,7 @@
 
 ## What is posixlake?
 
-posixlake is a **cross-platform file-system database** where **POSIX commands trigger Delta Lake operations**. Runs natively on **Linux, macOS, and Windows**. Works with **local filesystem directories** (`/path/to/database` or `C:\path\to\database`) and **object storage/S3** (`s3://bucket/path`) - same unified API for both. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, and Athena. **Start fresh, or with existing Delta Tables, raw Parquet files, or CSVs with schema inference.**
+posixlake is a **cross-platform file-system database** where **POSIX commands trigger Delta Lake operations**. Runs natively on **Linux, macOS, and Windows**. Works with **local filesystem directories** (`/path/to/database` or `C:\path\to\database`), **S3/MinIO** (`s3://bucket/path`), **Azure Blob Storage** (`az://<container>`), and **Microsoft Fabric OneLake** (`abfss://workspace@onelake.dfs.fabric.microsoft.com/...`) - same unified API for all. Mount it as a filesystem via NFS and use `cat`, `grep`, `awk`, `sed` directly on your data. CSV overwrites (`sed -i`, vim edits) trigger **MERGE (UPSERT)** with atomic INSERT/UPDATE/DELETE. Under the hood, everything is stored in **native Delta Lake format** for full compatibility with Spark, Databricks, Athena, and **Microsoft Fabric**. **Start fresh, or with existing Delta Tables, raw Parquet files, or CSVs with schema inference.**
 
 ### Mount as Filesystem - Query with UNIX Tools
 
@@ -194,7 +196,7 @@ echo "new,record,123" >> /mnt/s3-data/data/data.csv
 
 ```bash
 # Mount Azure-backed Delta table
-posixlake-cli mount az://my-container/delta-table /mnt/azure-data \
+posixlake-cli mount az://my-delta-table /mnt/azure-data \
   --azure-account myaccount --azure-key mykey
 
 # Same UNIX tools, same API, cloud storage
@@ -225,11 +227,13 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 | Format | Native Delta Lake | Delta Lake |
 | ACID Transactions | Delta Lake protocol | Delta Lake protocol |
 | S3/Cloud Storage | ✓ Native support | Native support |
-| Storage Abstraction | ✓ Unified Local/S3/NFS | ObjectStore only |
-| POSIX Interface | ✓ Pure Rust NFS server (works with S3!) | ✗ Not available |
+| Azure Blob / ADLS Gen2 | ✓ Native support | Via Spark/Hadoop |
+| Microsoft Fabric OneLake | ✓ Native support (Service Principal) | Via Fabric Spark |
+| Storage Abstraction | ✓ Unified Local/S3/Azure/OneLake | ObjectStore only |
+| POSIX Interface | ✓ Pure Rust NFS server (works with all backends!) | ✗ Not available |
 | SQL Queries | ✓ DataFusion (embedded) | Spark/Presto (separate) |
-| Mount as Filesystem | ✓ `mount /mnt/posixlake` (local or S3) | ✗ Not available |
-| UNIX Tools | ✓ `cat`, `grep`, `awk` on local and S3 | ✗ Requires Spark/export |
+| Mount as Filesystem | ✓ `mount /mnt/posixlake` (local, S3, or Azure) | ✗ Not available |
+| UNIX Tools | ✓ `cat`, `grep`, `awk` on any backend | ✗ Requires Spark/export |
 | Ecosystem | Full Delta Lake compatibility | Full ecosystem |
 | Deployment | ✓ Single binary | Requires Spark cluster |
 
@@ -240,9 +244,10 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 - **Delta Lake Native**: Every database IS a Delta Lake table - readable by Spark/Databricks/Athena immediately
 - **ACID Transactions**: All POSIX writes go through proper ACID transactions
 - **Pure Rust NFS Server**: Zero dependencies - no FUSE, no kernel modules, works everywhere
-- **Unified Storage Abstraction**: NFS server works with **local, S3, and Azure backends** - mount cloud Delta tables as POSIX filesystem!
+- **Unified Storage Abstraction**: NFS server works with **local, S3, Azure, and Fabric OneLake** - mount cloud Delta tables as POSIX filesystem!
 - **S3 Backend**: Store Delta Lake tables on S3/MinIO with transparent local caching - use `grep` on S3 data!
 - **Azure Backend**: Store Delta Lake tables on Azure Blob Storage / ADLS Gen2 with transparent local caching
+- **Fabric OneLake**: Write Delta tables directly to Microsoft Fabric lakehouses via Service Principal auth
 - **SQL Support**: Full SQL via DataFusion when you need it
 - **Fast**: Columnar Parquet with Snappy compression, query pruning, memory-mapped I/O
 
@@ -255,9 +260,10 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 - **Pure Rust NFS Server**: Zero external dependencies - OS has NFS client built-in
 - **Delta Lake Format**: Native `_delta_log/` transaction logs - Spark/Databricks/Athena compatible
 - **ACID Everywhere**: Even `echo >>` goes through proper transactions with conflict detection
-- **Storage Abstraction Layer**: Unified backend for Local/S3/Azure - same API, any storage
+- **Storage Abstraction Layer**: Unified backend for Local/S3/Azure/Fabric OneLake - same API, any storage
 - **S3 + NFS Integration**: Mount S3-backed Delta tables as POSIX filesystem - `grep` works on cloud data!
 - **Azure + NFS Integration**: Mount Azure Blob/ADLS Gen2 Delta tables as POSIX filesystem
+- **Fabric OneLake**: Create and query Delta tables in Microsoft Fabric lakehouses with Service Principal auth
 - **Schema Evolution**: Add columns dynamically - old data gets NULL automatically
 - **Note**: Metadata operations (`touch`, `chmod`, `chown`) are silently ignored as timestamps/permissions reflect Delta Lake commits and database-layer RBAC. Symlinks (`ln -s`) return NFS3ERR_NOTSUPP - use SQL views instead.
 
@@ -290,7 +296,7 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 │  posixlake Core (DatabaseOps)                               │
 │  • insert() / query() / delete_rows_where()            │
 │  • DataFusion SQL engine                               │
-│  • Storage abstraction (Local/S3)                      │
+│  • Storage abstraction (Local/S3/Azure/OneLake)        │
 └─────────────────────┬──────────────────────────────────┘
                       │
 ┌─────────────────────▼──────────────────────────────────┐
@@ -301,15 +307,15 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 │  • Checkpointing & protocol versioning                 │
 └─────────────────────────┬──────────────────────────────┘
                           │
-        ┌─────────────────┴─────────────────┐
-        │                                   │
-        ▼                                   ▼
-    ┌─────────────┐                 ┌──────────────┐
-    │   Local     │                 │  S3/MinIO    │
-    │ Filesystem  │                 │ Object Store │
-    │ _delta_log/ │                 │ _delta_log/  │
-    │ *.parquet   │                 │ *.parquet    │
-    └─────────────┘                 └──────────────┘
+    ┌─────────────────┬───┴───┬──────────────────┐
+    │                 │       │                  │
+    ▼                 ▼       ▼                  ▼
+┌─────────┐   ┌──────────┐ ┌──────────┐  ┌──────────────┐
+│  Local  │   │ S3/MinIO │ │  Azure   │  │   Fabric     │
+│Filesys. │   │  Object  │ │   Blob   │  │   OneLake    │
+│_delta/  │   │  Store   │ │ Storage  │  │  (abfss://)  │
+│*.parquet│   │_delta/   │ │_delta/   │  │  _delta/     │
+└─────────┘   └──────────┘ └──────────┘  └──────────────┘
 ```
 
 **Key Components:**
@@ -317,8 +323,8 @@ posixlake-cli create /path/to/database --schema "id:Int32,name:String"
 - **NFS Server**: Pure Rust NFSv3 server for POSIX interface (works with **any** storage backend)
 - **DatabaseOps**: High-level CRUD and SQL operations
 - **Delta Lake**: Native Delta Lake format for ACID transactions
-- **Storage Abstraction**: Unified `ObjectStore` backend - Local filesystem or S3/MinIO
-- **Key Innovation**: NFS + S3 = mount cloud Delta tables as POSIX filesystem with `cat`, `grep`, `awk`!
+- **Storage Abstraction**: Unified `ObjectStore` backend - Local, S3/MinIO, Azure Blob, or Fabric OneLake
+- **Key Innovation**: NFS + cloud storage = mount cloud Delta tables as POSIX filesystem with `cat`, `grep`, `awk`!
 
 ### Data Directory Structure (Delta Lake Native Format)
 

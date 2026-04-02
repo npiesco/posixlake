@@ -128,7 +128,9 @@ fn unique_azure_path(test_name: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    format!("az://posixlake-test/{test_name}_{ts}")
+    // Container names: 3-63 chars, lowercase alphanumeric + hyphens only
+    let sanitized = test_name.replace('_', "");
+    format!("az://plt{sanitized}{ts}")
 }
 
 /// `posixlake-cli create az://container/path --schema col:Type` must succeed
