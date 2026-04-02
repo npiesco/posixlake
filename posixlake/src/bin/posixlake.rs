@@ -411,6 +411,7 @@ async fn main() -> Result<()> {
         } => {
             let is_s3 = db_path.starts_with("s3://");
             let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             match (schema, from_csv, from_parquet) {
                 (Some(schema_str), None, None) => {
                     // Create with explicit schema
@@ -436,6 +437,16 @@ async fn main() -> Result<()> {
                             &acct,
                             &key,
                             &ep,
+                        )
+                        .await?
+                    } else if is_onelake {
+                        let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                        DatabaseOps::create_with_onelake(
+                            &db_path,
+                            Arc::new(parsed_schema),
+                            &cid,
+                            &csecret,
+                            &tid,
                         )
                         .await?
                     } else if auth {
@@ -515,6 +526,7 @@ async fn main() -> Result<()> {
         } => {
             let is_s3 = db_path.starts_with("s3://");
             let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             // Open database with optional credentials
             eprintln!("Opening database: {}", db_path);
             let credentials = resolve_credentials(user, password);
@@ -525,6 +537,9 @@ async fn main() -> Result<()> {
                 let (acct, key, ep) =
                     resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
                 Arc::new(DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?)
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                Arc::new(DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?)
             } else {
                 let local_path = PathBuf::from(&db_path);
                 match credentials {
@@ -845,6 +860,7 @@ async fn main() -> Result<()> {
         } => {
             let is_s3 = db_path.starts_with("s3://");
             let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             let credentials = resolve_credentials(user, password);
             let db = if is_s3 {
                 let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
@@ -853,6 +869,9 @@ async fn main() -> Result<()> {
                 let (acct, key, ep) =
                     resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
                 DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?
             } else {
                 let local_path = PathBuf::from(&db_path);
                 match credentials {
@@ -882,6 +901,7 @@ async fn main() -> Result<()> {
         } => {
             let is_s3 = db_path.starts_with("s3://");
             let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             let credentials = resolve_credentials(user, password);
             let db = if is_s3 {
                 let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
@@ -890,6 +910,9 @@ async fn main() -> Result<()> {
                 let (acct, key, ep) =
                     resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
                 DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?
             } else {
                 let local_path = PathBuf::from(&db_path);
                 match credentials {
@@ -1926,4 +1949,25 @@ fn resolve_azure_credentials(
         .or_else(|| std::env::var("AZURITE_ENDPOINT").ok())
         .unwrap_or_else(|| "http://127.0.0.1:10000".to_string());
     Ok((account_name, account_key, endpoint))
+}
+
+/// Resolve OneLake/Fabric credentials from AZURE_STORAGE_* env vars.
+/// Returns (client_id, client_secret, tenant_id).
+fn resolve_onelake_credentials() -> Result<(String, String, String)> {
+    let client_id = std::env::var("AZURE_STORAGE_CLIENT_ID").map_err(|_| {
+        Error::InvalidOperation(
+            "OneLake client ID required: set AZURE_STORAGE_CLIENT_ID env var".to_string(),
+        )
+    })?;
+    let client_secret = std::env::var("AZURE_STORAGE_CLIENT_SECRET").map_err(|_| {
+        Error::InvalidOperation(
+            "OneLake client secret required: set AZURE_STORAGE_CLIENT_SECRET env var".to_string(),
+        )
+    })?;
+    let tenant_id = std::env::var("AZURE_STORAGE_TENANT_ID").map_err(|_| {
+        Error::InvalidOperation(
+            "OneLake tenant ID required: set AZURE_STORAGE_TENANT_ID env var".to_string(),
+        )
+    })?;
+    Ok((client_id, client_secret, tenant_id))
 }
