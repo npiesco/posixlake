@@ -390,7 +390,7 @@ def dry_run(pace: float) -> list[SegmentTiming]:
     clean_output()
     timings: list[SegmentTiming] = []
 
-    timings.append(SegmentTiming("s3_cloud", measure_scene_runtime("s3_cloud", pace, timeout=120)))
+    timings.append(SegmentTiming("fabric_origin", measure_scene_runtime("fabric_origin", pace, timeout=120)))
 
     windows_server = launch_scene("windows_server", pace, visible=False)
     try:
@@ -407,6 +407,9 @@ def dry_run(pace: float) -> list[SegmentTiming]:
         timings.append(SegmentTiming("wsl_client", measure_scene_runtime("wsl_client", pace, timeout=240)))
     finally:
         terminate_process_tree(wsl_server)
+
+    timings.append(SegmentTiming("s3_interlude", measure_scene_runtime("s3_interlude", pace, timeout=120)))
+    timings.append(SegmentTiming("fabric_homecoming", measure_scene_runtime("fabric_homecoming", pace, timeout=120)))
 
     write_timings(TIMINGS_PATH, timings)
     print(f"[demo] dry run complete -> {TIMINGS_PATH}")
@@ -597,18 +600,18 @@ def record(pace: float) -> None:
     windows_server: subprocess.Popen[str] | None = None
     wsl_server: subprocess.Popen[str] | None = None
     try:
-        print("[record] === S3 Cloud ===")
-        s3_scene = launch_scene("s3_cloud", pace, visible=True)
+        print("[record] === Fabric Origin ===")
+        fabric_scene = launch_scene("fabric_origin", pace, visible=True)
         try:
-            wait_for_window(WINDOW_TITLES["s3_cloud"], cam)
-            cam.record_window(SEGMENTS["s3_cloud"], WINDOW_TITLES["s3_cloud"])
+            wait_for_window(WINDOW_TITLES["fabric_origin"], cam)
+            cam.record_window(SEGMENTS["fabric_origin"], WINDOW_TITLES["fabric_origin"])
             started = time.monotonic()
-            s3_scene.wait(timeout=120)
-            actual["s3_cloud"] = time.monotonic() - started
+            fabric_scene.wait(timeout=120)
+            actual["fabric_origin"] = time.monotonic() - started
             cam.stop()
-            print(f"  recorded {actual['s3_cloud']:.1f}s")
+            print(f"  recorded {actual['fabric_origin']:.1f}s")
         finally:
-            terminate_process_tree(s3_scene)
+            terminate_process_tree(fabric_scene)
 
         print("[record] === Windows Server ===")
         windows_server = launch_scene("windows_server", pace, visible=True)
@@ -662,6 +665,32 @@ def record(pace: float) -> None:
         finally:
             terminate_process_tree(wsl_client)
             terminate_process_tree(wsl_server)
+
+        print("[record] === S3 Interlude ===")
+        s3_scene = launch_scene("s3_interlude", pace, visible=True)
+        try:
+            wait_for_window(WINDOW_TITLES["s3_interlude"], cam)
+            cam.record_window(SEGMENTS["s3_interlude"], WINDOW_TITLES["s3_interlude"])
+            started = time.monotonic()
+            s3_scene.wait(timeout=120)
+            actual["s3_interlude"] = time.monotonic() - started
+            cam.stop()
+            print(f"  recorded {actual['s3_interlude']:.1f}s")
+        finally:
+            terminate_process_tree(s3_scene)
+
+        print("[record] === Fabric Homecoming ===")
+        homecoming = launch_scene("fabric_homecoming", pace, visible=True)
+        try:
+            wait_for_window(WINDOW_TITLES["fabric_homecoming"], cam)
+            cam.record_window(SEGMENTS["fabric_homecoming"], WINDOW_TITLES["fabric_homecoming"])
+            started = time.monotonic()
+            homecoming.wait(timeout=120)
+            actual["fabric_homecoming"] = time.monotonic() - started
+            cam.stop()
+            print(f"  recorded {actual['fabric_homecoming']:.1f}s")
+        finally:
+            terminate_process_tree(homecoming)
     finally:
         terminate_process_tree(windows_server)
         terminate_process_tree(wsl_server)

@@ -8,6 +8,10 @@ import time
 from pathlib import Path
 
 from config import (
+    FABRIC_CLIENT_ID,
+    FABRIC_CLIENT_SECRET,
+    FABRIC_DB_PATH,
+    FABRIC_TENANT_ID,
     OUTPUT_DIR,
     S3_ACCESS_KEY,
     S3_DB_PATH,
@@ -111,29 +115,59 @@ def run_wsl_user(command: str, *, pace: float, timeout: int = 240, display: str 
     print_result(result)
 
 
+def run_fabric_origin(pace: float) -> None:
+    set_console_title(WINDOW_TITLES["fabric_origin"])
+    time.sleep(settle_time(pace))
+
+    # Create the IoT Delta table directly on Fabric OneLake
+    run_process(
+        [
+            str(WINDOWS_CLI),
+            "create",
+            FABRIC_DB_PATH,
+            "--schema",
+            "id:Int32,sensor:String,reading:Int32,location:String",
+        ],
+        display=(
+            f"& {WINDOWS_CLI.name} create {FABRIC_DB_PATH}"
+            f" --schema id:Int32,sensor:String,reading:Int32,location:String"
+        ),
+        pace=pace,
+        timeout=120,
+    )
+
+    # Verify with health check
+    run_process(
+        [str(WINDOWS_CLI), "health", FABRIC_DB_PATH],
+        display=f"& {WINDOWS_CLI.name} health {FABRIC_DB_PATH}",
+        pace=pace,
+        timeout=60,
+    )
+    time.sleep(settle_time(pace))
+
+
 def run_windows_server(pace: float) -> None:
     set_console_title(WINDOW_TITLES["windows_server"])
-    # Mount the S3-backed Delta table as a Windows NFS drive
+    # Mount the Fabric OneLake table as a Windows NFS drive
     show_command(
         "PS>",
-        f"& {WINDOWS_CLI.name} mount {S3_DB_PATH} {WINDOWS_MOUNT} --port {WINDOWS_NFS_PORT} --endpoint {S3_ENDPOINT}",
+        f"& {WINDOWS_CLI.name} mount {FABRIC_DB_PATH} {WINDOWS_MOUNT} --port {WINDOWS_NFS_PORT}",
         pace,
     )
+    env = os.environ.copy()
+    env["AZURE_STORAGE_CLIENT_ID"] = FABRIC_CLIENT_ID
+    env["AZURE_STORAGE_CLIENT_SECRET"] = FABRIC_CLIENT_SECRET
+    env["AZURE_STORAGE_TENANT_ID"] = FABRIC_TENANT_ID
     subprocess.run(
         [
             str(WINDOWS_CLI),
             "mount",
-            S3_DB_PATH,
+            FABRIC_DB_PATH,
             str(WINDOWS_MOUNT),
             "--port",
             str(WINDOWS_NFS_PORT),
-            "--endpoint",
-            S3_ENDPOINT,
-            "--access-key",
-            S3_ACCESS_KEY,
-            "--secret-key",
-            S3_SECRET_KEY,
         ],
+        env=env,
         check=True,
     )
 
@@ -192,12 +226,14 @@ def run_wsl_server(pace: float) -> None:
     set_console_title(WINDOW_TITLES["wsl_server"])
     run_wsl_root(f"mkdir -p {WSL_MOUNT}", pace=pace)
     time.sleep(settle_time(pace))
-    # Mount the S3-backed Delta table via NFS from Linux
+    # Mount the Fabric OneLake table via NFS from Linux
     mount_cmd = (
-        f"{wsl_cli_path()} mount {S3_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT}"
-        f" --endpoint {S3_ENDPOINT} --access-key {S3_ACCESS_KEY} --secret-key {S3_SECRET_KEY}"
+        f"AZURE_STORAGE_CLIENT_ID={FABRIC_CLIENT_ID}"
+        f" AZURE_STORAGE_CLIENT_SECRET={FABRIC_CLIENT_SECRET}"
+        f" AZURE_STORAGE_TENANT_ID={FABRIC_TENANT_ID}"
+        f" {wsl_cli_path()} mount {FABRIC_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT}"
     )
-    show_command("$", f"{wsl_cli_path()} mount {S3_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT} --endpoint {S3_ENDPOINT}", pace)
+    show_command("$", f"{wsl_cli_path()} mount {FABRIC_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT}", pace)
     subprocess.run(
         wsl_root_command(mount_cmd),
         check=True,
@@ -264,8 +300,8 @@ def run_wsl_client(pace: float) -> None:
     time.sleep(settle_time(pace))
 
 
-def run_s3_cloud(pace: float) -> None:
-    set_console_title(WINDOW_TITLES["s3_cloud"])
+def run_s3_interlude(pace: float) -> None:
+    set_console_title(WINDOW_TITLES["s3_interlude"])
     time.sleep(settle_time(pace))
 
     # Create the IoT Delta table directly on S3
@@ -312,25 +348,59 @@ def run_s3_cloud(pace: float) -> None:
     time.sleep(settle_time(pace))
 
 
+def run_fabric_homecoming(pace: float) -> None:
+    set_console_title(WINDOW_TITLES["fabric_homecoming"])
+    time.sleep(settle_time(pace))
+
+    # Show the table schema in Fabric
+    run_powershell(
+        "uv tool run --from ms-fabric-cli fab table schema FabricDevWS.Workspace/devlake.Lakehouse --table demo_iot_sensors",
+        pace=pace,
+    )
+
+    # Query the table via the Fabric SQL endpoint to show all rows
+    run_powershell(
+        "uv tool run --from ms-fabric-cli fab api -X get 'workspaces' -q \"value[?displayName=='FabricDevWS'].id\" --output_format json",
+        pace=pace,
+    )
+
+    # Show health check on the Fabric table
+    run_process(
+        [str(WINDOWS_CLI), "health", FABRIC_DB_PATH],
+        display=f"& {WINDOWS_CLI.name} health {FABRIC_DB_PATH}",
+        pace=pace,
+        timeout=60,
+    )
+    time.sleep(settle_time(pace))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a single posixlake demo scene")
     parser.add_argument(
         "scene",
-        choices=["windows_server", "windows_client", "wsl_server", "wsl_client", "s3_cloud"],
+        choices=[
+            "fabric_origin",
+            "windows_server",
+            "windows_client",
+            "wsl_server",
+            "wsl_client",
+            "s3_interlude",
+            "fabric_homecoming",
+        ],
     )
     parser.add_argument("--pace", type=float, default=1.0)
     args = parser.parse_args()
 
-    if args.scene == "windows_server":
-        run_windows_server(args.pace)
-    elif args.scene == "windows_client":
-        run_windows_client(args.pace)
-    elif args.scene == "wsl_server":
-        run_wsl_server(args.pace)
-    elif args.scene == "wsl_client":
-        run_wsl_client(args.pace)
-    else:
-        run_s3_cloud(args.pace)
+    scenes = {
+        "fabric_origin": run_fabric_origin,
+        "windows_server": run_windows_server,
+        "windows_client": run_windows_client,
+        "wsl_server": run_wsl_server,
+        "wsl_client": run_wsl_client,
+        "s3_interlude": run_s3_interlude,
+        "fabric_homecoming": run_fabric_homecoming,
+    }
+    scenes[args.scene](args.pace)
 
 
 if __name__ == "__main__":
