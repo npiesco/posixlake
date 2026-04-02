@@ -229,10 +229,10 @@ def run_wsl_server(pace: float) -> None:
     time.sleep(settle_time(pace))
     # Mount the Fabric OneLake table via NFS from Linux
     mount_cmd = (
-        f"AZURE_STORAGE_CLIENT_ID={FABRIC_CLIENT_ID}"
-        f" AZURE_STORAGE_CLIENT_SECRET={FABRIC_CLIENT_SECRET}"
-        f" AZURE_STORAGE_TENANT_ID={FABRIC_TENANT_ID}"
-        f" {wsl_cli_path()} mount {FABRIC_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT}"
+        f"AZURE_STORAGE_CLIENT_ID='{FABRIC_CLIENT_ID}'"
+        f" AZURE_STORAGE_CLIENT_SECRET='{FABRIC_CLIENT_SECRET}'"
+        f" AZURE_STORAGE_TENANT_ID='{FABRIC_TENANT_ID}'"
+        f" {wsl_cli_path()} mount '{FABRIC_DB_PATH}' {WSL_MOUNT} --port {WSL_NFS_PORT}"
     )
     show_command("$", f"{wsl_cli_path()} mount {FABRIC_DB_PATH} {WSL_MOUNT} --port {WSL_NFS_PORT}", pace)
     subprocess.run(
