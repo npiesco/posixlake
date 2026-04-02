@@ -458,11 +458,21 @@ impl DatabaseOps {
                 .await
                 .map_err(Error::DeltaTable)?;
 
-        let _table: DeltaTable = ops
+        let _table: DeltaTable = match ops
             .create()
             .with_columns(delta_schema.fields().cloned())
             .await
-            .map_err(Error::DeltaTable)?;
+        {
+            Ok(table) => table,
+            Err(e)
+                if e.to_string().contains("TableAlreadyExists")
+                    || e.to_string().contains("already exists") =>
+            {
+                info!("Delta Lake table already exists on S3, opening existing");
+                return Self::open_with_s3(s3_path, endpoint, access_key, secret_key).await;
+            }
+            Err(e) => return Err(Error::DeltaTable(e)),
+        };
 
         info!("Delta Lake table created on S3");
 
@@ -617,11 +627,22 @@ impl DatabaseOps {
         .await
         .map_err(Error::DeltaTable)?;
 
-        let _table: DeltaTable = ops
+        let _table: DeltaTable = match ops
             .create()
             .with_columns(delta_schema.fields().cloned())
             .await
-            .map_err(Error::DeltaTable)?;
+        {
+            Ok(table) => table,
+            Err(e)
+                if e.to_string().contains("TableAlreadyExists")
+                    || e.to_string().contains("already exists") =>
+            {
+                info!("Delta Lake table already exists on Azure, opening existing");
+                return Self::open_with_azure(azure_path, account_name, account_key, endpoint)
+                    .await;
+            }
+            Err(e) => return Err(Error::DeltaTable(e)),
+        };
 
         info!("Delta Lake table created on Azure");
 
@@ -774,11 +795,22 @@ impl DatabaseOps {
         .await
         .map_err(Error::DeltaTable)?;
 
-        let _table: DeltaTable = ops
+        let _table: DeltaTable = match ops
             .create()
             .with_columns(delta_schema.fields().cloned())
             .await
-            .map_err(Error::DeltaTable)?;
+        {
+            Ok(table) => table,
+            Err(e)
+                if e.to_string().contains("TableAlreadyExists")
+                    || e.to_string().contains("already exists") =>
+            {
+                info!("Delta Lake table already exists on Fabric OneLake, opening existing");
+                return Self::open_with_onelake(onelake_path, client_id, client_secret, tenant_id)
+                    .await;
+            }
+            Err(e) => return Err(Error::DeltaTable(e)),
+        };
 
         info!("Delta Lake table created on Fabric OneLake");
 
