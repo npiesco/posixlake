@@ -87,9 +87,15 @@ FABRIC_TABLES_PATH = os.getenv("FABRIC_ONELAKE_TABLES_PATH", "")
 FABRIC_CLIENT_ID = os.getenv("AZURE_STORAGE_CLIENT_ID", "")
 FABRIC_CLIENT_SECRET = os.getenv("AZURE_STORAGE_CLIENT_SECRET", "")
 FABRIC_TENANT_ID = os.getenv("AZURE_STORAGE_TENANT_ID", "")
+# Unique table per demo run to avoid stale data — set once, reused by all scenes
+_FABRIC_TABLE_SUFFIX = os.getenv("POSIXLAKE_DEMO_FABRIC_TABLE", "")
+if not _FABRIC_TABLE_SUFFIX:
+    import time as _time
+    _FABRIC_TABLE_SUFFIX = f"demo_iot_{int(_time.time())}"
+    os.environ["POSIXLAKE_DEMO_FABRIC_TABLE"] = _FABRIC_TABLE_SUFFIX
 FABRIC_DB_PATH = os.getenv(
     "POSIXLAKE_DEMO_FABRIC_PATH",
-    f"{FABRIC_TABLES_PATH}/demo_iot_sensors" if FABRIC_TABLES_PATH else "",
+    f"{FABRIC_TABLES_PATH}/{_FABRIC_TABLE_SUFFIX}" if FABRIC_TABLES_PATH else "",
 )
 
 

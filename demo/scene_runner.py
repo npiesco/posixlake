@@ -181,13 +181,9 @@ def run_windows_client(pace: float) -> None:
     # Read the empty CSV facade (header only)
     run_powershell(f"Get-Content '{target}'", pace=pace)
 
-    # Seed 6 IoT sensor readings across the facility
-    run_powershell(f"Add-Content -Path '{target}' -Value '1,temp_01,72,plant_north'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '2,humidity_02,45,plant_south'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '3,pressure_03,1013,plant_east'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '4,temp_04,69,plant_west'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '5,co2_05,412,lab_01'", pace=pace)
-    run_powershell(f"Add-Content -Path '{target}' -Value '6,flow_06,9,warehouse'", pace=pace)
+    # Seed 6 IoT sensor readings in a single write (one Delta Lake transaction)
+    seed_data = "1,temp_01,72,plant_north`n2,humidity_02,45,plant_south`n3,pressure_03,1013,plant_east`n4,temp_04,69,plant_west`n5,co2_05,412,lab_01`n6,flow_06,9,warehouse"
+    run_powershell(f"Add-Content -Path '{target}' -Value '{seed_data}'", pace=pace)
 
     # Show all 6 readings
     run_powershell(f"Get-Content '{target}'", pace=pace)
@@ -263,21 +259,27 @@ def run_wsl_client(pace: float) -> None:
     run_wsl_user(f"wc -l {target}", pace=pace, display=f"wc -l {target}")
 
     # sed — recalibrate the flagged sensor reading: 72→73
-    # NFS doesn't support sed -i (temp-file rename), so stream through a tmp copy
+    # Write through NFS via tee (small write, triggers Delta Lake append)
     run_wsl_user(
-        f"sed 's/TEMP_01,72/TEMP_01,73/' {target} > /tmp/_posixlake_sed.csv && cp /tmp/_posixlake_sed.csv {target} && rm /tmp/_posixlake_sed.csv",
+        f"sed 's/TEMP_01,72/TEMP_01,73/' {target} | tee /tmp/_posixlake_sed.csv > /dev/null && cat /tmp/_posixlake_sed.csv > {target} && rm /tmp/_posixlake_sed.csv",
         pace=pace,
         display=f"sed -i 's/TEMP_01,72/TEMP_01,73/' {target}",
+        timeout=60,
     )
 
     # Append two new sensor readings from the Linux side
-    # NFS doesn't support reliable >> append, so copy out, append locally, copy back
     run_wsl_user(
-        f"cp {target} /tmp/_posixlake_append.csv && echo '7,vibration_07,34,lab_01' >> /tmp/_posixlake_append.csv && echo '8,noise_08,67,warehouse' >> /tmp/_posixlake_append.csv && cp /tmp/_posixlake_append.csv {target} && rm /tmp/_posixlake_append.csv",
+        f"echo '7,vibration_07,34,lab_01' >> {target}",
         pace=pace,
         display=f"echo '7,vibration_07,34,lab_01' >> {target}",
+        timeout=30,
     )
-    show_command("$", f"echo '8,noise_08,67,warehouse' >> {target}", pace)
+    run_wsl_user(
+        f"echo '8,noise_08,67,warehouse' >> {target}",
+        pace=pace,
+        display=f"echo '8,noise_08,67,warehouse' >> {target}",
+        timeout=30,
+    )
 
     # Show final state — 8 readings from both platforms
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")

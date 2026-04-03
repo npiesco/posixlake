@@ -41,6 +41,10 @@ from narration import SCENES
 # Lock the chosen drive letter so all child processes use the same mount point.
 os.environ["POSIXLAKE_DEMO_WINDOWS_MOUNT"] = str(WINDOWS_MOUNT)
 
+# Lock the Fabric table name so all scenes use the same table.
+from config import _FABRIC_TABLE_SUFFIX
+os.environ["POSIXLAKE_DEMO_FABRIC_TABLE"] = _FABRIC_TABLE_SUFFIX
+
 SETTLE_SECONDS = 2.0
 WINDOWS_CLIENT_TEMP = OUTPUT_DIR / "windows_update.csv"
 SCENE_RUNNER = Path(__file__).with_name("scene_runner.py")
@@ -183,7 +187,7 @@ def wait_for_window(title: str, cam: CandycamClient, timeout: float = 30.0) -> N
 
 
 
-def wait_for_windows_mount(timeout: float = 60.0) -> None:
+def wait_for_windows_mount(timeout: float = 120.0) -> None:
     target = WINDOWS_MOUNT_ROOT / "data" / "data.csv"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -194,7 +198,7 @@ def wait_for_windows_mount(timeout: float = 60.0) -> None:
 
 
 
-def wait_for_wsl_mount(timeout: float = 60.0) -> None:
+def wait_for_wsl_mount(timeout: float = 120.0) -> None:
     deadline = time.monotonic() + timeout
     command = f"test -f {shlex.quote(WSL_MOUNT)}/data/data.csv"
     while time.monotonic() < deadline:
@@ -361,21 +365,29 @@ def measure_recorded_server_scene(start_proc: subprocess.Popen[str], wait_fn, ex
 
 
 def measure_scene_runtime(scene_id: str, pace: float, *, timeout: int = 180) -> float:
+    sentinel = OUTPUT_DIR / f".done_{scene_id}"
+    sentinel.unlink(missing_ok=True)
+
     started = time.monotonic()
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["uv", "run", "python", str(SCENE_RUNNER), scene_id, "--pace", str(pace)],
         text=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         encoding="utf-8",
         errors="replace",
-        timeout=timeout,
         cwd=SCENE_RUNNER.parent,
     )
-    if result.returncode != 0:
+
+    # Wait for process to finish — no arbitrary timeout, process drives completion
+    stdout, stderr = proc.communicate()
+    elapsed = time.monotonic() - started
+
+    if proc.returncode != 0:
         raise RuntimeError(
-            f"Scene failed: {scene_id}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            f"Scene failed: {scene_id}\nstdout:\n{stdout}\nstderr:\n{stderr}"
         )
-    return time.monotonic() - started
+    return elapsed
 
 
 
