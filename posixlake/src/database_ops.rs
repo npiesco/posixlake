@@ -1752,20 +1752,28 @@ impl DatabaseOps {
 
         info!("Querying Delta Lake with SQL: {}", sql);
 
-        // Open the Delta Lake table (S3 or local)
-        let table = if let (Some(s3_url), Some(storage_options)) =
-            (&self.s3_url, &self.s3_storage_options)
-        {
-            // S3 backend
-            let s3_url_parsed = parse_s3_url(s3_url)?;
-            open_table_with_storage_options(s3_url_parsed, storage_options.clone())
-                .await
-                .map_err(Error::DeltaTable)?
-        } else {
-            // Local backend
-            let table_url = Url::from_directory_path(&self.base_path)
-                .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
-            open_table(table_url).await.map_err(Error::DeltaTable)?
+        // Use cached table or open fresh
+        let table = {
+            let mut cache = self.cached_table.lock().await;
+            match cache.take() {
+                Some(t) => t,
+                None => {
+                    if let (Some(s3_url), Some(storage_options)) =
+                        (&self.s3_url, &self.s3_storage_options)
+                    {
+                        let s3_url_parsed = parse_s3_url(s3_url)?;
+                        open_table_with_storage_options(s3_url_parsed, storage_options.clone())
+                            .await
+                            .map_err(Error::DeltaTable)?
+                    } else {
+                        let table_url =
+                            Url::from_directory_path(&self.base_path).map_err(|_| {
+                                Error::Other("Invalid path for Delta table".to_string())
+                            })?;
+                        open_table(table_url).await.map_err(Error::DeltaTable)?
+                    }
+                }
+            }
         };
 
         // Create DataFusion context and register the table
@@ -1780,6 +1788,13 @@ impl DatabaseOps {
             deltalake::delta_datafusion::DeltaScanConfig::default(),
         )
         .map_err(|e| Error::InvalidOperation(format!("Failed to create table provider: {}", e)))?;
+
+        // Cache the table back for next operation
+        {
+            let mut cache = self.cached_table.lock().await;
+            *cache = Some(table);
+        }
+
         ctx.register_table("data", Arc::new(table_provider))
             .map_err(|e| Error::InvalidOperation(e.to_string()))?;
 
