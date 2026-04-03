@@ -616,6 +616,26 @@ def concat_segments() -> None:
 
 
 
+def _narration_to_ssml(text: str, voice: str) -> str:
+    """Wrap plain narration text in SSML with pronunciation hints."""
+    import re
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = re.sub(
+        r"(?i)\bposixlake\b",
+        '<phoneme alphabet="ipa" ph="ˈpɒzɪkˌleɪk">posixlake</phoneme>',
+        escaped,
+    )
+    escaped = re.sub(
+        r"(?i)\bnpiesco\b",
+        '<phoneme alphabet="ipa" ph="ɛnˌpiːɛsˈkoʊ">npiesco</phoneme>',
+        escaped,
+    )
+    return (
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">'
+        f'<voice name="{voice}">{escaped}</voice></speak>'
+    )
+
+
 def synthesize_narration(actual_timings: dict[str, float]) -> None:
     import azure.cognitiveservices.speech as speechsdk  # type: ignore
 
@@ -632,7 +652,8 @@ def synthesize_narration(actual_timings: dict[str, float]) -> None:
         padded_path = OUTPUT_DIR / f"{scene_id}_padded.wav"
         audio_config = speechsdk.audio.AudioOutputConfig(filename=str(raw_path))
         synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-        result = synthesizer.speak_text_async(scene["narration"]).get()
+        ssml = _narration_to_ssml(scene["narration"], AZURE_SPEECH_VOICE)
+        result = synthesizer.speak_ssml_async(ssml).get()
         if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
             raise RuntimeError(f"Speech synthesis failed for {scene_id}: {result.reason}")
 
