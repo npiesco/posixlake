@@ -57,6 +57,7 @@ AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY") or os.getenv("FOUNDRY_API_KEY")
 AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION") or os.getenv("FOUNDRY_REGION")
 AZURE_SPEECH_VOICE = os.getenv("POSIXLAKE_DEMO_VOICE", "en-US-AndrewMultilingualNeural")
 WINDOW_TITLES = {
+    "intro": "posixlake-demo-intro",
     "fabric_origin": "posixlake-demo-fabric-origin",
     "windows_server": "posixlake-demo-windows-server",
     "windows_client": "posixlake-demo-windows-client",
@@ -64,8 +65,10 @@ WINDOW_TITLES = {
     "wsl_client": "posixlake-demo-wsl-client",
     "s3_interlude": "posixlake-demo-s3-interlude",
     "fabric_homecoming": "posixlake-demo-fabric-homecoming",
+    "outro": "posixlake-demo-outro",
 }
 SEGMENTS = {
+    "intro": OUTPUT_DIR / "seg_00_intro.mp4",
     "fabric_origin": OUTPUT_DIR / "seg_01_fabric_origin.mp4",
     "windows_server": OUTPUT_DIR / "seg_02_windows_server.mp4",
     "windows_client": OUTPUT_DIR / "seg_03_windows_client.mp4",
@@ -73,6 +76,7 @@ SEGMENTS = {
     "wsl_client": OUTPUT_DIR / "seg_05_wsl_client.mp4",
     "s3_interlude": OUTPUT_DIR / "seg_06_s3_interlude.mp4",
     "fabric_homecoming": OUTPUT_DIR / "seg_07_fabric_homecoming.mp4",
+    "outro": OUTPUT_DIR / "seg_08_outro.mp4",
 }
 
 # S3/MinIO configuration

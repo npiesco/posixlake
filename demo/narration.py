@@ -2,6 +2,16 @@ from __future__ import annotations
 
 SCENES = [
     {
+        "id": "intro",
+        "title": "Intro",
+        "narration": (
+            "posixlake — a cross-platform database where PowerShell and UNIX tools "
+            "write Delta Lake. Today we'll create a table in Microsoft Fabric, "
+            "manipulate it from Windows and Linux using nothing but PowerShell and "
+            "cat, grep, and awk, then verify the results back in Fabric."
+        ),
+    },
+    {
         "id": "fabric_origin",
         "title": "Fabric Origin",
         "narration": (
@@ -64,6 +74,16 @@ SCENES = [
             "Eight rows from Windows and Linux. "
             "The table is ready for Power BI, Spark, or any Fabric workload. "
             "POSIX tools wrote production Delta Lake."
+        ),
+    },
+    {
+        "id": "outro",
+        "title": "Outro",
+        "narration": (
+            "One Delta table. Three platforms. Zero special tools. "
+            "posixlake turns PowerShell and POSIX commands into production Delta Lake — "
+            "on local storage, Microsoft Fabric, Azure Blob, or S3. "
+            "Learn more at github.com/npiesco/posixlake."
         ),
     },
 ]

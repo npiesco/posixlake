@@ -402,6 +402,7 @@ def dry_run(pace: float) -> list[SegmentTiming]:
     clean_output()
     timings: list[SegmentTiming] = []
 
+    timings.append(SegmentTiming("intro", measure_scene_runtime("intro", pace, timeout=60)))
     timings.append(SegmentTiming("fabric_origin", measure_scene_runtime("fabric_origin", pace, timeout=120)))
 
     windows_server = launch_scene("windows_server", pace, visible=False)
@@ -422,6 +423,7 @@ def dry_run(pace: float) -> list[SegmentTiming]:
 
     timings.append(SegmentTiming("s3_interlude", measure_scene_runtime("s3_interlude", pace, timeout=120)))
     timings.append(SegmentTiming("fabric_homecoming", measure_scene_runtime("fabric_homecoming", pace, timeout=120)))
+    timings.append(SegmentTiming("outro", measure_scene_runtime("outro", pace, timeout=60)))
 
     write_timings(TIMINGS_PATH, timings)
     print(f"[demo] dry run complete -> {TIMINGS_PATH}")
@@ -656,6 +658,11 @@ def record(pace: float) -> None:
     cam = CandycamClient()
     actual: dict[str, float] = {}
     clean_output()
+    # Generate title cards (not recorded — pre-rendered)
+    print("[record] === Generating title cards ===")
+    measure_scene_runtime("intro", pace, timeout=60)
+    measure_scene_runtime("outro", pace, timeout=60)
+
     # Allow ports to release after cleanup
     time.sleep(3)
     cam.start()
@@ -758,6 +765,8 @@ def record(pace: float) -> None:
         terminate_process_tree(wsl_server)
         cam.quit()
 
+    actual["intro"] = 20.0
+    actual["outro"] = 22.0
     write_timings(ACTUAL_TIMINGS_PATH, [SegmentTiming(k, v) for k, v in actual.items()])
     adjusted = concat_segments()
     synthesize_narration(adjusted)

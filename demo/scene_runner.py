@@ -14,10 +14,12 @@ from config import (
     FABRIC_DB_PATH,
     FABRIC_TENANT_ID,
     OUTPUT_DIR,
+    REPO_ROOT,
     S3_ACCESS_KEY,
     S3_DB_PATH,
     S3_ENDPOINT,
     S3_SECRET_KEY,
+    SEGMENTS,
     WINDOW_TITLES,
     WINDOWS_CLI,
     WINDOWS_MOUNT,
@@ -380,6 +382,7 @@ def main() -> None:
     parser.add_argument(
         "scene",
         choices=[
+            "intro",
             "fabric_origin",
             "windows_server",
             "windows_client",
@@ -387,12 +390,14 @@ def main() -> None:
             "wsl_client",
             "s3_interlude",
             "fabric_homecoming",
+            "outro",
         ],
     )
     parser.add_argument("--pace", type=float, default=1.0)
     args = parser.parse_args()
 
     scenes = {
+        "intro": run_title_card_intro,
         "fabric_origin": run_fabric_origin,
         "windows_server": run_windows_server,
         "windows_client": run_windows_client,
@@ -400,8 +405,56 @@ def main() -> None:
         "wsl_client": run_wsl_client,
         "s3_interlude": run_s3_interlude,
         "fabric_homecoming": run_fabric_homecoming,
+        "outro": run_title_card_outro,
     }
     scenes[args.scene](args.pace)
+
+
+def generate_title_card(output_path: Path, duration: float, title: str, subtitle: str) -> None:
+    """Generate a title card video with logo + text using ffmpeg."""
+    logo = REPO_ROOT / "posixlake-logo.png"
+    # Dark background with centered logo and text
+    filter_complex = (
+        f"color=c=0x1a1a2e:s=2496x1664:d={duration}[bg];"
+        f"[1:v]scale=300:300[logo];"
+        f"[bg][logo]overlay=(W-w)/2:(H-h)/2-200[withlogo];"
+        f"[withlogo]drawtext=text='{title}':fontsize=72:fontcolor=white:"
+        f"x=(w-text_w)/2:y=(h/2)+100:fontfile=C\\\\:/Windows/Fonts/segoeui.ttf,"
+        f"drawtext=text='{subtitle}':fontsize=36:fontcolor=0xaaaaaa:"
+        f"x=(w-text_w)/2:y=(h/2)+190:fontfile=C\\\\:/Windows/Fonts/segoeui.ttf[out]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s=2496x1664:d={duration}",
+            "-i", str(logo),
+            "-filter_complex", filter_complex,
+            "-map", "[out]",
+            "-c:v", "libx264", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            str(output_path),
+        ],
+        check=True, capture_output=True, timeout=60,
+    )
+
+
+def run_title_card_intro(pace: float) -> None:
+    generate_title_card(
+        SEGMENTS["intro"],
+        duration=20.0,
+        title="posixlake",
+        subtitle="PowerShell and UNIX tools write Delta Lake",
+    )
+
+
+def run_title_card_outro(pace: float) -> None:
+    generate_title_card(
+        SEGMENTS["outro"],
+        duration=22.0,
+        title="posixlake",
+        subtitle="Local | Fabric | Azure | S3  —  github.com/npiesco/posixlake",
+    )
 
 
 if __name__ == "__main__":
