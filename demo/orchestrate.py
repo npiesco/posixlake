@@ -568,16 +568,25 @@ def concat_segments() -> None:
         "\n".join(f"file '{segment.as_posix()}'" for segment in adjusted_segments),
         encoding="utf-8",
     )
+
+    # Use filter_complex concat to properly reset timestamps across mixed sources
+    n = len(adjusted_segments)
+    inputs: list[str] = []
+    filter_parts: list[str] = []
+    for i, seg in enumerate(adjusted_segments):
+        inputs.extend(["-i", str(seg)])
+        filter_parts.append(f"[{i}:v:0]")
+    filter_str = "".join(filter_parts) + f"concat=n={n}:v=1:a=0[outv]"
+
     run(
         [
             "ffmpeg",
             "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(segment_list),
+            *inputs,
+            "-filter_complex",
+            filter_str,
+            "-map",
+            "[outv]",
             "-c:v",
             "libx264",
             "-crf",
@@ -588,12 +597,11 @@ def concat_segments() -> None:
             "30",
             "-pix_fmt",
             "yuv420p",
-            "-an",
             "-movflags",
             "+faststart",
             str(RECORDING_PATH),
         ],
-        timeout=300,
+        timeout=600,
     )
 
     # Return adjusted durations for narration sync
