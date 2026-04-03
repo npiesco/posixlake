@@ -256,6 +256,41 @@ enum Commands {
         azure_endpoint: Option<String>,
     },
 
+    /// Query a database with SQL and print results
+    Query {
+        /// Path to the database (local, s3://, az://, or abfss://)
+        #[arg(value_name = "DB_PATH")]
+        db_path: String,
+
+        /// SQL query to execute
+        #[arg(value_name = "SQL")]
+        sql: String,
+
+        /// S3 endpoint URL (or set AWS_ENDPOINT_URL env var)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// S3 access key (or set AWS_ACCESS_KEY_ID env var)
+        #[arg(long)]
+        access_key: Option<String>,
+
+        /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
+        #[arg(long)]
+        secret_key: Option<String>,
+
+        /// Azure storage account name (or set AZURE_STORAGE_ACCOUNT_NAME env var)
+        #[arg(long)]
+        azure_account: Option<String>,
+
+        /// Azure storage account key (or set AZURE_STORAGE_ACCOUNT_KEY env var)
+        #[arg(long)]
+        azure_key: Option<String>,
+
+        /// Azure/Azurite endpoint URL (or set AZURITE_ENDPOINT env var)
+        #[arg(long)]
+        azure_endpoint: Option<String>,
+    },
+
     /// Test S3/MinIO backend
     S3Test {
         /// S3 URI (e.g., s3://bucket/path)
@@ -926,6 +961,44 @@ async fn main() -> Result<()> {
             };
             let metrics = db.get_metrics().await;
             println!("{}", serde_json::to_string_pretty(&metrics)?);
+            Ok(())
+        }
+
+        Commands::Query {
+            db_path,
+            sql,
+            endpoint,
+            access_key,
+            secret_key,
+            azure_account,
+            azure_key,
+            azure_endpoint,
+        } => {
+            let is_s3 = db_path.starts_with("s3://");
+            let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
+            let db = if is_s3 {
+                let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
+                DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?
+            } else if is_azure {
+                let (acct, key, ep) =
+                    resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
+                DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?
+            } else {
+                let local_path = PathBuf::from(&db_path);
+                DatabaseOps::open(&local_path).await?
+            };
+            let results = db.query(&sql).await?;
+            if results.is_empty() {
+                eprintln!("(no results)");
+            } else {
+                use arrow::util::pretty::pretty_format_batches;
+                let formatted = pretty_format_batches(&results)?;
+                println!("{}", formatted);
+            }
             Ok(())
         }
 

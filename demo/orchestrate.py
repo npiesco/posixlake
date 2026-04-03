@@ -407,6 +407,55 @@ def cleanup_stale_mounts() -> None:
     run(["net", "use", str(WINDOWS_MOUNT), "/delete", "/y"], timeout=10, check=False)
 
 
+def validate_fabric_table(
+    phase: str,
+    expected_rows: int,
+    expected_sensors: list[str] | None = None,
+) -> None:
+    """Gate: validate Fabric table state with exact schema, row count, and data checks."""
+    from config import FABRIC_DB_PATH, WINDOWS_CLI
+
+    print(f"[validate] {phase}: querying Fabric table...")
+    result = run(
+        [str(WINDOWS_CLI), "query", FABRIC_DB_PATH, "SELECT * FROM data ORDER BY id"],
+        timeout=60,
+        check=False,
+    )
+    output = result.stdout.strip()
+
+    # Count data rows (skip header lines from pretty table: +---+, | header |, +---+)
+    data_lines = [
+        line for line in output.splitlines()
+        if line.startswith("|") and "sensor" not in line.lower() and "id" not in line.split("|")[1].strip().lower()
+    ]
+    actual_rows = len(data_lines)
+
+    if actual_rows != expected_rows:
+        raise RuntimeError(
+            f"[validate] {phase}: FAILED — expected {expected_rows} rows, got {actual_rows}\nOutput:\n{output}"
+        )
+    print(f"[validate] {phase}: row count OK ({actual_rows})")
+
+    if expected_sensors:
+        for sensor in expected_sensors:
+            if sensor not in output:
+                raise RuntimeError(
+                    f"[validate] {phase}: FAILED — sensor '{sensor}' not found in output\nOutput:\n{output}"
+                )
+        print(f"[validate] {phase}: all {len(expected_sensors)} sensors present")
+
+    # Schema check: must have exactly 4 columns (id, sensor, reading, location)
+    if expected_rows > 0 and data_lines:
+        cols = [c.strip() for c in data_lines[0].split("|") if c.strip()]
+        if len(cols) != 4:
+            raise RuntimeError(
+                f"[validate] {phase}: FAILED — expected 4 columns, got {len(cols)}: {cols}"
+            )
+        print(f"[validate] {phase}: schema OK (4 columns)")
+
+    print(f"[validate] {phase}: PASSED ✓")
+
+
 def dry_run(pace: float) -> list[SegmentTiming]:
     print("[demo] dry run starting")
     cleanup_stale_mounts()
@@ -415,6 +464,7 @@ def dry_run(pace: float) -> list[SegmentTiming]:
 
     timings.append(SegmentTiming("intro", measure_scene_runtime("intro", pace, timeout=60)))
     timings.append(SegmentTiming("fabric_origin", measure_scene_runtime("fabric_origin", pace, timeout=120)))
+    validate_fabric_table("after fabric_origin", expected_rows=0)
 
     windows_server = launch_scene("windows_server", pace, visible=False)
     try:
@@ -423,7 +473,9 @@ def dry_run(pace: float) -> list[SegmentTiming]:
         timings.append(SegmentTiming("windows_client", measure_scene_runtime("windows_client", pace)))
     finally:
         terminate_process_tree(windows_server)
+    validate_fabric_table("after windows_client", expected_rows=6, expected_sensors=["temp_01", "humidity_02", "pressure_03", "temp_04", "co2_05", "flow_06"])
 
+    cleanup_stale_mounts()
     wsl_server = launch_scene("wsl_server", pace, visible=False)
     try:
         seconds = measure_recorded_server_scene(wsl_server, wait_for_wsl_mount, SETTLE_SECONDS * pace)
@@ -431,9 +483,11 @@ def dry_run(pace: float) -> list[SegmentTiming]:
         timings.append(SegmentTiming("wsl_client", measure_scene_runtime("wsl_client", pace, timeout=240)))
     finally:
         terminate_process_tree(wsl_server)
+    validate_fabric_table("after wsl_client", expected_rows=6, expected_sensors=["temp_01", "humidity_02", "pressure_03", "temp_04", "co2_05", "flow_06"])
 
     timings.append(SegmentTiming("s3_interlude", measure_scene_runtime("s3_interlude", pace, timeout=120)))
     timings.append(SegmentTiming("fabric_homecoming", measure_scene_runtime("fabric_homecoming", pace, timeout=120)))
+    validate_fabric_table("after fabric_homecoming", expected_rows=6, expected_sensors=["temp_01", "humidity_02", "pressure_03", "temp_04", "co2_05", "flow_06"])
     timings.append(SegmentTiming("outro", measure_scene_runtime("outro", pace, timeout=60)))
 
     write_timings(TIMINGS_PATH, timings)

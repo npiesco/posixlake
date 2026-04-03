@@ -17,7 +17,8 @@ SCENES = [
         "narration": (
             "The table is born in Microsoft Fabric's OneLake. "
             "One command creates a typed Delta schema directly in the lakehouse — "
-            "no Spark job, no notebook."
+            "no Spark job, no notebook, no portal clicks. "
+            "The abfss path points straight to OneLake, authenticated with a Service Principal."
         ),
     },
     {
@@ -25,7 +26,8 @@ SCENES = [
         "title": "Windows Mount",
         "narration": (
             "An operator mounts that same Fabric table as a Windows drive letter. "
-            "No download, no local copy — OneLake is the filesystem."
+            "The NFS server connects to OneLake, and Windows sees it as a local filesystem. "
+            "No download, no local copy — every read and write goes directly to Fabric."
         ),
     },
     {
@@ -70,10 +72,10 @@ SCENES = [
         "id": "fabric_homecoming",
         "title": "Fabric Homecoming",
         "narration": (
-            "Back in Fabric — the SQL endpoint shows every change. "
-            "Eight rows from Windows and Linux. "
-            "The table is ready for Power BI, Spark, or any Fabric workload. "
-            "POSIX tools wrote production Delta Lake."
+            "Back in Fabric — a direct SQL query against OneLake shows every row. "
+            "Six sensor readings, written from Windows PowerShell, "
+            "read from Linux cat and grep, all persisted in Delta Lake format. "
+            "The table is ready for Power BI, Spark, or any Fabric workload."
         ),
     },
     {

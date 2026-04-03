@@ -347,19 +347,21 @@ def run_fabric_homecoming(pace: float) -> None:
     set_console_title(WINDOW_TITLES["fabric_homecoming"])
     time.sleep(settle_time(pace))
 
-    # Show health check on the Fabric table — proves data persisted
+    # Query the Fabric table — prove all 6 rows persisted from Windows + WSL
     run_process(
-        [str(WINDOWS_CLI), "health", FABRIC_DB_PATH],
-        display=f"& {WINDOWS_CLI.name} health {FABRIC_DB_PATH}",
+        [str(WINDOWS_CLI), "query", FABRIC_DB_PATH, "SELECT * FROM data ORDER BY id"],
+        display=f"& {WINDOWS_CLI.name} query {FABRIC_DB_PATH} 'SELECT * FROM data ORDER BY id'",
         pace=pace,
         timeout=60,
     )
     time.sleep(READ_PAUSE)
 
-    # Show the table contents via Fabric CLI
-    run_powershell(
-        "uv tool run --from ms-fabric-cli fab ls FabricDevWS.Workspace/devlake.Lakehouse",
+    # Show row count
+    run_process(
+        [str(WINDOWS_CLI), "query", FABRIC_DB_PATH, "SELECT COUNT(*) as total_rows FROM data"],
+        display=f"& {WINDOWS_CLI.name} query {FABRIC_DB_PATH} 'SELECT COUNT(*) as total_rows FROM data'",
         pace=pace,
+        timeout=60,
     )
     time.sleep(READ_PAUSE)
 
