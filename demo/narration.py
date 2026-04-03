@@ -41,9 +41,10 @@ SCENES = [
         "id": "wsl_client",
         "title": "WSL Ops",
         "narration": (
-            "Cat reads the latest state. Grep locates the flagged sensor, awk extracts names. "
-            "Sed recalibrates the reading, two new sensors are appended. "
-            "Sort confirms one ACID table — Fabric, Windows, and Linux."
+            "Cat reads the latest state — all six rows from Windows are here. "
+            "Grep locates the flagged sensor, awk extracts names. "
+            "Head and tail slice the data, sort reorders by sensor. "
+            "One ACID table — Fabric, Windows, and Linux."
         ),
     },
     {

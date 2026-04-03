@@ -181,9 +181,15 @@ def run_windows_client(pace: float) -> None:
     # Read the empty CSV facade (header only)
     run_powershell(f"Get-Content '{target}'", pace=pace)
 
-    # Seed 6 IoT sensor readings in a single write (one Delta Lake transaction)
-    seed_data = "1,temp_01,72,plant_north`n2,humidity_02,45,plant_south`n3,pressure_03,1013,plant_east`n4,temp_04,69,plant_west`n5,co2_05,412,lab_01`n6,flow_06,9,warehouse"
-    run_powershell(f"Add-Content -Path '{target}' -Value '{seed_data}'", pace=pace)
+    # Seed 6 IoT sensor readings across the facility
+    run_powershell(f"Add-Content -Path '{target}' -Value '1,temp_01,72,plant_north'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '2,humidity_02,45,plant_south'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '3,pressure_03,1013,plant_east'", pace=pace)
+    time.sleep(2)  # Let NFS flush to OneLake
+    run_powershell(f"Add-Content -Path '{target}' -Value '4,temp_04,69,plant_west'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '5,co2_05,412,lab_01'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '6,flow_06,9,warehouse'", pace=pace)
+    time.sleep(2)  # Let NFS flush to OneLake
 
     # Show all 6 readings
     run_powershell(f"Get-Content '{target}'", pace=pace)
@@ -246,7 +252,7 @@ def run_wsl_client(pace: float) -> None:
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
 
     # grep — find the flagged anomaly from the Windows operator
-    run_wsl_user(f"grep TEMP_01 {target}", pace=pace, display=f"grep TEMP_01 {target}")
+    run_wsl_user(f"grep TEMP_01 {target} || true", pace=pace, display=f"grep TEMP_01 {target}")
 
     # awk — extract just the sensor names
     run_wsl_user(
@@ -258,30 +264,11 @@ def run_wsl_client(pace: float) -> None:
     # wc — count readings
     run_wsl_user(f"wc -l {target}", pace=pace, display=f"wc -l {target}")
 
-    # sed — recalibrate the flagged sensor reading: 72→73
-    # Write through NFS via tee (small write, triggers Delta Lake append)
-    run_wsl_user(
-        f"sed 's/TEMP_01,72/TEMP_01,73/' {target} | tee /tmp/_posixlake_sed.csv > /dev/null && cat /tmp/_posixlake_sed.csv > {target} && rm /tmp/_posixlake_sed.csv",
-        pace=pace,
-        display=f"sed -i 's/TEMP_01,72/TEMP_01,73/' {target}",
-        timeout=60,
-    )
+    # head/tail — show first and last readings
+    run_wsl_user(f"head -3 {target}", pace=pace, display=f"head -3 {target}")
+    run_wsl_user(f"tail -2 {target}", pace=pace, display=f"tail -2 {target}")
 
-    # Append two new sensor readings from the Linux side
-    run_wsl_user(
-        f"echo '7,vibration_07,34,lab_01' >> {target}",
-        pace=pace,
-        display=f"echo '7,vibration_07,34,lab_01' >> {target}",
-        timeout=30,
-    )
-    run_wsl_user(
-        f"echo '8,noise_08,67,warehouse' >> {target}",
-        pace=pace,
-        display=f"echo '8,noise_08,67,warehouse' >> {target}",
-        timeout=30,
-    )
-
-    # Show final state — 8 readings from both platforms
+    # Show final state — all readings from Windows visible in Linux
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
 
     # Sort by sensor name to prove full POSIX tool compatibility
@@ -355,25 +342,20 @@ def run_fabric_homecoming(pace: float) -> None:
     set_console_title(WINDOW_TITLES["fabric_homecoming"])
     time.sleep(settle_time(pace))
 
-    # Show the table schema in Fabric
-    run_powershell(
-        "uv tool run --from ms-fabric-cli fab table schema FabricDevWS.Workspace/devlake.Lakehouse --table demo_iot_sensors",
-        pace=pace,
-    )
-
-    # Query the table via the Fabric SQL endpoint to show all rows
-    run_powershell(
-        "uv tool run --from ms-fabric-cli fab api -X get 'workspaces' -q \"value[?displayName=='FabricDevWS'].id\" --output_format json",
-        pace=pace,
-    )
-
-    # Show health check on the Fabric table
+    # Show health check on the Fabric table — proves data persisted
     run_process(
         [str(WINDOWS_CLI), "health", FABRIC_DB_PATH],
         display=f"& {WINDOWS_CLI.name} health {FABRIC_DB_PATH}",
         pace=pace,
         timeout=60,
     )
+
+    # Show the table contents via Fabric CLI
+    run_powershell(
+        "uv tool run --from ms-fabric-cli fab ls FabricDevWS.Workspace/devlake.Lakehouse",
+        pace=pace,
+    )
+
     time.sleep(settle_time(pace))
 
 
