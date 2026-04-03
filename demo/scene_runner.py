@@ -263,9 +263,11 @@ def run_wsl_client(pace: float) -> None:
     # Run all POSIX read commands in rapid succession to avoid NFS idle timeout
     # cat — all 6 sensor readings from Windows are visible
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
+    time.sleep(READ_PAUSE)
 
     # grep — find the flagged anomaly
     run_wsl_user(f"grep TEMP_01 {target} || true", pace=pace, display=f"grep TEMP_01 {target}")
+    time.sleep(READ_PAUSE)
 
     # awk — extract sensor names
     run_wsl_user(
@@ -273,9 +275,11 @@ def run_wsl_client(pace: float) -> None:
         pace=pace,
         display=f"awk -F, 'NR > 1 {{ print $2 }}' {target}",
     )
+    time.sleep(READ_PAUSE)
 
     # wc — count readings
     run_wsl_user(f"wc -l {target}", pace=pace, display=f"wc -l {target}")
+    time.sleep(READ_PAUSE)
 
     # head/tail
     run_wsl_user(f"head -3 {target}", pace=pace, display=f"head -3 {target}")
@@ -287,9 +291,6 @@ def run_wsl_client(pace: float) -> None:
         pace=pace,
         display=f"sort -t, -k2 {target}",
     )
-
-    # Pause after all reads so narration catches up
-    time.sleep(READ_PAUSE * 2)
 
     # Delta Lake status from Linux
     run_wsl_user(
