@@ -495,9 +495,14 @@ def concat_segments() -> None:
             adjusted = OUTPUT_DIR / f"{segment.stem}_fast.mp4"
             print(f"  [speed] {scene_id}: {video_dur:.1f}s -> {target_dur:.1f}s ({speed_factor:.1f}x)")
             run(
-                ["ffmpeg", "-y", "-i", str(segment),
+                ["ffmpeg", "-y",
+                 "-i", str(segment),
+                 "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono",
                  "-filter:v", f"setpts=PTS/{speed_factor:.4f}",
-                 "-an", "-movflags", "+faststart", str(adjusted)],
+                 "-map", "0:v", "-map", "1:a",
+                 "-c:a", "aac", "-b:a", "128k",
+                 "-shortest",
+                 "-movflags", "+faststart", str(adjusted)],
                 timeout=300,
             )
             adjusted_segments.append(adjusted)
@@ -523,6 +528,12 @@ def concat_segments() -> None:
             "libx264",
             "-crf",
             "18",
+            "-r",
+            "30",
+            "-g",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
             "-an",
             "-movflags",
             "+faststart",
