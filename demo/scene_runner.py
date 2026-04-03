@@ -260,32 +260,20 @@ def run_wsl_client(pace: float) -> None:
     target = f"{WSL_MOUNT}/data/data.csv"
     time.sleep(settle_time(pace))
 
-    # Run all POSIX read commands in rapid succession to avoid NFS idle timeout
-    # cat — all 6 sensor readings from Windows are visible
+    # Breathing room — narration plays over the mount output while viewer reads
+    time.sleep(4)
+
+    # All reads in rapid succession — OneLake NFS drops idle connections quickly
     run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
-    time.sleep(READ_PAUSE)
-
-    # grep — find the flagged anomaly
     run_wsl_user(f"grep TEMP_01 {target} || true", pace=pace, display=f"grep TEMP_01 {target}")
-    time.sleep(READ_PAUSE)
-
-    # awk — extract sensor names
     run_wsl_user(
         f"awk -F, 'NR > 1 {{ print \\$2 }}' {target}",
         pace=pace,
         display=f"awk -F, 'NR > 1 {{ print $2 }}' {target}",
     )
-    time.sleep(READ_PAUSE)
-
-    # wc — count readings
     run_wsl_user(f"wc -l {target}", pace=pace, display=f"wc -l {target}")
-    time.sleep(READ_PAUSE)
-
-    # head/tail
     run_wsl_user(f"head -3 {target}", pace=pace, display=f"head -3 {target}")
     run_wsl_user(f"tail -2 {target}", pace=pace, display=f"tail -2 {target}")
-
-    # sort — reorder by sensor name
     run_wsl_user(
         f"sort -t, -k2 {target}",
         pace=pace,

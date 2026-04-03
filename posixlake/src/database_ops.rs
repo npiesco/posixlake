@@ -76,9 +76,12 @@ pub struct DatabaseOps {
     /// Base path for database
     base_path: PathBuf,
 
-    /// S3 configuration (if using S3 backend)
+    /// Cloud storage configuration (S3, Azure, OneLake)
     s3_url: Option<String>,
     s3_storage_options: Option<std::collections::HashMap<String, String>>,
+
+    /// Cached Delta Lake table (avoids re-opening on every operation)
+    cached_table: Arc<tokio::sync::Mutex<Option<deltalake::DeltaTable>>>,
 
     /// Database schema (cached from Delta Lake)
     pub schema: SchemaRef,
@@ -298,6 +301,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -416,6 +420,7 @@ impl DatabaseOps {
             audit_logger,
             role_manager,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(primary_key),
         })
     }
@@ -495,6 +500,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -575,6 +581,7 @@ impl DatabaseOps {
             audit_logger,
             role_manager,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -665,6 +672,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -748,6 +756,7 @@ impl DatabaseOps {
             audit_logger,
             role_manager,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -832,6 +841,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -912,6 +922,7 @@ impl DatabaseOps {
             audit_logger,
             role_manager,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -1630,6 +1641,7 @@ impl DatabaseOps {
     /// Get the underlying Delta Lake table for advanced operations
     ///
     /// Exposes the DeltaTable for version checking, history inspection, etc.
+
     pub async fn get_delta_table(&self) -> Result<deltalake::DeltaTable> {
         let result = async {
             self.check_permission(&crate::security::Permission::Read)?;
@@ -1680,36 +1692,48 @@ impl DatabaseOps {
 
         info!("Inserting {} rows to Delta Lake", batch.num_rows());
 
-        // Open the Delta Lake table (S3 or local)
-        let table = if let (Some(s3_url), Some(storage_options)) =
-            (&self.s3_url, &self.s3_storage_options)
-        {
-            // S3 backend
-            let s3_url_parsed = parse_s3_url(s3_url)?;
-            open_table_with_storage_options(s3_url_parsed, storage_options.clone())
-                .await
-                .map_err(Error::DeltaTable)?
-        } else {
-            // Local backend
-            let table_url = Url::from_directory_path(&self.base_path)
-                .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
-            open_table(table_url).await.map_err(Error::DeltaTable)?
+        // Take the cached table or open a new one
+        let table = {
+            let mut cache = self.cached_table.lock().await;
+            match cache.take() {
+                Some(t) => t,
+                None => {
+                    if let (Some(s3_url), Some(storage_options)) =
+                        (&self.s3_url, &self.s3_storage_options)
+                    {
+                        let s3_url_parsed = parse_s3_url(s3_url)?;
+                        open_table_with_storage_options(s3_url_parsed, storage_options.clone())
+                            .await
+                            .map_err(Error::DeltaTable)?
+                    } else {
+                        let table_url =
+                            Url::from_directory_path(&self.base_path).map_err(|_| {
+                                Error::Other("Invalid path for Delta table".to_string())
+                            })?;
+                        open_table(table_url).await.map_err(Error::DeltaTable)?
+                    }
+                }
+            }
         };
 
-        // Write the batch using DeltaOps with schema merging enabled for evolution
         let row_count = batch.num_rows() as u64;
 
-        table
+        // write() consumes the table and returns the updated one
+        let new_table = table
             .write(vec![batch])
             .with_save_mode(SaveMode::Append)
             .with_schema_mode(SchemaMode::Merge)
             .await
             .map_err(Error::DeltaTable)?;
 
+        // Cache the returned table for next operation
+        {
+            let mut cache = self.cached_table.lock().await;
+            *cache = Some(new_table);
+        }
+
         info!("Successfully wrote {} rows to Delta Lake", row_count);
 
-        // Return a synthetic transaction ID (Delta Lake uses versions, not transaction IDs)
-        // We can use the current timestamp as a pseudo txn_id
         let txn_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

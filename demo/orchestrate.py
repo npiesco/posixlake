@@ -397,8 +397,19 @@ def write_timings(path: Path, timings: Iterable[SegmentTiming]) -> None:
 
 
 
+def cleanup_stale_mounts() -> None:
+    """Force-unmount any stale NFS mounts from previous runs."""
+    # WSL mount
+    run(["wsl.exe", "-d", WSL_DISTRO, "-u", "root", "--", "bash", "-lc",
+         f"umount -f {WSL_MOUNT} 2>/dev/null; umount -l {WSL_MOUNT} 2>/dev/null; rm -rf {WSL_MOUNT}"],
+        timeout=15, check=False)
+    # Windows mount
+    run(["net", "use", str(WINDOWS_MOUNT), "/delete", "/y"], timeout=10, check=False)
+
+
 def dry_run(pace: float) -> list[SegmentTiming]:
     print("[demo] dry run starting")
+    cleanup_stale_mounts()
     clean_output()
     timings: list[SegmentTiming] = []
 
@@ -657,6 +668,7 @@ def record(pace: float) -> None:
     print(f"[demo] loaded dry-run timings: {base_timings}")
     cam = CandycamClient()
     actual: dict[str, float] = {}
+    cleanup_stale_mounts()
     clean_output()
     # Generate title cards (not recorded — pre-rendered)
     print("[record] === Generating title cards ===")
