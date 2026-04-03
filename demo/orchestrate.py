@@ -449,13 +449,51 @@ def is_valid_media(path: Path) -> bool:
 
 
 def concat_segments() -> None:
-    segment_list = OUTPUT_DIR / "segments.txt"
-    ordered = [SEGMENTS[scene["id"]] for scene in SCENES]
-    for segment in ordered:
+    """Concatenate video segments, speeding up any that are much longer than narration."""
+    from narration import SCENES as NARRATION_SCENES
+
+    # Load actual timings to know video durations
+    actual_path = OUTPUT_DIR / "actual_timings.json"
+    actual = {}
+    if actual_path.exists():
+        actual = json.loads(actual_path.read_text(encoding="utf-8"))
+
+    # Estimate narration duration: ~150 words/min for Azure TTS
+    narration_durations = {}
+    for scene in NARRATION_SCENES:
+        words = len(scene["narration"].split())
+        narration_durations[scene["id"]] = max(5.0, words / 2.5)  # ~2.5 words/sec
+
+    # Speed up video segments where video >> narration (add 50% breathing room)
+    adjusted_segments: list[Path] = []
+    ordered = [SEGMENTS[scene["id"]] for scene in NARRATION_SCENES]
+    for scene, segment in zip(NARRATION_SCENES, ordered):
+        scene_id = scene["id"]
         if not segment.exists() or not is_valid_media(segment):
             raise RuntimeError(f"Recorded segment missing or invalid: {segment}")
+
+        narr_dur = narration_durations.get(scene_id, 0)
+        video_dur = actual.get(scene_id, 0)
+
+        # If video is >3x narration length, speed it up
+        if narr_dur > 0 and video_dur > narr_dur * 3:
+            target_dur = narr_dur * 1.5  # 50% breathing room
+            speed_factor = video_dur / target_dur
+            adjusted = OUTPUT_DIR / f"{segment.stem}_fast.mp4"
+            print(f"  [speed] {scene_id}: {video_dur:.1f}s -> {target_dur:.1f}s ({speed_factor:.1f}x)")
+            run(
+                ["ffmpeg", "-y", "-i", str(segment),
+                 "-filter:v", f"setpts=PTS/{speed_factor:.4f}",
+                 "-an", "-movflags", "+faststart", str(adjusted)],
+                timeout=300,
+            )
+            adjusted_segments.append(adjusted)
+        else:
+            adjusted_segments.append(segment)
+
+    segment_list = OUTPUT_DIR / "segments.txt"
     segment_list.write_text(
-        "\n".join(f"file '{segment.as_posix()}'" for segment in ordered),
+        "\n".join(f"file '{segment.as_posix()}'" for segment in adjusted_segments),
         encoding="utf-8",
     )
     run(
@@ -469,14 +507,26 @@ def concat_segments() -> None:
             "-i",
             str(segment_list),
             "-c:v",
-            "copy",
+            "libx264",
+            "-crf",
+            "18",
             "-an",
             "-movflags",
             "+faststart",
             str(RECORDING_PATH),
         ],
-        timeout=120,
+        timeout=300,
     )
+
+    # Return adjusted durations for narration sync
+    adjusted_actual = dict(actual)
+    for scene in NARRATION_SCENES:
+        scene_id = scene["id"]
+        narr_dur = narration_durations.get(scene_id, 0)
+        video_dur = actual.get(scene_id, 0)
+        if narr_dur > 0 and video_dur > narr_dur * 3:
+            adjusted_actual[scene_id] = narr_dur * 1.5
+    return adjusted_actual
 
 
 
@@ -709,8 +759,8 @@ def record(pace: float) -> None:
         cam.quit()
 
     write_timings(ACTUAL_TIMINGS_PATH, [SegmentTiming(k, v) for k, v in actual.items()])
-    concat_segments()
-    synthesize_narration(actual)
+    adjusted = concat_segments()
+    synthesize_narration(adjusted)
     merge_final_video()
     print(f"[demo] final video -> {FINAL_VIDEO_PATH}")
 
