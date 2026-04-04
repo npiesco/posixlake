@@ -32,6 +32,8 @@ pub struct CsvFileView {
     db: Arc<DatabaseOps>,
     /// Optional: specific file to query (if None, query all data)
     file_path: Option<String>,
+    /// Event channel for merge commit notifications
+    event_tx: Option<tokio::sync::broadcast::Sender<crate::nfs::NfsEvent>>,
 }
 
 impl CsvFileView {
@@ -41,6 +43,20 @@ impl CsvFileView {
         CsvFileView {
             db,
             file_path: None,
+            event_tx: None,
+        }
+    }
+
+    /// Create a new CSV file view with an event channel
+    pub fn with_events(
+        db: Arc<DatabaseOps>,
+        event_tx: tokio::sync::broadcast::Sender<crate::nfs::NfsEvent>,
+    ) -> Self {
+        debug!("Creating CSV file view with event channel");
+        CsvFileView {
+            db,
+            file_path: None,
+            event_tx: Some(event_tx),
         }
     }
 
@@ -53,6 +69,7 @@ impl CsvFileView {
         CsvFileView {
             db,
             file_path: Some(file_path),
+            event_tx: None,
         }
     }
 
@@ -766,6 +783,22 @@ impl CsvFileView {
             merge_duration,
             total_duration
         );
+
+        if let Some(tx) = &self.event_tx {
+            let event = crate::nfs::NfsEvent {
+                event_type: "MERGE_COMPLETE".to_string(),
+                rows_inserted: metrics.rows_inserted,
+                rows_updated: metrics.rows_updated,
+                rows_deleted: delete_ids.len(),
+            };
+            let _ = tx.send(event);
+            println!(
+                "[EVENT] MERGE_COMPLETE inserts={} updates={} deletes={}",
+                metrics.rows_inserted,
+                metrics.rows_updated,
+                delete_ids.len()
+            );
+        }
 
         Ok(())
     }

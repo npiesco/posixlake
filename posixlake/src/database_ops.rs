@@ -1641,7 +1641,6 @@ impl DatabaseOps {
     /// Get the underlying Delta Lake table for advanced operations
     ///
     /// Exposes the DeltaTable for version checking, history inspection, etc.
-
     pub async fn get_delta_table(&self) -> Result<deltalake::DeltaTable> {
         let result = async {
             self.check_permission(&crate::security::Permission::Read)?;
@@ -1852,6 +1851,12 @@ impl DatabaseOps {
             .with_predicate(where_clause)
             .await
             .map_err(Error::DeltaTable)?;
+
+        // Invalidate cached table so subsequent reads see the delete
+        {
+            let mut cache = self.cached_table.lock().await;
+            *cache = None;
+        }
 
         info!(
             "Successfully deleted {} rows from Delta Lake",

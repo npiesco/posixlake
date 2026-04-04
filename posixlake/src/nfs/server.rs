@@ -5,6 +5,7 @@ use crate::database_ops::DatabaseOps;
 use crate::nfs::attr_cache::AttrCache;
 use crate::nfs::cache::NfsCache;
 use crate::nfs::file_views::CsvFileView;
+use crate::nfs::NfsEvent;
 
 use async_trait::async_trait;
 use nfsserve::{
@@ -55,6 +56,8 @@ pub struct PosixLakeFilesystem {
     cache: Option<Arc<NfsCache>>,
     /// Attribute cache to prevent mount disconnections during concurrent writes
     attr_cache: Arc<AttrCache>,
+    /// Event channel for merge/write commit notifications
+    event_tx: Option<tokio::sync::broadcast::Sender<NfsEvent>>,
 }
 
 impl PosixLakeFilesystem {
@@ -75,6 +78,7 @@ impl PosixLakeFilesystem {
             cache: None,
             attr_cache: Arc::new(AttrCache::new()),
             instance_id: Arc::new(instance_id),
+            event_tx: None,
         }
     }
 
@@ -99,7 +103,13 @@ impl PosixLakeFilesystem {
             cache: Some(cache),
             attr_cache: Arc::new(AttrCache::new()),
             instance_id: Arc::new(instance_id),
+            event_tx: None,
         }
+    }
+
+    /// Set the event channel sender
+    pub fn set_event_tx(&mut self, tx: tokio::sync::broadcast::Sender<NfsEvent>) {
+        self.event_tx = Some(tx);
     }
 
     /// Get current timestamp for file attributes
@@ -670,7 +680,11 @@ impl NFSFileSystem for PosixLakeFilesystem {
 
                 // Don't hold lock across await - create temporary view
                 let db = self.db.clone();
-                let view = CsvFileView::new(db);
+                let view = if let Some(ref tx) = self.event_tx {
+                    CsvFileView::with_events(db, tx.clone())
+                } else {
+                    CsvFileView::new(db)
+                };
 
                 // Handle partial writes (append) by combining with existing content
                 let write_data = if offset > 0 {

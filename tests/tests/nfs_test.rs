@@ -3644,6 +3644,88 @@ async fn test_nfs_csv_update_via_overwrite() {
 }
 
 // ============================================================================
+// EVENT CHANNEL TESTS - Merge commit handshake
+// ============================================================================
+
+/// RED TEST: NFS server emits MergeComplete event on CSV overwrite
+/// The event channel is how the orchestrator knows the Delta commit landed.
+#[tokio::test]
+#[serial(nfs)]
+async fn test_nfs_merge_event_on_csv_overwrite() {
+    init_logging();
+    println!("\n[TEST] test_nfs_merge_event_on_csv_overwrite - event channel handshake");
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("sensor", DataType::Utf8, false),
+        Field::new("reading", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["temp_01", "humidity_02"])),
+            Arc::new(Int32Array::from(vec![72, 45])),
+        ],
+    )
+    .unwrap();
+    db.insert(batch).await.unwrap();
+
+    let db_arc = Arc::new(db);
+    let port = create_unique_port(13500);
+    let server = NfsServer::new(db_arc.clone(), port).await.unwrap();
+    assert!(server.is_ready().await);
+
+    // Subscribe to the event channel BEFORE the overwrite
+    let mut event_rx = server.subscribe_events();
+
+    // Overwrite CSV with TEMP_01 uppercase (same as demo windows_client scene)
+    let updated_csv = "id,sensor,reading\n1,TEMP_01,72\n2,humidity_02,45\n";
+    server
+        .write_file("/data/data.csv", 0, updated_csv.as_bytes())
+        .await
+        .unwrap();
+
+    // Wait for the MergeComplete event — this is the handshake
+    let event = tokio::time::timeout(std::time::Duration::from_secs(10), event_rx.recv())
+        .await
+        .expect("Timed out waiting for MergeComplete event")
+        .expect("Event channel closed");
+
+    // Assert the event confirms the merge
+    assert_eq!(event.event_type, "MERGE_COMPLETE");
+    assert!(
+        event.rows_updated >= 1,
+        "Should report at least 1 row updated"
+    );
+    println!("[EVENT] Received: {:?}", event);
+
+    // Verify the data landed by opening a FRESH instance (same as WSL / posixlake-cli query)
+    let fresh_db = DatabaseOps::open(&db_path).await.unwrap();
+    let results = fresh_db
+        .query("SELECT sensor FROM data WHERE id = 1")
+        .await
+        .unwrap();
+    let sensor = results[0]
+        .column_by_name("sensor")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .value(0);
+    assert_eq!(sensor, "TEMP_01", "Sensor should be uppercase after merge");
+
+    println!("[SUCCESS] MergeComplete event + data verification passed");
+    server.shutdown().await.unwrap();
+}
+
+// ============================================================================
 // STRESS TESTS - Large Scale Performance & Stability
 // ============================================================================
 

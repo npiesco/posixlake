@@ -18,13 +18,23 @@ use crate::nfs::server::PosixLakeFilesystem;
 use nfsserve::tcp::{NFSTcp, NFSTcpListener};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 // Global storage for query results (simple approach for testing)
 // In production, this would be per-server instance
 lazy_static::lazy_static! {
     static ref QUERY_RESULTS: tokio::sync::Mutex<HashMap<String, Vec<u8>>> = tokio::sync::Mutex::const_new(HashMap::new());
+}
+
+/// Event emitted by the NFS server when a Delta operation completes.
+/// Consumers subscribe via `NfsServer::subscribe_events()` for handshake confirmation.
+#[derive(Clone, Debug)]
+pub struct NfsEvent {
+    pub event_type: String,
+    pub rows_inserted: usize,
+    pub rows_updated: usize,
+    pub rows_deleted: usize,
 }
 
 /// NFS Server that exposes posixlake as a filesystem
@@ -39,6 +49,8 @@ pub struct NfsServer {
     /// JoinHandles for spawned tasks - awaited on shutdown
     server_handle: Option<tokio::task::JoinHandle<()>>,
     portmap_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Event channel for merge/write commit notifications
+    event_tx: broadcast::Sender<NfsEvent>,
 }
 
 impl NfsServer {
@@ -98,7 +110,12 @@ impl NfsServer {
                 .as_nanos()
         ));
         let cache = Arc::new(NfsCache::new(&cache_dir).await?);
-        let fs = PosixLakeFilesystem::with_cache(db.clone(), cache.clone());
+        let mut fs = PosixLakeFilesystem::with_cache(db.clone(), cache.clone());
+
+        // Create event channel and wire it into the filesystem
+        let (event_tx, _) = broadcast::channel(64);
+        fs.set_event_tx(event_tx.clone());
+
         // Clone for portmapper and NfsServer to share state (created_dirs, etc.)
         let portmap_fs = fs.clone();
         let server_fs = fs.clone();
@@ -235,7 +252,19 @@ impl NfsServer {
             filesystem: server_fs,
             server_handle: Some(server_handle),
             portmap_handle: Some(portmap_handle),
+            event_tx,
         })
+    }
+
+    /// Subscribe to NFS server events (merge commits, inserts, deletes).
+    /// Returns a broadcast receiver for event-driven handshakes.
+    pub fn subscribe_events(&self) -> broadcast::Receiver<NfsEvent> {
+        self.event_tx.subscribe()
+    }
+
+    /// Get a clone of the event sender (for passing to file views)
+    pub fn event_sender(&self) -> broadcast::Sender<NfsEvent> {
+        self.event_tx.clone()
     }
 
     /// Check if server is ready
