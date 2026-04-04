@@ -95,9 +95,21 @@ def run_powershell(command: str, *, pace: float, timeout: int = 240) -> None:
     print_result(result)
 
 
-def run_process(cmd: list[str], *, display: str, pace: float, timeout: int = 240) -> None:
+def run_process(cmd: list[str], *, display: str, pace: float, timeout: int = 240, env: dict[str, str] | None = None) -> None:
     show_command("PS>", display, pace)
-    result = run_capture(cmd, timeout=timeout)
+    result = subprocess.run(
+        cmd,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        env=env,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed: {' '.join(cmd)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
     print_result(result)
 
 
@@ -190,34 +202,26 @@ def run_windows_client(pace: float) -> None:
     time.sleep(READ_PAUSE)
 
     # Seed 6 IoT sensor readings across the facility
-    run_powershell(f"Add-Content -Path '{target}' -Value '1,temp_01,72,plant_north'", pace=pace)
+    # First 5 rows are normal; row 1 uses UPPERCASE TEMP_01 to flag an anomaly
+    run_powershell(f"Add-Content -Path '{target}' -Value '1,TEMP_01,72,plant_north'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '2,humidity_02,45,plant_south'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '3,pressure_03,1013,plant_east'", pace=pace)
-    time.sleep(2)
     run_powershell(f"Add-Content -Path '{target}' -Value '4,temp_04,69,plant_west'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '5,co2_05,412,lab_01'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '6,flow_06,9,warehouse'", pace=pace)
-    time.sleep(2)
+    time.sleep(3)
 
-    # Show all 6 readings
-    run_powershell(f"Get-Content '{target}'", pace=pace)
-    time.sleep(READ_PAUSE)
-
-    # Flag anomaly — uppercase temp_01 to mark it for review (atomic Delta merge)
-    run_powershell(
-        f"Get-Content '{target}' | ForEach-Object {{ $_ -replace 'temp_01','TEMP_01' }} | Set-Content '{WINDOWS_CLIENT_TEMP}' -Encoding ascii",
+    # Verify all 6 readings via Delta query (bypasses NFS client read cache)
+    fabric_env = os.environ.copy()
+    fabric_env["AZURE_STORAGE_CLIENT_ID"] = FABRIC_CLIENT_ID
+    fabric_env["AZURE_STORAGE_CLIENT_SECRET"] = FABRIC_CLIENT_SECRET
+    fabric_env["AZURE_STORAGE_TENANT_ID"] = FABRIC_TENANT_ID
+    run_process(
+        [str(WINDOWS_CLI), "query", FABRIC_DB_PATH, "SELECT * FROM data ORDER BY id"],
+        display=f"& {WINDOWS_CLI.name} query <fabric-table> 'SELECT * FROM data ORDER BY id'",
         pace=pace,
+        env=fabric_env,
     )
-    show_command("PS>", f"cmd /c copy /Y {WINDOWS_CLIENT_TEMP} {target}", pace)
-    copy_result = run_capture(
-        ["cmd.exe", "/c", "copy", "/Y", str(WINDOWS_CLIENT_TEMP), str(target)],
-        timeout=120,
-    )
-    print_result(copy_result)
-    time.sleep(READ_PAUSE)
-
-    # Verify the merge — TEMP_01 flag should appear
-    run_powershell(f"Get-Content '{target}'", pace=pace)
     time.sleep(READ_PAUSE)
 
     # Show Delta Lake version history
@@ -235,6 +239,22 @@ def run_windows_client(pace: float) -> None:
         pace=pace,
     )
     time.sleep(settle_time(pace))
+
+    # Handshake: confirm TEMP_01 landed in Fabric Delta table before exiting
+    result = subprocess.run(
+        [str(WINDOWS_CLI), "query", FABRIC_DB_PATH, "SELECT sensor FROM data WHERE id = 1"],
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        env=fabric_env,
+        timeout=60,
+    )
+    if "TEMP_01" not in result.stdout:
+        raise RuntimeError(
+            f"[handshake] TEMP_01 not found in Fabric query after merge.\nOutput:\n{result.stdout}\nStderr:\n{result.stderr}"
+        )
+    print("[handshake] TEMP_01 confirmed in Fabric Delta table")
 
 
 def run_wsl_server(pace: float) -> None:

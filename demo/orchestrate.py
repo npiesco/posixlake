@@ -363,6 +363,43 @@ def measure_recorded_server_scene(start_proc: subprocess.Popen[str], wait_fn, ex
     return time.monotonic() - started
 
 
+def start_merge_listener(server_proc: subprocess.Popen[str]) -> tuple:
+    """Start a background thread that reads the server's stderr for MERGE_COMPLETE.
+
+    Must be started BEFORE the client scene runs, so the event isn't missed.
+    Returns a (thread, queue) tuple — pass to finish_merge_listener() after client completes.
+    """
+    import queue
+    import threading
+
+    if server_proc.stderr is None:
+        raise RuntimeError("Server process stderr not piped — cannot read events")
+
+    found: queue.Queue[str] = queue.Queue()
+
+    def _reader() -> None:
+        assert server_proc.stderr is not None
+        for line in server_proc.stderr:
+            stripped = line.strip()
+            if "[EVENT] MERGE_COMPLETE" in stripped:
+                found.put(stripped)
+                print(f"  [server] {stripped}")
+                return
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    return (t, found)
+
+
+def finish_merge_listener(waiter: tuple, timeout: float = 120.0) -> None:
+    """Wait for the merge listener thread to receive MERGE_COMPLETE."""
+    t, found = waiter
+    t.join(timeout=timeout)
+    if found.empty():
+        raise RuntimeError(f"Timed out after {timeout}s waiting for MERGE_COMPLETE event")
+    print("[handshake] MERGE_COMPLETE confirmed")
+
+
 
 def measure_scene_runtime(scene_id: str, pace: float, *, timeout: int = 180) -> float:
     sentinel = OUTPUT_DIR / f".done_{scene_id}"

@@ -619,15 +619,15 @@ impl CsvFileView {
     async fn handle_csv_overwrite(&self, old_csv: &str, new_csv: &str) -> Result<()> {
         let overwrite_start = std::time::Instant::now();
         info!("Processing CSV overwrite with UPDATE/DELETE/INSERT detection (MERGE)");
-        info!(
-            "handle_csv_overwrite: old_csv ({} bytes): {:?}",
+        eprintln!(
+            "[DEBUG] handle_csv_overwrite: old_csv ({} bytes): {:?}",
             old_csv.len(),
-            &old_csv[..old_csv.len().min(100)]
+            &old_csv[..old_csv.len().min(200)]
         );
-        info!(
-            "handle_csv_overwrite: new_csv ({} bytes): {:?}",
+        eprintln!(
+            "[DEBUG] handle_csv_overwrite: new_csv ({} bytes): {:?}",
             new_csv.len(),
-            &new_csv[..new_csv.len().min(100)]
+            &new_csv[..new_csv.len().min(200)]
         );
 
         let schema = self.db.schema();
@@ -708,9 +708,16 @@ impl CsvFileView {
             delete_ids.len()
         );
 
+        eprintln!(
+            "[DEBUG] Changes detected: {} inserts, {} updates, {} deletes",
+            insert_ids.len(),
+            update_ids.len(),
+            delete_ids.len()
+        );
+
         // If no changes, nothing to do
         if insert_ids.is_empty() && update_ids.is_empty() && delete_ids.is_empty() {
-            info!("No changes detected, skipping MERGE");
+            eprintln!("[DEBUG] No changes detected, skipping MERGE");
             return Ok(());
         }
 
@@ -772,6 +779,9 @@ impl CsvFileView {
             info!("Deleted {} rows", deleted_count);
         }
 
+        // Invalidate cached table so subsequent reads see the merge result
+        self.db.invalidate_cached_table().await;
+
         let merge_duration = merge_start.elapsed();
         let total_duration = overwrite_start.elapsed();
 
@@ -792,13 +802,13 @@ impl CsvFileView {
                 rows_deleted: delete_ids.len(),
             };
             let _ = tx.send(event);
-            println!(
-                "[EVENT] MERGE_COMPLETE inserts={} updates={} deletes={}",
-                metrics.rows_inserted,
-                metrics.rows_updated,
-                delete_ids.len()
-            );
         }
+        eprintln!(
+            "[EVENT] MERGE_COMPLETE inserts={} updates={} deletes={}",
+            metrics.rows_inserted,
+            metrics.rows_updated,
+            delete_ids.len()
+        );
 
         Ok(())
     }

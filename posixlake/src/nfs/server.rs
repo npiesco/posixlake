@@ -469,9 +469,25 @@ impl NFSFileSystem for PosixLakeFilesystem {
             }
             // data.csv file
             3 => {
-                // Get current size from the CSV view
-                let view = CsvFileView::new(self.db.clone());
-                let csv_size = view.size().await.unwrap_or(0);
+                // Honor truncation requests — Windows copy /Y sends SETATTR size=0 before WRITE
+                let requested_size = match setattr.size {
+                    nfsserve::nfs::set_size3::size(s) => Some(s),
+                    _ => None,
+                };
+
+                let csv_size = if requested_size == Some(0) {
+                    // Truncation: report size 0 so the NFS client proceeds with WRITE
+                    info!("SETATTR: data.csv truncation requested, reporting size=0");
+                    // Clear content cache so the next WRITE sees correct old content
+                    if let Some(ref cache) = self.cache {
+                        let _ = cache.remove("csv:data").await;
+                    }
+                    0u64
+                } else {
+                    let view = CsvFileView::new(self.db.clone());
+                    view.size().await.unwrap_or(0)
+                };
+
                 let attr = fattr3 {
                     ftype: ftype3::NF3REG,
                     mode: 0o666,
@@ -487,6 +503,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     mtime: now_time,
                     ctime: now_time,
                 };
+                self.attr_cache.set(id, attr).await;
                 info!("SETATTR succeeded for data.csv (size={})", csv_size);
                 Ok(attr)
             }

@@ -1638,6 +1638,12 @@ impl DatabaseOps {
         self.insert(concatenated).await.map(|_| ())
     }
 
+    /// Invalidate the cached Delta table, forcing the next operation to open fresh.
+    pub async fn invalidate_cached_table(&self) {
+        let mut cache = self.cached_table.lock().await;
+        *cache = None;
+    }
+
     /// Get the underlying Delta Lake table for advanced operations
     ///
     /// Exposes the DeltaTable for version checking, history inspection, etc.
@@ -1853,10 +1859,7 @@ impl DatabaseOps {
             .map_err(Error::DeltaTable)?;
 
         // Invalidate cached table so subsequent reads see the delete
-        {
-            let mut cache = self.cached_table.lock().await;
-            *cache = None;
-        }
+        self.invalidate_cached_table().await;
 
         info!(
             "Successfully deleted {} rows from Delta Lake",
