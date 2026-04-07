@@ -116,6 +116,12 @@ class CandycamClient:
         if response.startswith("ERROR"):
             raise RuntimeError(response)
 
+    def record_window_by_pid(self, output_path: Path, pid: int) -> None:
+        self._send(f"RECORD_WINDOW_PID {output_path} {pid}")
+        response = self._wait_for("RECORDING", "ERROR")
+        if response.startswith("ERROR"):
+            raise RuntimeError(response)
+
     def stop(self) -> None:
         self._send("STOP")
         response = self._wait_for("STOPPED", "ERROR", timeout=30.0)
@@ -184,6 +190,34 @@ def wait_for_window(title: str, cam: CandycamClient, timeout: float = 30.0) -> N
     windows = cam.list_windows()
     print(f"  [cam] TIMEOUT — visible windows: {windows}", file=sys.stderr)
     raise TimeoutError(f"Window '{title}' did not appear within {timeout}s")
+
+
+def get_child_pid(title_substring: str, timeout: float = 30.0) -> int:
+    """Find the PID of a visible window matching title_substring."""
+    import ctypes
+    import ctypes.wintypes
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        results = []
+        def cb(hwnd, _):
+            pid = ctypes.wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+                if title_substring.lower() in buf.value.lower():
+                    results.append(pid.value)
+            return True
+        WNDENUMPROC = ctypes.WINFUNCTYPE(
+            ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
+        )
+        ctypes.windll.user32.EnumWindows(WNDENUMPROC(cb), 0)
+        if results:
+            print(f"  [pid] found {title_substring} -> PID {results[0]}")
+            return results[0]
+        time.sleep(0.5)
+    raise TimeoutError(f"No window with title '{title_substring}' found within {timeout}s")
 
 
 
@@ -822,8 +856,8 @@ def record(pace: float) -> None:
         print("[record] === Fabric Origin ===")
         fabric_scene = launch_scene("fabric_origin", pace, visible=True)
         try:
-            wait_for_window(WINDOW_TITLES["fabric_origin"], cam)
-            cam.record_window(SEGMENTS["fabric_origin"], WINDOW_TITLES["fabric_origin"])
+            pid = get_child_pid(WINDOW_TITLES["fabric_origin"])
+            cam.record_window_by_pid(SEGMENTS["fabric_origin"], pid)
             started = time.monotonic()
             fabric_scene.wait(timeout=120)
             actual["fabric_origin"] = time.monotonic() - started
@@ -834,8 +868,8 @@ def record(pace: float) -> None:
 
         print("[record] === Windows Server ===")
         windows_server = launch_scene("windows_server", pace, visible=True)
-        wait_for_window(WINDOW_TITLES["windows_server"], cam)
-        cam.record_window(SEGMENTS["windows_server"], WINDOW_TITLES["windows_server"])
+        pid = get_child_pid(WINDOW_TITLES["windows_server"])
+        cam.record_window_by_pid(SEGMENTS["windows_server"], pid)
         started = time.monotonic()
         wait_for_windows_mount()
         time.sleep(SETTLE_SECONDS * pace)
@@ -846,8 +880,8 @@ def record(pace: float) -> None:
         print("[record] === Windows Client ===")
         client = launch_scene("windows_client", pace, visible=True)
         try:
-            wait_for_window(WINDOW_TITLES["windows_client"], cam)
-            cam.record_window(SEGMENTS["windows_client"], WINDOW_TITLES["windows_client"])
+            pid = get_child_pid(WINDOW_TITLES["windows_client"])
+            cam.record_window_by_pid(SEGMENTS["windows_client"], pid)
             started = time.monotonic()
             client.wait(timeout=240)
             actual["windows_client"] = time.monotonic() - started
@@ -862,8 +896,8 @@ def record(pace: float) -> None:
 
         print("[record] === WSL Server ===")
         wsl_server = launch_scene("wsl_server", pace, visible=True)
-        wait_for_window(WINDOW_TITLES["wsl_server"], cam)
-        cam.record_window(SEGMENTS["wsl_server"], WINDOW_TITLES["wsl_server"])
+        pid = get_child_pid(WINDOW_TITLES["wsl_server"])
+        cam.record_window_by_pid(SEGMENTS["wsl_server"], pid)
         started = time.monotonic()
         wait_for_wsl_mount()
         time.sleep(SETTLE_SECONDS * pace)
@@ -874,8 +908,8 @@ def record(pace: float) -> None:
         print("[record] === WSL Client ===")
         wsl_client = launch_scene("wsl_client", pace, visible=True)
         try:
-            wait_for_window(WINDOW_TITLES["wsl_client"], cam)
-            cam.record_window(SEGMENTS["wsl_client"], WINDOW_TITLES["wsl_client"])
+            pid = get_child_pid(WINDOW_TITLES["wsl_client"])
+            cam.record_window_by_pid(SEGMENTS["wsl_client"], pid)
             started = time.monotonic()
             wsl_client.wait(timeout=300)
             actual["wsl_client"] = time.monotonic() - started
@@ -888,8 +922,8 @@ def record(pace: float) -> None:
         print("[record] === S3 Interlude ===")
         s3_scene = launch_scene("s3_interlude", pace, visible=True)
         try:
-            wait_for_window(WINDOW_TITLES["s3_interlude"], cam)
-            cam.record_window(SEGMENTS["s3_interlude"], WINDOW_TITLES["s3_interlude"])
+            pid = get_child_pid(WINDOW_TITLES["s3_interlude"])
+            cam.record_window_by_pid(SEGMENTS["s3_interlude"], pid)
             started = time.monotonic()
             s3_scene.wait(timeout=120)
             actual["s3_interlude"] = time.monotonic() - started
@@ -901,8 +935,8 @@ def record(pace: float) -> None:
         print("[record] === Fabric Homecoming ===")
         homecoming = launch_scene("fabric_homecoming", pace, visible=True)
         try:
-            wait_for_window(WINDOW_TITLES["fabric_homecoming"], cam)
-            cam.record_window(SEGMENTS["fabric_homecoming"], WINDOW_TITLES["fabric_homecoming"])
+            pid = get_child_pid(WINDOW_TITLES["fabric_homecoming"])
+            cam.record_window_by_pid(SEGMENTS["fabric_homecoming"], pid)
             started = time.monotonic()
             homecoming.wait(timeout=120)
             actual["fabric_homecoming"] = time.monotonic() - started
