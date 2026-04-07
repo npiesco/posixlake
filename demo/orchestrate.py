@@ -202,14 +202,16 @@ def wait_for_wsl_mount(timeout: float = 120.0) -> None:
     deadline = time.monotonic() + timeout
     command = f"test -f {shlex.quote(WSL_MOUNT)}/data/data.csv"
     while time.monotonic() < deadline:
-        result = run(
-            ["wsl.exe", "-d", WSL_DISTRO, "-u", "root", "--", "bash", "-lc", command],
-            timeout=10,
-            check=False,
-        )
-        if result.returncode == 0:
-            return
-        time.sleep(0.25)
+        try:
+            result = subprocess.run(
+                ["wsl.exe", "-d", WSL_DISTRO, "-u", "root", "--", "bash", "-lc", command],
+                text=True, capture_output=True, timeout=15, encoding="utf-8", errors="replace",
+            )
+            if result.returncode == 0:
+                return
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(0.5)
     raise TimeoutError(f"WSL mount did not appear at {WSL_MOUNT}")
 
 
@@ -350,7 +352,7 @@ def launch_scene(scene_id: str, pace: float, *, visible: bool) -> subprocess.Pop
             scene_cmd,
             text=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=None,
             cwd=SCENE_RUNNER.parent,
         )
 
@@ -436,10 +438,15 @@ def write_timings(path: Path, timings: Iterable[SegmentTiming]) -> None:
 
 def cleanup_stale_mounts() -> None:
     """Force-unmount any stale NFS mounts from previous runs."""
-    # WSL mount
-    run(["wsl.exe", "-d", WSL_DISTRO, "-u", "root", "--", "bash", "-lc",
-         f"umount -f {WSL_MOUNT} 2>/dev/null; umount -l {WSL_MOUNT} 2>/dev/null; rm -rf {WSL_MOUNT}"],
-        timeout=15, check=False)
+    # WSL mount — lazy unmount; handle timeout if WSL hangs on dead NFS mount
+    try:
+        subprocess.run(
+            ["wsl.exe", "-d", WSL_DISTRO, "-u", "root", "--", "bash", "-lc",
+             f"umount -l {WSL_MOUNT} 2>/dev/null; rm -rf {WSL_MOUNT} 2>/dev/null"],
+            text=True, capture_output=True, timeout=5, encoding="utf-8", errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        print("[cleanup] WSL umount timed out — dead NFS mount blocking, continuing")
     # Windows mount
     run(["net", "use", str(WINDOWS_MOUNT), "/delete", "/y"], timeout=10, check=False)
 
@@ -520,11 +527,11 @@ def dry_run(pace: float) -> list[SegmentTiming]:
         timings.append(SegmentTiming("wsl_client", measure_scene_runtime("wsl_client", pace, timeout=240)))
     finally:
         terminate_process_tree(wsl_server)
-    validate_fabric_table("after wsl_client", expected_rows=6, expected_sensors=["TEMP_01", "humidity_02", "pressure_03", "temp_04", "co2_05", "flow_06"])
+    validate_fabric_table("after wsl_client", expected_rows=6, expected_sensors=["temp_01", "humidity_02", "pressure_03", "temp_04", "co2_05", "flow_06"])
 
     timings.append(SegmentTiming("s3_interlude", measure_scene_runtime("s3_interlude", pace, timeout=120)))
     timings.append(SegmentTiming("fabric_homecoming", measure_scene_runtime("fabric_homecoming", pace, timeout=120)))
-    validate_fabric_table("after fabric_homecoming", expected_rows=6, expected_sensors=["TEMP_01", "humidity_02", "pressure_03", "temp_04", "co2_05", "flow_06"])
+    validate_fabric_table("after fabric_homecoming", expected_rows=6, expected_sensors=["temp_01", "humidity_02", "pressure_03", "temp_04", "co2_05", "flow_06"])
     timings.append(SegmentTiming("outro", measure_scene_runtime("outro", pace, timeout=60)))
 
     write_timings(TIMINGS_PATH, timings)

@@ -3725,6 +3725,84 @@ async fn test_nfs_merge_event_on_csv_overwrite() {
     server.shutdown().await.unwrap();
 }
 
+/// RED TEST: Sequential full-file overwrites (Windows Add-Content pattern)
+/// Windows NFS client sends SETATTR(new_size) + WRITE(offset=0, full_content) for each
+/// Add-Content. Each WRITE contains ALL rows the client knows about — but the client's
+/// view is stale (only the rows from its own cache, not the server's latest).
+/// The server must use cursor-based detection: if new content is a superset of a subset
+/// of existing rows + new rows at the end, route to append, not merge-with-delete.
+#[tokio::test]
+#[serial(nfs)]
+async fn test_nfs_sequential_full_overwrites_no_row_loss() {
+    init_logging();
+    println!("\n[TEST] test_nfs_sequential_full_overwrites_no_row_loss - cursor-based append");
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test_db");
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("sensor", DataType::Utf8, false),
+        Field::new("reading", DataType::Int32, false),
+    ]));
+
+    let db = DatabaseOps::create(&db_path, schema.clone()).await.unwrap();
+    let db_arc = Arc::new(db);
+    let port = create_unique_port(13600);
+    let server = NfsServer::new(db_arc.clone(), port).await.unwrap();
+    assert!(server.is_ready().await);
+
+    // Simulate Windows Add-Content pattern:
+    // WRITE 1: full file with header + row 1 only
+    let write1 = "id,sensor,reading\n1,temp_01,72\n";
+    server.write_file("/data/data.csv", 0, write1.as_bytes()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // WRITE 2: full file with header + row 1 + row 2
+    // (Windows client cached row 1 and adds row 2)
+    let write2 = "id,sensor,reading\n1,temp_01,72\n2,humidity_02,45\n";
+    server.write_file("/data/data.csv", 0, write2.as_bytes()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // WRITE 3: stale client — only has row 1 + new row 3
+    // (Windows client's GETATTR returned old size, so it only has row 1, adds row 3)
+    let write3 = "id,sensor,reading\n1,temp_01,72\n3,pressure_03,1013\n";
+    server.write_file("/data/data.csv", 0, write3.as_bytes()).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Verify: all 3 rows must exist — row 2 must NOT be deleted
+    let fresh_db = DatabaseOps::open(&db_path).await.unwrap();
+    let results = fresh_db
+        .query("SELECT COUNT(*) as count FROM data")
+        .await
+        .unwrap();
+    let count = results[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 3, "All 3 rows must exist — no row loss from stale overwrites");
+
+    // Verify each sensor exists
+    let results = fresh_db
+        .query("SELECT sensor FROM data ORDER BY id")
+        .await
+        .unwrap();
+    let sensors = results[0]
+        .column_by_name("sensor")
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert_eq!(sensors.value(0), "temp_01");
+    assert_eq!(sensors.value(1), "humidity_02");
+    assert_eq!(sensors.value(2), "pressure_03");
+
+    println!("[SUCCESS] All 3 rows present — cursor-based append works");
+    server.shutdown().await.unwrap();
+}
+
 // ============================================================================
 // STRESS TESTS - Large Scale Performance & Stability
 // ============================================================================

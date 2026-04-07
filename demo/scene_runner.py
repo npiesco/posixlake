@@ -39,6 +39,58 @@ WINDOWS_CLIENT_TEMP = OUTPUT_DIR / "windows_update.csv"
 READ_PAUSE = 1.5
 
 
+def confirm_fabric_sensor(
+    *,
+    cli: str,
+    db_path: str,
+    env: dict[str, str],
+    expected: str,
+    sensor_id: int,
+    max_attempts: int = 5,
+    wsl: bool = False,
+) -> None:
+    """Confirm a sensor value landed in Fabric with incremental retry.
+
+    Each attempt queries the Delta table via posixlake-cli (separate process,
+    fresh table, no cached snapshot). Retries with incremental backoff to
+    handle OneLake eventual consistency.
+    """
+    sql = f"SELECT sensor FROM data WHERE id = {sensor_id}"
+    for attempt in range(max_attempts):
+        if wsl:
+            query_cmd = (
+                f"AZURE_STORAGE_CLIENT_ID='{env.get('AZURE_STORAGE_CLIENT_ID', '')}'"
+                f" AZURE_STORAGE_CLIENT_SECRET='{env.get('AZURE_STORAGE_CLIENT_SECRET', '')}'"
+                f" AZURE_STORAGE_TENANT_ID='{env.get('AZURE_STORAGE_TENANT_ID', '')}'"
+                f" {cli} query '{db_path}' \"{sql}\""
+            )
+            cmd = wsl_user_command(query_cmd)
+        else:
+            cmd = [cli, "query", db_path, sql]
+        try:
+            result = subprocess.run(
+                cmd,
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env if not wsl else None,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            result = type("R", (), {"stdout": "", "stderr": "timeout"})()
+        if expected in result.stdout:
+            print(f"[handshake] {expected} confirmed (attempt {attempt + 1})")
+            return
+        wait = 3 * (attempt + 1)
+        print(f"[handshake] attempt {attempt + 1}: got {result.stdout.strip()!r}, retrying in {wait}s")
+        time.sleep(wait)
+    raise RuntimeError(
+        f"[handshake] {expected} not found after {max_attempts} attempts.\n"
+        f"Last output:\n{result.stdout}\nStderr:\n{result.stderr}"
+    )
+
+
 def set_console_title(title: str) -> None:
     if sys.platform == "win32":
         ctypes.windll.kernel32.SetConsoleTitleW(title)
@@ -202,26 +254,53 @@ def run_windows_client(pace: float) -> None:
     time.sleep(READ_PAUSE)
 
     # Seed 6 IoT sensor readings across the facility
-    # First 5 rows are normal; row 1 uses UPPERCASE TEMP_01 to flag an anomaly
-    run_powershell(f"Add-Content -Path '{target}' -Value '1,TEMP_01,72,plant_north'", pace=pace)
+    run_powershell(f"Add-Content -Path '{target}' -Value '1,temp_01,72,plant_north'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '2,humidity_02,45,plant_south'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '3,pressure_03,1013,plant_east'", pace=pace)
+    time.sleep(2)
     run_powershell(f"Add-Content -Path '{target}' -Value '4,temp_04,69,plant_west'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '5,co2_05,412,lab_01'", pace=pace)
     run_powershell(f"Add-Content -Path '{target}' -Value '6,flow_06,9,warehouse'", pace=pace)
-    time.sleep(3)
+    time.sleep(2)
 
-    # Verify all 6 readings via Delta query (bypasses NFS client read cache)
-    fabric_env = os.environ.copy()
-    fabric_env["AZURE_STORAGE_CLIENT_ID"] = FABRIC_CLIENT_ID
-    fabric_env["AZURE_STORAGE_CLIENT_SECRET"] = FABRIC_CLIENT_SECRET
-    fabric_env["AZURE_STORAGE_TENANT_ID"] = FABRIC_TENANT_ID
-    run_process(
-        [str(WINDOWS_CLI), "query", FABRIC_DB_PATH, "SELECT * FROM data ORDER BY id"],
-        display=f"& {WINDOWS_CLI.name} query <fabric-table> 'SELECT * FROM data ORDER BY id'",
+    # Flush Windows NFS client cache: unmount + remount (server stays running)
+    run_powershell(f"net use {WINDOWS_MOUNT} /delete /y", pace=pace)
+    time.sleep(1)
+    run_powershell(
+        f"C:\\Windows\\System32\\mount.exe -o anon,nolock,mtype=hard,fileaccess=6,lang=ansi,rsize=128,wsize=128,timeout=120,retry=5 \\\\localhost\\share {WINDOWS_MOUNT}",
         pace=pace,
-        env=fabric_env,
     )
+    time.sleep(1)
+
+    # Show all 6 readings (fresh NFS handle — no stale cache)
+    run_powershell(f"Get-Content '{target}'", pace=pace)
+    time.sleep(READ_PAUSE)
+
+    # Flag anomaly — uppercase temp_01 to mark it for review (atomic Delta merge)
+    run_powershell(
+        f"Get-Content '{target}' | ForEach-Object {{ $_ -replace 'temp_01','TEMP_01' }} | Set-Content '{WINDOWS_CLIENT_TEMP}' -Encoding ascii",
+        pace=pace,
+    )
+    show_command("PS>", f"Copy-Item -Force '{WINDOWS_CLIENT_TEMP}' '{target}'", pace)
+    copy_result = run_capture(
+        ["powershell.exe", "-NoProfile", "-Command",
+         f"Copy-Item -Force '{WINDOWS_CLIENT_TEMP}' '{target}'"],
+        timeout=120,
+    )
+    print_result(copy_result)
+    time.sleep(READ_PAUSE)
+
+    # Flush cache again to verify the merge
+    run_powershell(f"net use {WINDOWS_MOUNT} /delete /y", pace=pace)
+    time.sleep(1)
+    run_powershell(
+        f"C:\\Windows\\System32\\mount.exe -o anon,nolock,mtype=hard,fileaccess=6,lang=ansi,rsize=128,wsize=128,timeout=120,retry=5 \\\\localhost\\share {WINDOWS_MOUNT}",
+        pace=pace,
+    )
+    time.sleep(1)
+
+    # Verify the merge — TEMP_01 flag should appear
+    run_powershell(f"Get-Content '{target}'", pace=pace)
     time.sleep(READ_PAUSE)
 
     # Show Delta Lake version history
@@ -240,21 +319,19 @@ def run_windows_client(pace: float) -> None:
     )
     time.sleep(settle_time(pace))
 
-    # Handshake: confirm TEMP_01 landed in Fabric Delta table before exiting
-    result = subprocess.run(
-        [str(WINDOWS_CLI), "query", FABRIC_DB_PATH, "SELECT sensor FROM data WHERE id = 1"],
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
+    # Handshake: confirm TEMP_01 landed in Fabric Delta table before exiting.
+    # Uses incremental retry — OneLake eventual consistency may delay visibility.
+    fabric_env = os.environ.copy()
+    fabric_env["AZURE_STORAGE_CLIENT_ID"] = FABRIC_CLIENT_ID
+    fabric_env["AZURE_STORAGE_CLIENT_SECRET"] = FABRIC_CLIENT_SECRET
+    fabric_env["AZURE_STORAGE_TENANT_ID"] = FABRIC_TENANT_ID
+    confirm_fabric_sensor(
+        cli=str(WINDOWS_CLI),
+        db_path=FABRIC_DB_PATH,
         env=fabric_env,
-        timeout=60,
+        expected="TEMP_01",
+        sensor_id=1,
     )
-    if "TEMP_01" not in result.stdout:
-        raise RuntimeError(
-            f"[handshake] TEMP_01 not found in Fabric query after merge.\nOutput:\n{result.stdout}\nStderr:\n{result.stderr}"
-        )
-    print("[handshake] TEMP_01 confirmed in Fabric Delta table")
 
 
 def run_wsl_server(pace: float) -> None:
@@ -280,11 +357,19 @@ def run_wsl_client(pace: float) -> None:
     target = f"{WSL_MOUNT}/data/data.csv"
     time.sleep(settle_time(pace))
 
-    # Breathing room — narration plays over the mount output while viewer reads
-    time.sleep(4)
+    # Breathing room — wait for NFS mount to stabilize
+    time.sleep(3)
 
-    # All reads in rapid succession — OneLake NFS drops idle connections quickly
-    run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
+    # First read — retry if NFS mount isn't ready yet
+    for attempt in range(3):
+        try:
+            run_wsl_user(f"cat {target}", pace=pace, display=f"cat {target}")
+            break
+        except RuntimeError:
+            if attempt < 2:
+                time.sleep(2)
+            else:
+                raise
     run_wsl_user(f"grep TEMP_01 {target} || true", pace=pace, display=f"grep TEMP_01 {target}")
     run_wsl_user(
         f"awk -F, 'NR > 1 {{ print \\$2 }}' {target}",
@@ -299,6 +384,30 @@ def run_wsl_client(pace: float) -> None:
         pace=pace,
         display=f"sort -t, -k2 {target}",
     )
+
+    # Resolve anomaly — flip TEMP_01 back to temp_01
+    # Read to tmp, then write back via shell redirection (avoids cp I/O error on NFS)
+    run_wsl_user(
+        f"sed 's/TEMP_01/temp_01/' {target} > /tmp/_posixlake_sed.csv && cat /tmp/_posixlake_sed.csv > {target} && rm /tmp/_posixlake_sed.csv",
+        pace=pace,
+        display=f"sed -i 's/TEMP_01/temp_01/' {target}",
+        timeout=120,
+    )
+
+    # Verify anomaly resolved via Delta query (bypasses NFS read, waits for merge)
+    fabric_env = os.environ.copy()
+    fabric_env["AZURE_STORAGE_CLIENT_ID"] = FABRIC_CLIENT_ID
+    fabric_env["AZURE_STORAGE_CLIENT_SECRET"] = FABRIC_CLIENT_SECRET
+    fabric_env["AZURE_STORAGE_TENANT_ID"] = FABRIC_TENANT_ID
+    confirm_fabric_sensor(
+        cli=wsl_cli_path(),
+        db_path=FABRIC_DB_PATH,
+        env=fabric_env,
+        expected="temp_01",
+        sensor_id=1,
+        wsl=True,
+    )
+    time.sleep(READ_PAUSE)
 
     # Delta Lake status from Linux
     run_wsl_user(
