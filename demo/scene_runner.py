@@ -535,7 +535,7 @@ def generate_title_card(output_path: Path, duration: float, title: str, subtitle
     logo = REPO_ROOT / "posixlake-logo.png"
     # Dark background with centered logo and text
     filter_complex = (
-        f"color=c=0x1a1a2e:s=2496x1664:d={duration}[bg];"
+        f"color=c=0x1a1a2e:s=1646x1038:d={duration}[bg];"
         f"[2:v]scale=300:300[logo];"
         f"[bg][logo]overlay=(W-w)/2:(H-h)/2-200[withlogo];"
         f"[withlogo]drawtext=text='{title}':fontsize=72:fontcolor=white:"
@@ -546,7 +546,7 @@ def generate_title_card(output_path: Path, duration: float, title: str, subtitle
     subprocess.run(
         [
             "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s=2496x1664:d={duration}:r=30",
+            "-f", "lavfi", "-i", f"color=c=0x1a1a2e:s=1646x1038:d={duration}:r=30",
             "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono:d={duration}",
             "-i", str(logo),
             "-filter_complex", filter_complex,

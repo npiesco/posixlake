@@ -648,13 +648,15 @@ def concat_segments() -> None:
     )
 
     # Use filter_complex concat to properly reset timestamps across mixed sources
+    # Scale all inputs to the same resolution (PID recording may differ from title cards)
     n = len(adjusted_segments)
     inputs: list[str] = []
     filter_parts: list[str] = []
     for i, seg in enumerate(adjusted_segments):
         inputs.extend(["-i", str(seg)])
-        filter_parts.append(f"[{i}:v:0]")
-    filter_str = "".join(filter_parts) + f"concat=n={n}:v=1:a=0[outv]"
+        filter_parts.append(f"[{i}:v:0]scale=1646:1038:force_original_aspect_ratio=decrease,pad=1646:1038:(ow-iw)/2:(oh-ih)/2[v{i}];")
+    concat_inputs = "".join(f"[v{i}]" for i in range(n))
+    filter_str = "".join(filter_parts) + f"{concat_inputs}concat=n={n}:v=1:a=0[outv]"
 
     run(
         [

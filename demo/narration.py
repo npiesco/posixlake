@@ -7,8 +7,8 @@ SCENES = [
         "narration": (
             "posixlake — a cross-platform database where PowerShell and UNIX tools "
             "write Delta Lake. Today we'll create a table in Microsoft Fabric, "
-            "manipulate it from Windows and Linux using nothing but PowerShell and "
-            "cat, grep, and awk, then verify the results back in Fabric."
+            "flag an anomaly from Windows, resolve it from Linux, "
+            "and verify the round-trip back in Fabric."
         ),
     },
     {
@@ -36,9 +36,9 @@ SCENES = [
         "narration": (
             "PowerShell loads six sensor readings — "
             "temperature, humidity, pressure, CO2, and flow. "
-            "Temp oh one shows an anomaly, so the operator flags it. "
+            "Temp oh one shows an anomaly, so the operator flags it uppercase. "
             "A file overwrite triggers an atomic Delta merge. "
-            "Every change writes directly to Fabric OneLake."
+            "The anomaly is now marked in Fabric for the Linux team to handle."
         ),
     },
     {
@@ -54,9 +54,9 @@ SCENES = [
         "title": "WSL Ops",
         "narration": (
             "Cat reads the latest state — all six rows from Windows are here. "
-            "Grep locates the flagged sensor, awk extracts names. "
-            "Head and tail slice the data, sort reorders by sensor. "
-            "One ACID table — Fabric, Windows, and Linux."
+            "Grep finds the uppercase anomaly flag. Awk extracts sensor names. "
+            "The engineer runs sed to flip it back to lowercase — anomaly resolved. "
+            "One sed command, one Delta merge, straight to Fabric."
         ),
     },
     {
@@ -72,9 +72,9 @@ SCENES = [
         "id": "fabric_homecoming",
         "title": "Fabric Homecoming",
         "narration": (
-            "Back in Fabric — a direct SQL query against OneLake shows every row. "
-            "Six sensor readings, written from Windows PowerShell, "
-            "read from Linux cat and grep, all persisted in Delta Lake format. "
+            "Back in Fabric — the SQL query confirms the full round-trip. "
+            "Six rows, all lowercase — the anomaly flagged on Windows "
+            "was resolved by Linux sed. Both changes persisted as Delta versions. "
             "The table is ready for Power BI, Spark, or any Fabric workload."
         ),
     },
