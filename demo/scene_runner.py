@@ -536,12 +536,12 @@ def generate_title_card(output_path: Path, duration: float, title: str, subtitle
     # Dark background with centered logo and text
     filter_complex = (
         f"color=c=0x1a1a2e:s=1646x1038:d={duration}[bg];"
-        f"[2:v]scale=300:300[logo];"
-        f"[bg][logo]overlay=(W-w)/2:(H-h)/2-200[withlogo];"
-        f"[withlogo]drawtext=text='{title}':fontsize=72:fontcolor=white:"
-        f"x=(w-text_w)/2:y=(h/2)+100:fontfile=C\\\\:/Windows/Fonts/segoeui.ttf,"
-        f"drawtext=text='{subtitle}':fontsize=36:fontcolor=0xaaaaaa:"
-        f"x=(w-text_w)/2:y=(h/2)+190:fontfile=C\\\\:/Windows/Fonts/segoeui.ttf[out]"
+        f"[2:v]scale=200:200[logo];"
+        f"[bg][logo]overlay=(W-w)/2:(H-h)/2-130[withlogo];"
+        f"[withlogo]drawtext=text='{title}':fontsize=48:fontcolor=white:"
+        f"x=(w-text_w)/2:y=(h/2)+65:fontfile=C\\\\:/Windows/Fonts/segoeui.ttf,"
+        f"drawtext=text='{subtitle}':fontsize=24:fontcolor=0xaaaaaa:"
+        f"x=(w-text_w)/2:y=(h/2)+125:fontfile=C\\\\:/Windows/Fonts/segoeui.ttf[out]"
     )
     subprocess.run(
         [
