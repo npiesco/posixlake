@@ -871,7 +871,6 @@ def record(pace: float) -> None:
         print("[record] === Windows Server ===")
         windows_server = launch_scene("windows_server", pace, visible=True)
         pid = get_child_pid(WINDOW_TITLES["windows_server"])
-        time.sleep(2)
         cam.record_window_by_pid(SEGMENTS["windows_server"], pid)
         started = time.monotonic()
         wait_for_windows_mount()
