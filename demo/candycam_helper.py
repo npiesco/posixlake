@@ -137,7 +137,14 @@ def main() -> None:
                 continue
             current_path = path
 
-            match = _find_candycam_window_for_pid(recorder, target_pid)
+            # Retry internally — window may not be in candycam's list yet
+            match = None
+            for attempt in range(20):
+                match = _find_candycam_window_for_pid(recorder, target_pid)
+                if match is not None:
+                    break
+                time.sleep(0.5)
+
             if match is None:
                 hwnds = _get_hwnds_for_pid(target_pid)
                 print(

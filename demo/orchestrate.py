@@ -6,6 +6,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,7 +60,6 @@ class SegmentTiming:
 class CandycamClient:
     def __init__(self) -> None:
         self.proc: subprocess.Popen[str] | None = None
-        self.buffer = ""
 
     def start(self) -> None:
         helper = Path(__file__).with_name("candycam_helper.py")
@@ -75,8 +75,7 @@ class CandycamClient:
             errors="replace",
             env={**os.environ, "CANDYCAM_BACKEND": "xcap"},
         )
-        # Log helper stderr to console (like duckcells)
-        import threading
+
         def _drain_stderr():
             assert self.proc is not None and self.proc.stderr is not None
             for line in self.proc.stderr:
@@ -118,7 +117,7 @@ class CandycamClient:
 
     def record_window_by_pid(self, output_path: Path, pid: int) -> None:
         self._send(f"RECORD_WINDOW_PID {output_path} {pid}")
-        response = self._wait_for("RECORDING", "ERROR")
+        response = self._wait_for("RECORDING", "ERROR", timeout=30.0)
         if response.startswith("ERROR"):
             raise RuntimeError(response)
 
@@ -812,11 +811,7 @@ def merge_final_video() -> None:
             str(RECORDING_PATH),
             "-i",
             str(NARRATION_PATH),
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "18",
-            "-tune", "stillimage",
-            "-pix_fmt", "yuv420p",
+            "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
             "-map", "0:v:0",

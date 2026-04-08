@@ -357,6 +357,21 @@ def run_wsl_client(pace: float) -> None:
     target = f"{WSL_MOUNT}/data/data.csv"
     time.sleep(settle_time(pace))
 
+    # Confirm TEMP_01 is visible in Fabric before reading NFS —
+    # WSL NFS server may have loaded a stale snapshot if OneLake hadn't replicated yet.
+    fabric_env = os.environ.copy()
+    fabric_env["AZURE_STORAGE_CLIENT_ID"] = FABRIC_CLIENT_ID
+    fabric_env["AZURE_STORAGE_CLIENT_SECRET"] = FABRIC_CLIENT_SECRET
+    fabric_env["AZURE_STORAGE_TENANT_ID"] = FABRIC_TENANT_ID
+    confirm_fabric_sensor(
+        cli=wsl_cli_path(),
+        db_path=FABRIC_DB_PATH,
+        env=fabric_env,
+        expected="TEMP_01",
+        sensor_id=1,
+        wsl=True,
+    )
+
     # Breathing room — wait for NFS mount to stabilize
     time.sleep(3)
 
@@ -370,7 +385,7 @@ def run_wsl_client(pace: float) -> None:
                 time.sleep(2)
             else:
                 raise
-    run_wsl_user(f"grep TEMP_01 {target} || true", pace=pace, display=f"grep TEMP_01 {target}")
+    run_wsl_user(f"grep TEMP_01 {target}", pace=pace, display=f"grep TEMP_01 {target}")
     run_wsl_user(
         f"awk -F, 'NR > 1 {{ print \\$2 }}' {target}",
         pace=pace,
@@ -386,9 +401,8 @@ def run_wsl_client(pace: float) -> None:
     )
 
     # Resolve anomaly — flip TEMP_01 back to temp_01
-    # Read to tmp, then write back via shell redirection (avoids cp I/O error on NFS)
     run_wsl_user(
-        f"sed 's/TEMP_01/temp_01/' {target} > /tmp/_posixlake_sed.csv && cat /tmp/_posixlake_sed.csv > {target} && rm /tmp/_posixlake_sed.csv",
+        f"sed 's/TEMP_01/temp_01/' {target} > /tmp/_posixlake_sed.csv && sleep 2 && cp /tmp/_posixlake_sed.csv {target} && rm /tmp/_posixlake_sed.csv",
         pace=pace,
         display=f"sed -i 's/TEMP_01/temp_01/' {target}",
         timeout=120,
