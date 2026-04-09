@@ -104,9 +104,36 @@ def settle_time(pace: float) -> float:
     return max(1.0, SETTLE_SECONDS * pace)
 
 
+def _get_visible_columns() -> int:
+    """Get the visible console window width (not the buffer width)."""
+    if sys.platform == "win32":
+        try:
+            h = ctypes.windll.kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            buf = ctypes.create_string_buffer(22)
+            if ctypes.windll.kernel32.GetConsoleScreenBufferInfo(h, buf):
+                # srWindow: Left(8), Top(10), Right(12), Bottom(14) — little-endian shorts
+                import struct
+                left = struct.unpack_from("<h", buf.raw, 10)[0]
+                right = struct.unpack_from("<h", buf.raw, 14)[0]
+                return right - left + 1
+        except Exception:
+            pass
+    return 120
+
+
 def show_command(prefix: str, command: str, pace: float) -> None:
-    print()
-    print(f"{prefix} {command}")
+    # Cap at 130 so long commands don't reach the right edge of the video capture
+    cols = min(_get_visible_columns(), 130)
+    line = f"{prefix} {command}"
+    if len(line) > cols:
+        indent = " " * (len(prefix) + 1)
+        chunks = [line[i:i + cols] for i in range(0, len(line), cols)]
+        wrapped = chunks[0] + "\n" + "\n".join(indent + c.lstrip() for c in chunks[1:])
+        print()
+        print(wrapped)
+    else:
+        print()
+        print(line)
     sys.stdout.flush()
     time.sleep(pause_for_command(pace))
 
