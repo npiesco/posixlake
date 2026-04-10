@@ -484,7 +484,10 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     nfsserve::nfs::set_size3::size(s) => Some(s),
                     _ => None,
                 };
-                eprintln!("[DEBUG] SETATTR data.csv: requested_size={:?}", requested_size);
+                eprintln!(
+                    "[DEBUG] SETATTR data.csv: requested_size={:?}",
+                    requested_size
+                );
 
                 let csv_size = if requested_size == Some(0) {
                     // Truncation: report size 0 so the NFS client proceeds with WRITE
@@ -764,7 +767,9 @@ impl NFSFileSystem for PosixLakeFilesystem {
                 // client's view of the file. For inserts, this is accurate after merge.
                 // For pure updates (async), the data rows are the same, just modified values.
                 if let Some(ref cache) = self.cache {
-                    let _ = cache.insert("csv:data".to_string(), write_data.clone()).await;
+                    let _ = cache
+                        .insert("csv:data".to_string(), write_data.clone())
+                        .await;
                 }
 
                 // Use write data size as estimate — avoids slow OneLake round-trip for size

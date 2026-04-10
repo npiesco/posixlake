@@ -3755,19 +3755,28 @@ async fn test_nfs_sequential_full_overwrites_no_row_loss() {
     // Simulate Windows Add-Content pattern:
     // WRITE 1: full file with header + row 1 only
     let write1 = "id,sensor,reading\n1,temp_01,72\n";
-    server.write_file("/data/data.csv", 0, write1.as_bytes()).await.unwrap();
+    server
+        .write_file("/data/data.csv", 0, write1.as_bytes())
+        .await
+        .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // WRITE 2: full file with header + row 1 + row 2
     // (Windows client cached row 1 and adds row 2)
     let write2 = "id,sensor,reading\n1,temp_01,72\n2,humidity_02,45\n";
-    server.write_file("/data/data.csv", 0, write2.as_bytes()).await.unwrap();
+    server
+        .write_file("/data/data.csv", 0, write2.as_bytes())
+        .await
+        .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // WRITE 3: stale client — only has row 1 + new row 3
     // (Windows client's GETATTR returned old size, so it only has row 1, adds row 3)
     let write3 = "id,sensor,reading\n1,temp_01,72\n3,pressure_03,1013\n";
-    server.write_file("/data/data.csv", 0, write3.as_bytes()).await.unwrap();
+    server
+        .write_file("/data/data.csv", 0, write3.as_bytes())
+        .await
+        .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Verify: all 3 rows must exist — row 2 must NOT be deleted
@@ -3782,7 +3791,10 @@ async fn test_nfs_sequential_full_overwrites_no_row_loss() {
         .downcast_ref::<Int64Array>()
         .unwrap()
         .value(0);
-    assert_eq!(count, 3, "All 3 rows must exist — no row loss from stale overwrites");
+    assert_eq!(
+        count, 3,
+        "All 3 rows must exist — no row loss from stale overwrites"
+    );
 
     // Verify each sensor exists
     let results = fresh_db

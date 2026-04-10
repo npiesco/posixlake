@@ -87,7 +87,11 @@ impl CsvFileView {
         };
 
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-        eprintln!("[DEBUG] generate_csv: {} batches, {} total rows", batches.len(), total_rows);
+        eprintln!(
+            "[DEBUG] generate_csv: {} batches, {} total rows",
+            batches.len(),
+            total_rows
+        );
 
         if batches.is_empty() {
             debug!("No data in database, returning empty CSV with headers only");
