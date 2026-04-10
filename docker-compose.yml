@@ -34,5 +34,40 @@ services:
       echo 'MinIO initialized with bucket: posixlake-test';
       "
 
+  # Azurite - Azure Blob Storage emulator for local testing
+  # Note: posixlake tests run on host (not in containers) to support NFS mounting
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: posixlake-azurite
+    ports:
+      - "10000:10000"      # Blob
+      - "10001:10001"      # Queue
+      - "10002:10002"      # Table
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+    volumes:
+      - azurite-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "10000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Create default container for testing
+  azurite-init:
+    image: mcr.microsoft.com/azure-cli:latest
+    container_name: posixlake-azurite-init
+    depends_on:
+      azurite:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      az storage container create
+        --name posixlake-test
+        --connection-string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;'
+        || true;
+      echo 'Azurite initialized with container: posixlake-test';
+      "
+
 volumes:
   minio-data:
+  azurite-data:

@@ -57,18 +57,26 @@ AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY") or os.getenv("FOUNDRY_API_KEY")
 AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION") or os.getenv("FOUNDRY_REGION")
 AZURE_SPEECH_VOICE = os.getenv("POSIXLAKE_DEMO_VOICE", "en-US-AndrewMultilingualNeural")
 WINDOW_TITLES = {
+    "intro": "posixlake-demo-intro",
+    "fabric_origin": "posixlake-demo-fabric-origin",
     "windows_server": "posixlake-demo-windows-server",
     "windows_client": "posixlake-demo-windows-client",
     "wsl_server": "posixlake-demo-wsl-server",
     "wsl_client": "posixlake-demo-wsl-client",
-    "s3_cloud": "posixlake-demo-s3-cloud",
+    "s3_interlude": "posixlake-demo-s3-interlude",
+    "fabric_homecoming": "posixlake-demo-fabric-homecoming",
+    "outro": "posixlake-demo-outro",
 }
 SEGMENTS = {
-    "s3_cloud": OUTPUT_DIR / "seg_01_s3_cloud.mp4",
+    "intro": OUTPUT_DIR / "seg_00_intro.mp4",
+    "fabric_origin": OUTPUT_DIR / "seg_01_fabric_origin.mp4",
     "windows_server": OUTPUT_DIR / "seg_02_windows_server.mp4",
     "windows_client": OUTPUT_DIR / "seg_03_windows_client.mp4",
     "wsl_server": OUTPUT_DIR / "seg_04_wsl_server.mp4",
     "wsl_client": OUTPUT_DIR / "seg_05_wsl_client.mp4",
+    "s3_interlude": OUTPUT_DIR / "seg_06_s3_interlude.mp4",
+    "fabric_homecoming": OUTPUT_DIR / "seg_07_fabric_homecoming.mp4",
+    "outro": OUTPUT_DIR / "seg_08_outro.mp4",
 }
 
 # S3/MinIO configuration
@@ -77,6 +85,22 @@ S3_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 S3_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 S3_BUCKET = os.getenv("MINIO_BUCKET", "posixlake-test")
 S3_DB_PATH = os.getenv("POSIXLAKE_DEMO_S3_PATH", f"s3://{S3_BUCKET}/demo_iot_sensors")
+
+# Fabric OneLake configuration (Service Principal auth)
+FABRIC_TABLES_PATH = os.getenv("FABRIC_ONELAKE_TABLES_PATH", "")
+FABRIC_CLIENT_ID = os.getenv("AZURE_STORAGE_CLIENT_ID", "")
+FABRIC_CLIENT_SECRET = os.getenv("AZURE_STORAGE_CLIENT_SECRET", "")
+FABRIC_TENANT_ID = os.getenv("AZURE_STORAGE_TENANT_ID", "")
+# Unique table per demo run to avoid stale data — set once, reused by all scenes
+_FABRIC_TABLE_SUFFIX = os.getenv("POSIXLAKE_DEMO_FABRIC_TABLE", "")
+if not _FABRIC_TABLE_SUFFIX:
+    import time as _time
+    _FABRIC_TABLE_SUFFIX = f"demo_iot_{int(_time.time())}"
+    os.environ["POSIXLAKE_DEMO_FABRIC_TABLE"] = _FABRIC_TABLE_SUFFIX
+FABRIC_DB_PATH = os.getenv(
+    "POSIXLAKE_DEMO_FABRIC_PATH",
+    f"{FABRIC_TABLES_PATH}/{_FABRIC_TABLE_SUFFIX}" if FABRIC_TABLES_PATH else "",
+)
 
 
 def windows_to_wsl(path: Path) -> str:

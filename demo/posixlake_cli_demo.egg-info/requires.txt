@@ -1,0 +1,2 @@
+azure-cognitiveservices-speech>=1.43.0
+capture @ file:vendor/wheels/capture-0.1.0-cp313-cp313-win_arm64.whl

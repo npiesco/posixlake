@@ -5,6 +5,7 @@ use crate::database_ops::DatabaseOps;
 use crate::nfs::attr_cache::AttrCache;
 use crate::nfs::cache::NfsCache;
 use crate::nfs::file_views::CsvFileView;
+use crate::nfs::NfsEvent;
 
 use async_trait::async_trait;
 use nfsserve::{
@@ -55,6 +56,8 @@ pub struct PosixLakeFilesystem {
     cache: Option<Arc<NfsCache>>,
     /// Attribute cache to prevent mount disconnections during concurrent writes
     attr_cache: Arc<AttrCache>,
+    /// Event channel for merge/write commit notifications
+    event_tx: Option<tokio::sync::broadcast::Sender<NfsEvent>>,
 }
 
 impl PosixLakeFilesystem {
@@ -75,6 +78,7 @@ impl PosixLakeFilesystem {
             cache: None,
             attr_cache: Arc::new(AttrCache::new()),
             instance_id: Arc::new(instance_id),
+            event_tx: None,
         }
     }
 
@@ -99,7 +103,13 @@ impl PosixLakeFilesystem {
             cache: Some(cache),
             attr_cache: Arc::new(AttrCache::new()),
             instance_id: Arc::new(instance_id),
+            event_tx: None,
         }
+    }
+
+    /// Set the event channel sender
+    pub fn set_event_tx(&mut self, tx: tokio::sync::broadcast::Sender<NfsEvent>) {
+        self.event_tx = Some(tx);
     }
 
     /// Get current timestamp for file attributes
@@ -284,7 +294,17 @@ impl NFSFileSystem for PosixLakeFilesystem {
     async fn getattr(&self, id: fileid3) -> std::result::Result<fattr3, nfsstat3> {
         info!("NFS GETATTR: id={}", id);
 
-        // Check attribute cache first
+        // data.csv: always compute fresh size (NFS clients cache aggressively)
+        if id == DATA_CSV_ID {
+            let db = self.db.clone();
+            let view = CsvFileView::new(db);
+            let size = view.size().await.unwrap_or(0);
+            let attr = Self::file_attr(DATA_CSV_ID, size);
+            self.attr_cache.set(DATA_CSV_ID, attr).await;
+            return Ok(attr);
+        }
+
+        // Other files: check attribute cache first
         if let Some(cached_attr) = self.attr_cache.get(id).await {
             return Ok(cached_attr);
         }
@@ -459,9 +479,29 @@ impl NFSFileSystem for PosixLakeFilesystem {
             }
             // data.csv file
             3 => {
-                // Get current size from the CSV view
-                let view = CsvFileView::new(self.db.clone());
-                let csv_size = view.size().await.unwrap_or(0);
+                // Honor truncation requests — Windows copy /Y sends SETATTR size=0 before WRITE
+                let requested_size = match setattr.size {
+                    nfsserve::nfs::set_size3::size(s) => Some(s),
+                    _ => None,
+                };
+                eprintln!(
+                    "[DEBUG] SETATTR data.csv: requested_size={:?}",
+                    requested_size
+                );
+
+                let csv_size = if requested_size == Some(0) {
+                    // Truncation: report size 0 so the NFS client proceeds with WRITE
+                    info!("SETATTR: data.csv truncation requested, reporting size=0");
+                    // Clear content cache so the next WRITE sees correct old content
+                    if let Some(ref cache) = self.cache {
+                        let _ = cache.remove("csv:data").await;
+                    }
+                    0u64
+                } else {
+                    let view = CsvFileView::new(self.db.clone());
+                    view.size().await.unwrap_or(0)
+                };
+
                 let attr = fattr3 {
                     ftype: ftype3::NF3REG,
                     mode: 0o666,
@@ -477,6 +517,7 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     mtime: now_time,
                     ctime: now_time,
                 };
+                self.attr_cache.set(id, attr).await;
                 info!("SETATTR succeeded for data.csv (size={})", csv_size);
                 Ok(attr)
             }
@@ -639,14 +680,11 @@ impl NFSFileSystem for PosixLakeFilesystem {
         offset: u64,
         data: &[u8],
     ) -> std::result::Result<fattr3, nfsstat3> {
-        info!(
-            "NFS WRITE: id={}, offset={}, data_len={}",
+        eprintln!(
+            "[DEBUG] NFS WRITE: id={}, offset={}, data_len={}, preview={:?}",
             id,
             offset,
-            data.len()
-        );
-        debug!(
-            "NFS WRITE data preview: {:?}",
+            data.len(),
             String::from_utf8_lossy(&data[..data.len().min(100)])
         );
 
@@ -668,19 +706,18 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     None
                 };
 
-                // Don't hold lock across await - create temporary view
-                let db = self.db.clone();
-                let view = CsvFileView::new(db);
-
                 // Handle partial writes (append) by combining with existing content
                 let write_data = if offset > 0 {
                     // Get current content
                     let current = match &cached_content {
                         Some(c) => c.clone(),
-                        None => view.generate_csv().await.map_err(|e| {
-                            error!("Failed to get current content for append: {}", e);
-                            nfsstat3::NFS3ERR_IO
-                        })?,
+                        None => {
+                            let tmp_view = CsvFileView::new(self.db.clone());
+                            tmp_view.generate_csv().await.map_err(|e| {
+                                error!("Failed to get current content for append: {}", e);
+                                nfsstat3::NFS3ERR_IO
+                            })?
+                        }
                     };
 
                     let offset_usize = offset as usize;
@@ -713,50 +750,33 @@ impl NFSFileSystem for PosixLakeFilesystem {
                     String::from_utf8_lossy(&write_data[..write_data.len().min(100)])
                 );
 
+                // Synchronous write — merge uses cached Delta table (fast for local/cached ops)
+                let view = if let Some(ref tx) = self.event_tx {
+                    CsvFileView::with_events(self.db.clone(), tx.clone())
+                } else {
+                    CsvFileView::new(self.db.clone())
+                };
                 view.apply_write(&write_data, cached_content)
                     .await
                     .map_err(|e| {
                         error!("Write error: {}", e);
                         nfsstat3::NFS3ERR_IO
                     })?;
-                info!("NFS WRITE: apply_write completed successfully");
 
-                // UPDATE content cache after write (don't invalidate!)
-                // This keeps subsequent reads fast by avoiding CSV regeneration
+                // Update content cache with the write data itself — it represents the
+                // client's view of the file. For inserts, this is accurate after merge.
+                // For pure updates (async), the data rows are the same, just modified values.
                 if let Some(ref cache) = self.cache {
-                    // Generate fresh CSV content after write
-                    let fresh_csv = view.generate_csv().await.map_err(|e| {
-                        error!("Failed to generate CSV for cache: {}", e);
-                        nfsstat3::NFS3ERR_IO
-                    })?;
-                    let fresh_size = fresh_csv.len();
-                    info!(
-                        "NFS WRITE: fresh CSV after write ({} bytes): {:?}",
-                        fresh_size,
-                        String::from_utf8_lossy(&fresh_csv[..fresh_csv.len().min(200)])
-                    );
-
-                    // Update cache with new content
-                    if let Err(e) = cache.insert("csv:data".to_string(), fresh_csv).await {
-                        error!("Failed to update cache after write: {}", e);
-                        // Don't fail the write if cache update fails
-                    } else {
-                        info!(
-                            "Content cache UPDATED for data.csv after write ({} bytes)",
-                            fresh_size
-                        );
-                    }
+                    let _ = cache
+                        .insert("csv:data".to_string(), write_data.clone())
+                        .await;
                 }
 
-                // IMPORTANT: Update attr_cache with NEW file size after write
-                // We must return accurate file size or OS NFS clients will truncate reads!
-                let size = view.size().await.unwrap_or(0);
+                // Use write data size as estimate — avoids slow OneLake round-trip for size
+                let size = write_data.len() as u64;
                 let attr = Self::file_attr(DATA_CSV_ID, size);
                 self.attr_cache.set(DATA_CSV_ID, attr).await;
-                info!(
-                    "Write completed, attr cache updated with new size: {} bytes",
-                    size
-                );
+                info!("NFS WRITE: completed, size={} bytes", size);
 
                 Ok(attr)
             }
@@ -820,10 +840,28 @@ impl NFSFileSystem for PosixLakeFilesystem {
             return Err(nfsstat3::NFS3ERR_NOTDIR);
         }
 
-        // Don't allow creating data.csv (it's special)
+        // If creating data.csv, return existing handle (Windows copy /Y uses CREATE before WRITE)
         if dirid == DATA_DIR_ID && name == "data.csv" {
-            error!("Cannot create data.csv - it's a special file");
-            return Err(nfsstat3::NFS3ERR_EXIST);
+            info!("CREATE data.csv: returning existing file handle for overwrite");
+            let view = CsvFileView::new(self.db.clone());
+            let csv_size = view.size().await.unwrap_or(0);
+            let now_time = Self::now();
+            let attr = fattr3 {
+                ftype: ftype3::NF3REG,
+                mode: 0o666,
+                nlink: 1,
+                uid: 0,
+                gid: 0,
+                size: csv_size,
+                used: csv_size,
+                rdev: specdata3::default(),
+                fsid: 0,
+                fileid: DATA_CSV_ID,
+                atime: now_time,
+                mtime: now_time,
+                ctime: now_time,
+            };
+            return Ok((DATA_CSV_ID, attr));
         }
 
         // Check if file already exists

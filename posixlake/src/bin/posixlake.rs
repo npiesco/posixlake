@@ -62,7 +62,7 @@ struct Cli {
 enum Commands {
     /// Create a new Delta Lake database
     Create {
-        /// Path for the new database (local path or s3://bucket/prefix)
+        /// Path for the new database (local path, s3://bucket/prefix, or az://container/prefix)
         #[arg(value_name = "DB_PATH")]
         db_path: String,
 
@@ -103,11 +103,23 @@ enum Commands {
         /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
         #[arg(long)]
         secret_key: Option<String>,
+
+        /// Azure storage account name (or set AZURE_STORAGE_ACCOUNT_NAME env var)
+        #[arg(long)]
+        azure_account: Option<String>,
+
+        /// Azure storage account key (or set AZURE_STORAGE_ACCOUNT_KEY env var)
+        #[arg(long)]
+        azure_key: Option<String>,
+
+        /// Azure/Azurite endpoint URL (or set AZURITE_ENDPOINT env var)
+        #[arg(long)]
+        azure_endpoint: Option<String>,
     },
 
     /// Mount a database as a filesystem via NFS
     Mount {
-        /// Path to the database directory (local path or s3://bucket/prefix)
+        /// Path to the database directory (local path, s3://bucket/prefix, or az://container/prefix)
         #[arg(value_name = "DB_PATH")]
         db_path: String,
 
@@ -138,6 +150,18 @@ enum Commands {
         /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
         #[arg(long)]
         secret_key: Option<String>,
+
+        /// Azure storage account name (or set AZURE_STORAGE_ACCOUNT_NAME env var)
+        #[arg(long)]
+        azure_account: Option<String>,
+
+        /// Azure storage account key (or set AZURE_STORAGE_ACCOUNT_KEY env var)
+        #[arg(long)]
+        azure_key: Option<String>,
+
+        /// Azure/Azurite endpoint URL (or set AZURITE_ENDPOINT env var)
+        #[arg(long)]
+        azure_endpoint: Option<String>,
     },
 
     /// Unmount a mounted database
@@ -156,7 +180,7 @@ enum Commands {
 
     /// Check database health
     Health {
-        /// Path to the database (local path or s3://bucket/prefix)
+        /// Path to the database (local path, s3://bucket/prefix, or az://container/prefix)
         #[arg(value_name = "DB_PATH")]
         db_path: String,
 
@@ -179,11 +203,23 @@ enum Commands {
         /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
         #[arg(long)]
         secret_key: Option<String>,
+
+        /// Azure storage account name (or set AZURE_STORAGE_ACCOUNT_NAME env var)
+        #[arg(long)]
+        azure_account: Option<String>,
+
+        /// Azure storage account key (or set AZURE_STORAGE_ACCOUNT_KEY env var)
+        #[arg(long)]
+        azure_key: Option<String>,
+
+        /// Azure/Azurite endpoint URL (or set AZURITE_ENDPOINT env var)
+        #[arg(long)]
+        azure_endpoint: Option<String>,
     },
 
     /// Show database metrics
     Metrics {
-        /// Path to the database (local path or s3://bucket/prefix)
+        /// Path to the database (local path, s3://bucket/prefix, or az://container/prefix)
         #[arg(value_name = "DB_PATH")]
         db_path: String,
 
@@ -206,6 +242,53 @@ enum Commands {
         /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
         #[arg(long)]
         secret_key: Option<String>,
+
+        /// Azure storage account name (or set AZURE_STORAGE_ACCOUNT_NAME env var)
+        #[arg(long)]
+        azure_account: Option<String>,
+
+        /// Azure storage account key (or set AZURE_STORAGE_ACCOUNT_KEY env var)
+        #[arg(long)]
+        azure_key: Option<String>,
+
+        /// Azure/Azurite endpoint URL (or set AZURITE_ENDPOINT env var)
+        #[arg(long)]
+        azure_endpoint: Option<String>,
+    },
+
+    /// Query a database with SQL and print results
+    Query {
+        /// Path to the database (local, s3://, az://, or abfss://)
+        #[arg(value_name = "DB_PATH")]
+        db_path: String,
+
+        /// SQL query to execute
+        #[arg(value_name = "SQL")]
+        sql: String,
+
+        /// S3 endpoint URL (or set AWS_ENDPOINT_URL env var)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// S3 access key (or set AWS_ACCESS_KEY_ID env var)
+        #[arg(long)]
+        access_key: Option<String>,
+
+        /// S3 secret key (or set AWS_SECRET_ACCESS_KEY env var)
+        #[arg(long)]
+        secret_key: Option<String>,
+
+        /// Azure storage account name (or set AZURE_STORAGE_ACCOUNT_NAME env var)
+        #[arg(long)]
+        azure_account: Option<String>,
+
+        /// Azure storage account key (or set AZURE_STORAGE_ACCOUNT_KEY env var)
+        #[arg(long)]
+        azure_key: Option<String>,
+
+        /// Azure/Azurite endpoint URL (or set AZURITE_ENDPOINT env var)
+        #[arg(long)]
+        azure_endpoint: Option<String>,
     },
 
     /// Test S3/MinIO backend
@@ -227,10 +310,38 @@ enum Commands {
         secret_key: String,
     },
 
+    /// Test Azure Blob Storage / Azurite backend
+    AzureTest {
+        /// Azure URI (e.g., az://container/path)
+        #[arg(value_name = "AZURE_PATH")]
+        azure_path: String,
+
+        /// Azure storage account name (default: devstoreaccount1)
+        #[arg(long, default_value = "devstoreaccount1")]
+        account_name: String,
+
+        /// Azure storage account key (default: Azurite well-known key)
+        #[arg(
+            long,
+            default_value = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+        )]
+        account_key: String,
+
+        /// Azurite endpoint (default: http://127.0.0.1:10000)
+        #[arg(long, default_value = "http://127.0.0.1:10000")]
+        endpoint: String,
+    },
+
     /// Manage S3/MinIO local test environment
     S3 {
         #[command(subcommand)]
         command: S3Commands,
+    },
+
+    /// Manage Azure/Azurite local test environment
+    Azure {
+        #[command(subcommand)]
+        command: AzureCommands,
     },
 }
 
@@ -255,6 +366,39 @@ enum S3Commands {
     Stop {
         /// Container engine to use
         #[arg(long, value_enum, default_value = "docker")]
+        engine: S3Engine,
+
+        /// Stop mode: compose (docker-compose.yml)
+        #[arg(long, value_enum, default_value = "compose")]
+        mode: S3Mode,
+
+        /// Compose file path
+        #[arg(long, default_value = "docker-compose.yml")]
+        compose_file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum AzureCommands {
+    /// Start local Azurite for testing
+    Start {
+        /// Container engine to use
+        #[arg(long, value_enum, default_value = "podman")]
+        engine: S3Engine,
+
+        /// Start mode: compose (docker-compose.yml)
+        #[arg(long, value_enum, default_value = "compose")]
+        mode: S3Mode,
+
+        /// Compose file path
+        #[arg(long, default_value = "docker-compose.yml")]
+        compose_file: PathBuf,
+    },
+
+    /// Stop local Azurite
+    Stop {
+        /// Container engine to use
+        #[arg(long, value_enum, default_value = "podman")]
         engine: S3Engine,
 
         /// Stop mode: compose (docker-compose.yml)
@@ -296,8 +440,13 @@ async fn main() -> Result<()> {
             endpoint,
             access_key,
             secret_key,
+            azure_account,
+            azure_key,
+            azure_endpoint,
         } => {
             let is_s3 = db_path.starts_with("s3://");
+            let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             match (schema, from_csv, from_parquet) {
                 (Some(schema_str), None, None) => {
                     // Create with explicit schema
@@ -312,6 +461,27 @@ async fn main() -> Result<()> {
                             &ep,
                             &ak,
                             &sk,
+                        )
+                        .await?
+                    } else if is_azure {
+                        let (acct, key, ep) =
+                            resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
+                        DatabaseOps::create_with_azure(
+                            &db_path,
+                            Arc::new(parsed_schema),
+                            &acct,
+                            &key,
+                            &ep,
+                        )
+                        .await?
+                    } else if is_onelake {
+                        let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                        DatabaseOps::create_with_onelake(
+                            &db_path,
+                            Arc::new(parsed_schema),
+                            &cid,
+                            &csecret,
+                            &tid,
                         )
                         .await?
                     } else if auth {
@@ -385,14 +555,26 @@ async fn main() -> Result<()> {
             endpoint,
             access_key,
             secret_key,
+            azure_account,
+            azure_key,
+            azure_endpoint,
         } => {
             let is_s3 = db_path.starts_with("s3://");
+            let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             // Open database with optional credentials
             eprintln!("Opening database: {}", db_path);
             let credentials = resolve_credentials(user, password);
             let db = if is_s3 {
                 let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
                 Arc::new(DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?)
+            } else if is_azure {
+                let (acct, key, ep) =
+                    resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
+                Arc::new(DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?)
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                Arc::new(DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?)
             } else {
                 let local_path = PathBuf::from(&db_path);
                 match credentials {
@@ -707,12 +889,24 @@ async fn main() -> Result<()> {
             endpoint,
             access_key,
             secret_key,
+            azure_account,
+            azure_key,
+            azure_endpoint,
         } => {
             let is_s3 = db_path.starts_with("s3://");
+            let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             let credentials = resolve_credentials(user, password);
             let db = if is_s3 {
                 let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
                 DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?
+            } else if is_azure {
+                let (acct, key, ep) =
+                    resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
+                DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?
             } else {
                 let local_path = PathBuf::from(&db_path);
                 match credentials {
@@ -736,12 +930,24 @@ async fn main() -> Result<()> {
             endpoint,
             access_key,
             secret_key,
+            azure_account,
+            azure_key,
+            azure_endpoint,
         } => {
             let is_s3 = db_path.starts_with("s3://");
+            let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
             let credentials = resolve_credentials(user, password);
             let db = if is_s3 {
                 let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
                 DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?
+            } else if is_azure {
+                let (acct, key, ep) =
+                    resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
+                DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?
             } else {
                 let local_path = PathBuf::from(&db_path);
                 match credentials {
@@ -755,6 +961,44 @@ async fn main() -> Result<()> {
             };
             let metrics = db.get_metrics().await;
             println!("{}", serde_json::to_string_pretty(&metrics)?);
+            Ok(())
+        }
+
+        Commands::Query {
+            db_path,
+            sql,
+            endpoint,
+            access_key,
+            secret_key,
+            azure_account,
+            azure_key,
+            azure_endpoint,
+        } => {
+            let is_s3 = db_path.starts_with("s3://");
+            let is_azure = db_path.starts_with("az://");
+            let is_onelake = db_path.starts_with("abfss://");
+            let db = if is_s3 {
+                let (ep, ak, sk) = resolve_s3_credentials(endpoint, access_key, secret_key)?;
+                DatabaseOps::open_with_s3(&db_path, &ep, &ak, &sk).await?
+            } else if is_azure {
+                let (acct, key, ep) =
+                    resolve_azure_credentials(azure_account, azure_key, azure_endpoint)?;
+                DatabaseOps::open_with_azure(&db_path, &acct, &key, &ep).await?
+            } else if is_onelake {
+                let (cid, csecret, tid) = resolve_onelake_credentials()?;
+                DatabaseOps::open_with_onelake(&db_path, &cid, &csecret, &tid).await?
+            } else {
+                let local_path = PathBuf::from(&db_path);
+                DatabaseOps::open(&local_path).await?
+            };
+            let results = db.query(&sql).await?;
+            if results.is_empty() {
+                eprintln!("(no results)");
+            } else {
+                use arrow::util::pretty::pretty_format_batches;
+                let formatted = pretty_format_batches(&results)?;
+                println!("{}", formatted);
+            }
             Ok(())
         }
 
@@ -944,6 +1188,167 @@ async fn main() -> Result<()> {
                 }
                 run_command_with_fallback(engine, &program, &args)?;
                 eprintln!("S3/MinIO stopped.");
+                Ok(())
+            }
+        },
+
+        Commands::AzureTest {
+            azure_path,
+            account_name,
+            account_key,
+            endpoint,
+        } => {
+            use arrow::array::{Int32Array, StringArray};
+            use arrow::datatypes::{DataType, Field, Schema};
+            use arrow::record_batch::RecordBatch;
+
+            eprintln!("=== Testing Azure/Azurite backend ===");
+            eprintln!("  Azure Path: {}", azure_path);
+            eprintln!("  Endpoint: {}", endpoint);
+            eprintln!();
+
+            let schema = Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Int32, false),
+                Field::new("sensor", DataType::Utf8, false),
+                Field::new("reading", DataType::Int32, false),
+                Field::new("location", DataType::Utf8, false),
+            ]));
+
+            // Create database on Azure
+            eprintln!("[1/4] Creating database on Azure...");
+            if is_local_endpoint(&endpoint)
+                && !wait_for_endpoint(&endpoint, std::time::Duration::from_secs(2))
+            {
+                return Err(Error::Other(format!(
+                    "Azurite not reachable at {}. Start it with: posixlake azure start",
+                    endpoint
+                )));
+            }
+            let db = match DatabaseOps::create_with_azure(
+                &azure_path,
+                schema.clone(),
+                &account_name,
+                &account_key,
+                &endpoint,
+            )
+            .await
+            {
+                Ok(db) => db,
+                Err(err) if should_open_existing_db(&err) => {
+                    eprintln!("      Database already exists; opening...");
+                    DatabaseOps::open_with_azure(
+                        &azure_path,
+                        &account_name,
+                        &account_key,
+                        &endpoint,
+                    )
+                    .await?
+                }
+                Err(err) => return Err(err),
+            };
+            eprintln!("      ✓ Database created");
+            eprintln!();
+
+            // Insert test data
+            eprintln!("[2/4] Inserting test data...");
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from(vec![1, 2, 3])),
+                    Arc::new(StringArray::from(vec![
+                        "temp_01",
+                        "humidity_02",
+                        "pressure_03",
+                    ])),
+                    Arc::new(Int32Array::from(vec![72, 45, 1013])),
+                    Arc::new(StringArray::from(vec![
+                        "plant_north",
+                        "plant_south",
+                        "plant_east",
+                    ])),
+                ],
+            )?;
+
+            let txn_id = db.insert(batch).await?;
+            eprintln!("      ✓ Inserted 3 rows (transaction {})", txn_id);
+            eprintln!();
+
+            // Query data
+            eprintln!("[3/4] Querying data...");
+            let results = db.query("SELECT * FROM data ORDER BY id").await?;
+            eprintln!("      ✓ Query returned {} batch(es)", results.len());
+
+            if !results.is_empty() {
+                let batch = &results[0];
+                eprintln!("      ✓ Rows: {}", batch.num_rows());
+                eprintln!("      ✓ Columns: {}", batch.num_columns());
+
+                use arrow::util::pretty::pretty_format_batches;
+                let formatted = pretty_format_batches(&results)?;
+                eprintln!();
+                eprintln!("{}", formatted);
+            }
+            eprintln!();
+
+            // Test reopen
+            eprintln!("[4/4] Reopening database from Azure...");
+            let db2 =
+                DatabaseOps::open_with_azure(&azure_path, &account_name, &account_key, &endpoint)
+                    .await?;
+            eprintln!("      ✓ Database reopened");
+            eprintln!();
+
+            let results2 = db2.query("SELECT COUNT(*) as count FROM data").await?;
+            if !results2.is_empty() {
+                use arrow::util::pretty::pretty_format_batches;
+                let formatted = pretty_format_batches(&results2)?;
+                eprintln!("{}", formatted);
+            }
+            eprintln!();
+
+            eprintln!("=== Azure/Azurite backend test PASSED ===");
+            Ok(())
+        }
+
+        Commands::Azure { command } => match command {
+            AzureCommands::Start {
+                engine,
+                mode: S3Mode::Compose,
+                compose_file,
+            } => {
+                eprintln!("Starting Azurite via compose...");
+                let compose_file = resolve_default_compose_file_from(&compose_file);
+                let (program, args) = build_compose_up_azurite_command(engine, &compose_file);
+                #[cfg(target_os = "windows")]
+                {
+                    if engine == S3Engine::Podman {
+                        run_wsl_command(engine, &args)?;
+                        eprintln!("Azurite started.");
+                        return Ok(());
+                    }
+                }
+                run_command_with_fallback(engine, &program, &args)?;
+                eprintln!("Azurite started.");
+                Ok(())
+            }
+            AzureCommands::Stop {
+                engine,
+                mode: S3Mode::Compose,
+                compose_file,
+            } => {
+                eprintln!("Stopping Azurite via compose...");
+                let compose_file = resolve_default_compose_file_from(&compose_file);
+                let (program, args) = build_compose_down_azurite_command(engine, &compose_file);
+                #[cfg(target_os = "windows")]
+                {
+                    if engine == S3Engine::Podman {
+                        run_wsl_command(engine, &args)?;
+                        eprintln!("Azurite stopped.");
+                        return Ok(());
+                    }
+                }
+                run_command_with_fallback(engine, &program, &args)?;
+                eprintln!("Azurite stopped.");
                 Ok(())
             }
         },
@@ -1448,6 +1853,48 @@ fn engine_program(engine: S3Engine) -> String {
     }
 }
 
+fn build_compose_up_azurite_command(
+    engine: S3Engine,
+    compose_file: &Path,
+) -> (String, Vec<String>) {
+    (
+        engine_program(engine),
+        vec![
+            "compose".to_string(),
+            "-f".to_string(),
+            compose_file.to_string_lossy().to_string(),
+            "up".to_string(),
+            "-d".to_string(),
+            "azurite".to_string(),
+        ],
+    )
+}
+
+fn build_compose_down_azurite_command(
+    engine: S3Engine,
+    compose_file: &Path,
+) -> (String, Vec<String>) {
+    (
+        engine_program(engine),
+        vec![
+            "compose".to_string(),
+            "-f".to_string(),
+            compose_file.to_string_lossy().to_string(),
+            "rm".to_string(),
+            "-sf".to_string(),
+            "azurite".to_string(),
+            "azurite-init".to_string(),
+        ],
+    )
+}
+
+fn resolve_default_compose_file_from(compose_file: &Path) -> PathBuf {
+    if compose_file.exists() {
+        return compose_file.to_path_buf();
+    }
+    resolve_default_compose_file()
+}
+
 /// Parse schema string in format "col1:Type1,col2:Type2,..."
 /// Supported types: Int64, Int32, Float64, Float32, String, Boolean
 fn parse_schema(schema_str: &str) -> Result<Schema> {
@@ -1546,4 +1993,54 @@ fn resolve_s3_credentials(
             )
         })?;
     Ok((endpoint, access_key, secret_key))
+}
+
+/// Resolve Azure credentials from flags or AZURE_* env vars.
+/// Returns (account_name, account_key, endpoint).
+fn resolve_azure_credentials(
+    account_flag: Option<String>,
+    key_flag: Option<String>,
+    endpoint_flag: Option<String>,
+) -> Result<(String, String, String)> {
+    let account_name = account_flag
+        .or_else(|| std::env::var("AZURE_STORAGE_ACCOUNT_NAME").ok())
+        .ok_or_else(|| {
+            Error::InvalidOperation(
+                "Azure account name required: use --azure-account or set AZURE_STORAGE_ACCOUNT_NAME"
+                    .to_string(),
+            )
+        })?;
+    let account_key = key_flag
+        .or_else(|| std::env::var("AZURE_STORAGE_ACCOUNT_KEY").ok())
+        .ok_or_else(|| {
+            Error::InvalidOperation(
+                "Azure account key required: use --azure-key or set AZURE_STORAGE_ACCOUNT_KEY"
+                    .to_string(),
+            )
+        })?;
+    let endpoint = endpoint_flag
+        .or_else(|| std::env::var("AZURITE_ENDPOINT").ok())
+        .unwrap_or_else(|| "http://127.0.0.1:10000".to_string());
+    Ok((account_name, account_key, endpoint))
+}
+
+/// Resolve OneLake/Fabric credentials from AZURE_STORAGE_* env vars.
+/// Returns (client_id, client_secret, tenant_id).
+fn resolve_onelake_credentials() -> Result<(String, String, String)> {
+    let client_id = std::env::var("AZURE_STORAGE_CLIENT_ID").map_err(|_| {
+        Error::InvalidOperation(
+            "OneLake client ID required: set AZURE_STORAGE_CLIENT_ID env var".to_string(),
+        )
+    })?;
+    let client_secret = std::env::var("AZURE_STORAGE_CLIENT_SECRET").map_err(|_| {
+        Error::InvalidOperation(
+            "OneLake client secret required: set AZURE_STORAGE_CLIENT_SECRET env var".to_string(),
+        )
+    })?;
+    let tenant_id = std::env::var("AZURE_STORAGE_TENANT_ID").map_err(|_| {
+        Error::InvalidOperation(
+            "OneLake tenant ID required: set AZURE_STORAGE_TENANT_ID env var".to_string(),
+        )
+    })?;
+    Ok((client_id, client_secret, tenant_id))
 }

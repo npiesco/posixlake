@@ -32,6 +32,8 @@ pub struct CsvFileView {
     db: Arc<DatabaseOps>,
     /// Optional: specific file to query (if None, query all data)
     file_path: Option<String>,
+    /// Event channel for merge commit notifications
+    event_tx: Option<tokio::sync::broadcast::Sender<crate::nfs::NfsEvent>>,
 }
 
 impl CsvFileView {
@@ -41,6 +43,20 @@ impl CsvFileView {
         CsvFileView {
             db,
             file_path: None,
+            event_tx: None,
+        }
+    }
+
+    /// Create a new CSV file view with an event channel
+    pub fn with_events(
+        db: Arc<DatabaseOps>,
+        event_tx: tokio::sync::broadcast::Sender<crate::nfs::NfsEvent>,
+    ) -> Self {
+        debug!("Creating CSV file view with event channel");
+        CsvFileView {
+            db,
+            file_path: None,
+            event_tx: Some(event_tx),
         }
     }
 
@@ -53,6 +69,7 @@ impl CsvFileView {
         CsvFileView {
             db,
             file_path: Some(file_path),
+            event_tx: None,
         }
     }
 
@@ -63,13 +80,18 @@ impl CsvFileView {
 
         // Query data - either all data or specific file
         let batches = if let Some(ref file_path) = self.file_path {
-            // Query specific Parquet file
             debug!("Querying specific file: {}", file_path);
             self.db.query_file(file_path).await?
         } else {
-            // Query all data from the database
             self.db.query("SELECT * FROM data").await?
         };
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        eprintln!(
+            "[DEBUG] generate_csv: {} batches, {} total rows",
+            batches.len(),
+            total_rows
+        );
 
         if batches.is_empty() {
             debug!("No data in database, returning empty CSV with headers only");
@@ -602,15 +624,15 @@ impl CsvFileView {
     async fn handle_csv_overwrite(&self, old_csv: &str, new_csv: &str) -> Result<()> {
         let overwrite_start = std::time::Instant::now();
         info!("Processing CSV overwrite with UPDATE/DELETE/INSERT detection (MERGE)");
-        info!(
-            "handle_csv_overwrite: old_csv ({} bytes): {:?}",
+        eprintln!(
+            "[DEBUG] handle_csv_overwrite: old_csv ({} bytes): {:?}",
             old_csv.len(),
-            &old_csv[..old_csv.len().min(100)]
+            &old_csv[..old_csv.len().min(200)]
         );
-        info!(
-            "handle_csv_overwrite: new_csv ({} bytes): {:?}",
+        eprintln!(
+            "[DEBUG] handle_csv_overwrite: new_csv ({} bytes): {:?}",
             new_csv.len(),
-            &new_csv[..new_csv.len().min(100)]
+            &new_csv[..new_csv.len().min(200)]
         );
 
         let schema = self.db.schema();
@@ -691,9 +713,29 @@ impl CsvFileView {
             delete_ids.len()
         );
 
+        eprintln!(
+            "[DEBUG] Changes detected: {} inserts, {} updates, {} deletes",
+            insert_ids.len(),
+            update_ids.len(),
+            delete_ids.len()
+        );
+
+        // Cursor-based detection: if there are both inserts AND deletes, the NFS client
+        // likely has stale cached content (Windows Add-Content pattern). The client sends
+        // its cached view + new row, missing rows that were added by concurrent writes.
+        // Suppress deletes to prevent row loss — only allow deletes when there are NO inserts
+        // (a pure delete operation where the client intentionally removed rows).
+        if !delete_ids.is_empty() && !insert_ids.is_empty() {
+            info!(
+                "Suppressing {} deletes — concurrent inserts detected (stale NFS client cache)",
+                delete_ids.len(),
+            );
+            delete_ids.clear();
+        }
+
         // If no changes, nothing to do
         if insert_ids.is_empty() && update_ids.is_empty() && delete_ids.is_empty() {
-            info!("No changes detected, skipping MERGE");
+            eprintln!("[DEBUG] No changes detected, skipping MERGE");
             return Ok(());
         }
 
@@ -703,6 +745,57 @@ impl CsvFileView {
 
         // Execute MERGE for INSERT/UPDATE if needed
         let mut metrics = crate::delta_lake::merge::MergeMetrics::default();
+
+        // Pure updates with no inserts/deletes: run in background to avoid NFS semaphore timeout.
+        // The cached table is not affected (update returns same row count).
+        if !update_ids.is_empty() && insert_ids.is_empty() && delete_ids.is_empty() {
+            let source_batch =
+                self.build_merge_source_batch(&new_batch, &insert_ids, &update_ids)?;
+            if source_batch.num_rows() > 0 {
+                let db = self.db.clone();
+                let id_col = id_column_name.to_string();
+                let event_tx = self.event_tx.clone();
+                tokio::spawn(async move {
+                    let merge_result = async {
+                        let m = db
+                            .merge()
+                            .await?
+                            .with_source(source_batch, "source")
+                            .on(format!("target.{} = source.{}", id_col, id_col))
+                            .when_matched_update()
+                            .condition("source._op = 'UPDATE'")
+                            .set_all()
+                            .when_not_matched_insert()
+                            .condition("source._op = 'INSERT'")
+                            .values_all()
+                            .execute()
+                            .await?;
+                        Ok::<_, crate::error::Error>(m)
+                    };
+                    match merge_result.await {
+                        Ok(m) => {
+                            if let Some(tx) = &event_tx {
+                                let event = crate::nfs::NfsEvent {
+                                    event_type: "MERGE_COMPLETE".to_string(),
+                                    rows_inserted: m.rows_inserted,
+                                    rows_updated: m.rows_updated,
+                                    rows_deleted: 0,
+                                };
+                                let _ = tx.send(event);
+                            }
+                            eprintln!(
+                                "[EVENT] MERGE_COMPLETE inserts={} updates={} deletes=0",
+                                m.rows_inserted, m.rows_updated,
+                            );
+                        }
+                        Err(e) => error!("Background update merge failed: {}", e),
+                    }
+                    db.invalidate_cached_table().await;
+                });
+                info!("Pure update merge spawned in background");
+                return Ok(());
+            }
+        }
 
         if !insert_ids.is_empty() || !update_ids.is_empty() {
             // Build source data with _op column for MERGE
@@ -755,6 +848,9 @@ impl CsvFileView {
             info!("Deleted {} rows", deleted_count);
         }
 
+        // Invalidate cached table so subsequent reads see the merge result
+        self.db.invalidate_cached_table().await;
+
         let merge_duration = merge_start.elapsed();
         let total_duration = overwrite_start.elapsed();
 
@@ -765,6 +861,22 @@ impl CsvFileView {
             delete_ids.len(),
             merge_duration,
             total_duration
+        );
+
+        if let Some(tx) = &self.event_tx {
+            let event = crate::nfs::NfsEvent {
+                event_type: "MERGE_COMPLETE".to_string(),
+                rows_inserted: metrics.rows_inserted,
+                rows_updated: metrics.rows_updated,
+                rows_deleted: delete_ids.len(),
+            };
+            let _ = tx.send(event);
+        }
+        eprintln!(
+            "[EVENT] MERGE_COMPLETE inserts={} updates={} deletes={}",
+            metrics.rows_inserted,
+            metrics.rows_updated,
+            delete_ids.len()
         );
 
         Ok(())

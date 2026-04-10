@@ -1,81 +1,90 @@
 # posixlake CLI Demo
 
-Recorded dual-surface CLI demo for `posixlake`:
+Narrated 9-scene video demonstrating posixlake with Microsoft Fabric OneLake, Windows NFS, WSL Linux, and S3.
 
-- **Native Windows** using the Windows `posixlake-cli.exe` and PowerShell
-- **WSL2 Linux** using the Linux `posixlake-cli` and POSIX tools
-- **Screen capture** via candycam
-- **Narration** via Azure Speech TTS
-- **Final mux** via `ffmpeg`
+## Final Video
 
-The demo shows the same Delta Lake table from both environments, with every command printed on screen.
+**`demo/output/posixlake_cli_demo_final.mp4`** — narrated, concatenated, ready to publish.
 
-## What it demonstrates
+## Scenes
 
-1. Windows CLI creates and mounts a database to a drive letter.
-2. PowerShell reads `data.csv`, appends rows, and performs a full-file overwrite that becomes a MERGE.
-3. WSL mounts the exact same database directory with the Linux binary.
-4. POSIX tools in WSL (`cat`, `grep`, `awk`, `sed`, `echo`) operate on the same live table.
+| # | Scene | What happens |
+|---|-------|-------------|
+| 0 | **Intro** | Title card, project overview |
+| 1 | **Fabric Origin** | Connect to Fabric OneLake lakehouse, verify empty table |
+| 2 | **Windows Server** | Start NFS server on Windows, mount to `Y:\` |
+| 3 | **Windows Client** | PowerShell writes 6 IoT sensor rows via NFS, flags `temp_01` → `TEMP_01` (anomaly) |
+| 4 | **WSL Server** | Start NFS server on Linux (WSL), mount same database |
+| 5 | **WSL Client** | POSIX tools (`cat`, `grep`, `sed`) detect anomaly, flip `TEMP_01` → `temp_01` (resolved) |
+| 6 | **S3 Interlude** | Same table accessed via S3-compatible storage |
+| 7 | **Fabric Homecoming** | Query Fabric OneLake — all 6 rows present, anomaly resolved |
+| 8 | **Outro** | Title card, links |
+
+## Architecture
+
+- **Per-window recording** via candycam using PID-based HWND matching (`RECORD_WINDOW_PID`)
+- **Narration** via Azure Speech TTS with SSML pronunciation hints
+- **Concat** via ffmpeg filter_complex with scale+pad normalization
+- **Validation gates** after scenes 1, 3, 5, 7 — exact row count, sensor names, schema checks
 
 ## Requirements
 
-- Windows build exists at `target/release/posixlake-cli.exe`
-- WSL Linux build exists at `target/release/posixlake-cli`
-- WSL distro available, default: `Ubuntu`
-- WSL passwordless sudo for mount / umount flow
+- Windows build: `target/release/posixlake-cli.exe`
+- WSL Linux build: `target/release/posixlake-cli`
+- WSL distro (default: `Ubuntu`), passwordless sudo for mount/umount
 - `ffmpeg` and `ffprobe` on `PATH`
 - candycam `capture` wheel installed into the uv environment
-- `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` or `FOUNDRY_API_KEY` + `FOUNDRY_REGION`
+- `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` (or `FOUNDRY_API_KEY` + `FOUNDRY_REGION`)
+- Fabric OneLake credentials in `demo/.env` (see `config.py`)
 
-## Setup with uv
-
-From [demo/](demo):
+## Setup
 
 ```powershell
+cd demo
 uv sync
-uv pip install C:\Users\npiesco\forge\agents\demo-orchestrator\vendor\wheels\capture-0.1.0-cp313-cp313-win_arm64.whl
+uv pip install vendor\wheels\capture-0.1.0-cp313-cp313-win_arm64.whl
 ```
 
-If the wheel path differs on this machine, point `uv pip install` at the correct file.
-
-## Build both binaries
-
-Native Windows:
+## Build Both Binaries
 
 ```powershell
+# Windows
 cargo build --release -p posixlake
-```
 
-WSL Linux:
-
-```powershell
+# WSL Linux
 wsl -d Ubuntu -- bash -lc 'cd /mnt/c/Users/npiesco/posixlake && cargo build --release -p posixlake'
 ```
 
-## Run the required dry run first
+## Run
+
+### Dry run (headless, validates all 4 gates)
 
 ```powershell
-uv run python demo/orchestrate.py dry-run
+uv run python orchestrate.py dry-run
 ```
 
-This executes the full workflow headlessly and writes timing data to [demo/output/timings.json](output/timings.json).
-
-## Record the real demo
+### Record (opens windows, captures video, generates narration)
 
 ```powershell
-uv run python demo/orchestrate.py record
+uv run python orchestrate.py record
 ```
 
-Artifacts:
+## Output Artifacts
 
-- [demo/output/posixlake_cli_demo.mp4](output/posixlake_cli_demo.mp4)
-- [demo/output/posixlake_cli_demo_narration.wav](output/posixlake_cli_demo_narration.wav)
-- [demo/output/posixlake_cli_demo_final.mp4](output/posixlake_cli_demo_final.mp4)
-- [demo/output/timings.json](output/timings.json)
-- [demo/output/actual_timings.json](output/actual_timings.json)
+| File | Description |
+|------|-------------|
+| `output/posixlake_cli_demo_final.mp4` | Final narrated video |
+| `output/posixlake_cli_demo.mp4` | Video without narration |
+| `output/posixlake_cli_demo_narration.wav` | Full narration audio track |
+| `output/actual_timings.json` | Per-scene durations |
+| `output/seg_*.mp4` | Individual scene segments |
 
-## Notes
+## Files
 
-- The Windows and WSL scenes are recorded by **window title**, not PID.
-- Record mode regenerates scripts, records fresh segments, then pads narration to the measured segment durations.
-- The WSL flow assumes the Linux binary can access the repo at `/mnt/c/...`.
+| File | Purpose |
+|------|---------|
+| `orchestrate.py` | Main entry point — dry-run, record, concat, narration mux |
+| `scene_runner.py` | Per-scene CLI commands (PowerShell, WSL bash) |
+| `candycam_helper.py` | Subprocess protocol for per-window PID recording |
+| `narration.py` | SSML narration text per scene |
+| `config.py` | Paths, Fabric credentials, window titles, segment paths |

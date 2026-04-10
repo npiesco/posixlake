@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+posixlake_cli_demo.egg-info/PKG-INFO
+posixlake_cli_demo.egg-info/SOURCES.txt
+posixlake_cli_demo.egg-info/dependency_links.txt
+posixlake_cli_demo.egg-info/requires.txt
+posixlake_cli_demo.egg-info/top_level.txt

@@ -76,9 +76,12 @@ pub struct DatabaseOps {
     /// Base path for database
     base_path: PathBuf,
 
-    /// S3 configuration (if using S3 backend)
+    /// Cloud storage configuration (S3, Azure, OneLake)
     s3_url: Option<String>,
     s3_storage_options: Option<std::collections::HashMap<String, String>>,
+
+    /// Cached Delta Lake table (avoids re-opening on every operation)
+    cached_table: Arc<tokio::sync::Mutex<Option<deltalake::DeltaTable>>>,
 
     /// Database schema (cached from Delta Lake)
     pub schema: SchemaRef,
@@ -298,6 +301,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -416,6 +420,7 @@ impl DatabaseOps {
             audit_logger,
             role_manager,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(primary_key),
         })
     }
@@ -458,11 +463,21 @@ impl DatabaseOps {
                 .await
                 .map_err(Error::DeltaTable)?;
 
-        let _table: DeltaTable = ops
+        let _table: DeltaTable = match ops
             .create()
             .with_columns(delta_schema.fields().cloned())
             .await
-            .map_err(Error::DeltaTable)?;
+        {
+            Ok(table) => table,
+            Err(e)
+                if e.to_string().contains("TableAlreadyExists")
+                    || e.to_string().contains("already exists") =>
+            {
+                info!("Delta Lake table already exists on S3, opening existing");
+                return Self::open_with_s3(s3_path, endpoint, access_key, secret_key).await;
+            }
+            Err(e) => return Err(Error::DeltaTable(e)),
+        };
 
         info!("Delta Lake table created on S3");
 
@@ -485,6 +500,7 @@ impl DatabaseOps {
             audit_logger: None,
             role_manager: None,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
@@ -565,11 +581,352 @@ impl DatabaseOps {
             audit_logger,
             role_manager,
             batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
             primary_key: std::sync::Mutex::new(None),
         })
     }
 
-    /// Helper: Convert Arrow DataType to Delta Lake DataType
+    /// Create a Delta Lake database with Azure Blob Storage / ADLS Gen2 backend
+    /// Delta Lake tables can be stored directly on Azure-compatible storage
+    pub async fn create_with_azure(
+        azure_path: &str,
+        schema: SchemaRef,
+        account_name: &str,
+        account_key: &str,
+        endpoint: &str,
+    ) -> Result<Self> {
+        use crate::storage::azure::{
+            create_delta_storage_options, ensure_container_exists, get_azure_cache_path,
+            parse_azure_url, parse_container_name,
+        };
+        use deltalake::kernel::{StructField, StructType};
+        use deltalake::DeltaTable;
+
+        info!("Creating Delta Lake database on Azure at: {}", azure_path);
+
+        // Ensure the Azure container exists (auto-create if needed)
+        let container = parse_container_name(azure_path)?;
+        ensure_container_exists(&container, account_name, account_key, endpoint).await?;
+
+        // Configure Azure storage options using helper
+        let storage_options =
+            create_delta_storage_options(account_name, account_key, Some(endpoint));
+
+        // Convert Arrow schema to Delta Lake schema
+        let mut delta_fields = Vec::new();
+        for field in schema.fields() {
+            let delta_type = Self::arrow_to_delta_type(field.data_type())?;
+            delta_fields.push(StructField::new(
+                field.name().clone(),
+                delta_type,
+                field.is_nullable(),
+            ));
+        }
+        let delta_schema = StructType::try_new(delta_fields)
+            .map_err(|e| Error::Other(format!("Failed to create Delta schema: {}", e)))?;
+
+        // Create Delta table on Azure
+        let azure_url = parse_azure_url(azure_path)?;
+        let ops = DeltaTable::try_from_url_with_storage_options(
+            azure_url.clone(),
+            storage_options.clone(),
+        )
+        .await
+        .map_err(Error::DeltaTable)?;
+
+        let _table: DeltaTable = match ops
+            .create()
+            .with_columns(delta_schema.fields().cloned())
+            .await
+        {
+            Ok(table) => table,
+            Err(e)
+                if e.to_string().contains("TableAlreadyExists")
+                    || e.to_string().contains("already exists") =>
+            {
+                info!("Delta Lake table already exists on Azure, opening existing");
+                return Self::open_with_azure(azure_path, account_name, account_key, endpoint)
+                    .await;
+            }
+            Err(e) => return Err(Error::DeltaTable(e)),
+        };
+
+        info!("Delta Lake table created on Azure");
+
+        // Use local temp directory for caching
+        let base_path = get_azure_cache_path(azure_path);
+        std::fs::create_dir_all(&base_path)?;
+
+        let metrics = Arc::new(MetricsTracker::new());
+        let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
+
+        Ok(Self {
+            base_path,
+            s3_url: Some(azure_path.to_string()),
+            s3_storage_options: Some(storage_options),
+            schema,
+            metrics,
+            data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
+            auth_context: None,
+            user_store: None,
+            audit_logger: None,
+            role_manager: None,
+            batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
+            primary_key: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Open an existing Delta Lake database from Azure Blob Storage / ADLS Gen2 backend
+    pub async fn open_with_azure(
+        azure_path: &str,
+        account_name: &str,
+        account_key: &str,
+        endpoint: &str,
+    ) -> Result<Self> {
+        use crate::storage::azure::{
+            create_delta_storage_options, get_azure_cache_path, parse_azure_url,
+        };
+        use deltalake::open_table_with_storage_options;
+
+        info!("Opening Delta Lake database from Azure at: {}", azure_path);
+
+        // Configure Azure storage options using helper
+        let storage_options =
+            create_delta_storage_options(account_name, account_key, Some(endpoint));
+
+        // Open Delta table from Azure
+        let azure_url = parse_azure_url(azure_path)?;
+        let table = open_table_with_storage_options(azure_url, storage_options.clone())
+            .await
+            .map_err(Error::DeltaTable)?;
+
+        // Get schema from Delta table
+        let snapshot = table.snapshot().map_err(Error::DeltaTable)?;
+        let delta_schema = snapshot.schema();
+
+        // Convert to Arrow schema
+        let arrow_fields: Result<Vec<_>> = delta_schema
+            .fields()
+            .map(|field| {
+                let arrow_type = Self::delta_to_arrow_type(field.data_type())?;
+                Ok(arrow::datatypes::Field::new(
+                    field.name(),
+                    arrow_type,
+                    field.is_nullable(),
+                ))
+            })
+            .collect();
+
+        let schema = Arc::new(arrow::datatypes::Schema::new(arrow_fields?));
+
+        info!(
+            "Opened Delta Lake from Azure with {} fields",
+            schema.fields().len()
+        );
+
+        // Use local temp directory for caching
+        let base_path = get_azure_cache_path(azure_path);
+        std::fs::create_dir_all(&base_path)?;
+
+        let metrics = Arc::new(MetricsTracker::new());
+        let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
+        let users_path = base_path.join("_metadata").join("users.json");
+        let (user_store, audit_logger, role_manager) = if users_path.exists() {
+            let loaded_user_store = crate::security::UserStore::load(&users_path)?;
+            let audit_path = base_path.join("_metadata").join("audit.json");
+            (
+                Some(Arc::new(tokio::sync::Mutex::new(loaded_user_store))),
+                Some(Arc::new(crate::security::AuditLogger::new(audit_path)?)),
+                Some(Arc::new(crate::security::RoleManager::new())),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        Ok(Self {
+            base_path,
+            s3_url: Some(azure_path.to_string()),
+            s3_storage_options: Some(storage_options),
+            schema,
+            metrics,
+            data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
+            auth_context: None,
+            user_store,
+            audit_logger,
+            role_manager,
+            batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
+            primary_key: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Create a Delta Lake database on Microsoft Fabric OneLake
+    /// Uses Service Principal (client_id + client_secret + tenant_id) for Entra ID auth
+    /// Path format: `abfss://<workspace-id>@onelake.dfs.fabric.microsoft.com/<lakehouse-id>/Tables/<table>`
+    pub async fn create_with_onelake(
+        onelake_path: &str,
+        schema: SchemaRef,
+        client_id: &str,
+        client_secret: &str,
+        tenant_id: &str,
+    ) -> Result<Self> {
+        use crate::storage::azure::{
+            create_delta_storage_options_sp, get_azure_cache_path, parse_azure_url,
+        };
+        use deltalake::kernel::{StructField, StructType};
+        use deltalake::DeltaTable;
+
+        info!(
+            "Creating Delta Lake database on Fabric OneLake at: {}",
+            onelake_path
+        );
+
+        let storage_options = create_delta_storage_options_sp(client_id, client_secret, tenant_id);
+
+        let mut delta_fields = Vec::new();
+        for field in schema.fields() {
+            let delta_type = Self::arrow_to_delta_type(field.data_type())?;
+            delta_fields.push(StructField::new(
+                field.name().clone(),
+                delta_type,
+                field.is_nullable(),
+            ));
+        }
+        let delta_schema = StructType::try_new(delta_fields)
+            .map_err(|e| Error::Other(format!("Failed to create Delta schema: {}", e)))?;
+
+        let onelake_url = parse_azure_url(onelake_path)?;
+        let ops = DeltaTable::try_from_url_with_storage_options(
+            onelake_url.clone(),
+            storage_options.clone(),
+        )
+        .await
+        .map_err(Error::DeltaTable)?;
+
+        let _table: DeltaTable = match ops
+            .create()
+            .with_columns(delta_schema.fields().cloned())
+            .await
+        {
+            Ok(table) => table,
+            Err(e)
+                if e.to_string().contains("TableAlreadyExists")
+                    || e.to_string().contains("already exists") =>
+            {
+                info!("Delta Lake table already exists on Fabric OneLake, opening existing");
+                return Self::open_with_onelake(onelake_path, client_id, client_secret, tenant_id)
+                    .await;
+            }
+            Err(e) => return Err(Error::DeltaTable(e)),
+        };
+
+        info!("Delta Lake table created on Fabric OneLake");
+
+        let base_path = get_azure_cache_path(onelake_path);
+        std::fs::create_dir_all(&base_path)?;
+
+        let metrics = Arc::new(MetricsTracker::new());
+        let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
+
+        Ok(Self {
+            base_path,
+            s3_url: Some(onelake_path.to_string()),
+            s3_storage_options: Some(storage_options),
+            schema,
+            metrics,
+            data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
+            auth_context: None,
+            user_store: None,
+            audit_logger: None,
+            role_manager: None,
+            batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
+            primary_key: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Open an existing Delta Lake database from Microsoft Fabric OneLake
+    pub async fn open_with_onelake(
+        onelake_path: &str,
+        client_id: &str,
+        client_secret: &str,
+        tenant_id: &str,
+    ) -> Result<Self> {
+        use crate::storage::azure::{
+            create_delta_storage_options_sp, get_azure_cache_path, parse_azure_url,
+        };
+        use deltalake::open_table_with_storage_options;
+
+        info!(
+            "Opening Delta Lake database from Fabric OneLake at: {}",
+            onelake_path
+        );
+
+        let storage_options = create_delta_storage_options_sp(client_id, client_secret, tenant_id);
+
+        let onelake_url = parse_azure_url(onelake_path)?;
+        let table = open_table_with_storage_options(onelake_url, storage_options.clone())
+            .await
+            .map_err(Error::DeltaTable)?;
+
+        let snapshot = table.snapshot().map_err(Error::DeltaTable)?;
+        let delta_schema = snapshot.schema();
+
+        let arrow_fields: Result<Vec<_>> = delta_schema
+            .fields()
+            .map(|field| {
+                let arrow_type = Self::delta_to_arrow_type(field.data_type())?;
+                Ok(arrow::datatypes::Field::new(
+                    field.name(),
+                    arrow_type,
+                    field.is_nullable(),
+                ))
+            })
+            .collect();
+
+        let schema = Arc::new(arrow::datatypes::Schema::new(arrow_fields?));
+
+        info!(
+            "Opened Delta Lake from Fabric OneLake with {} fields",
+            schema.fields().len()
+        );
+
+        let base_path = get_azure_cache_path(onelake_path);
+        std::fs::create_dir_all(&base_path)?;
+
+        let metrics = Arc::new(MetricsTracker::new());
+        let batch_buffer = Arc::new(crate::batch_buffer::BatchBuffer::new(schema.clone()));
+        let users_path = base_path.join("_metadata").join("users.json");
+        let (user_store, audit_logger, role_manager) = if users_path.exists() {
+            let loaded_user_store = crate::security::UserStore::load(&users_path)?;
+            let audit_path = base_path.join("_metadata").join("audit.json");
+            (
+                Some(Arc::new(tokio::sync::Mutex::new(loaded_user_store))),
+                Some(Arc::new(crate::security::AuditLogger::new(audit_path)?)),
+                Some(Arc::new(crate::security::RoleManager::new())),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        Ok(Self {
+            base_path,
+            s3_url: Some(onelake_path.to_string()),
+            s3_storage_options: Some(storage_options),
+            schema,
+            metrics,
+            data_skipping_stats: Arc::new(tokio::sync::Mutex::new(DataSkippingStats::default())),
+            auth_context: None,
+            user_store,
+            audit_logger,
+            role_manager,
+            batch_buffer,
+            cached_table: Arc::new(tokio::sync::Mutex::new(None)),
+            primary_key: std::sync::Mutex::new(None),
+        })
+    }
+
     fn arrow_to_delta_type(
         arrow_type: &arrow::datatypes::DataType,
     ) -> Result<deltalake::kernel::DataType> {
@@ -1281,6 +1638,12 @@ impl DatabaseOps {
         self.insert(concatenated).await.map(|_| ())
     }
 
+    /// Invalidate the cached Delta table, forcing the next operation to open fresh.
+    pub async fn invalidate_cached_table(&self) {
+        let mut cache = self.cached_table.lock().await;
+        *cache = None;
+    }
+
     /// Get the underlying Delta Lake table for advanced operations
     ///
     /// Exposes the DeltaTable for version checking, history inspection, etc.
@@ -1334,36 +1697,48 @@ impl DatabaseOps {
 
         info!("Inserting {} rows to Delta Lake", batch.num_rows());
 
-        // Open the Delta Lake table (S3 or local)
-        let table = if let (Some(s3_url), Some(storage_options)) =
-            (&self.s3_url, &self.s3_storage_options)
-        {
-            // S3 backend
-            let s3_url_parsed = parse_s3_url(s3_url)?;
-            open_table_with_storage_options(s3_url_parsed, storage_options.clone())
-                .await
-                .map_err(Error::DeltaTable)?
-        } else {
-            // Local backend
-            let table_url = Url::from_directory_path(&self.base_path)
-                .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
-            open_table(table_url).await.map_err(Error::DeltaTable)?
+        // Take the cached table or open a new one
+        let table = {
+            let mut cache = self.cached_table.lock().await;
+            match cache.take() {
+                Some(t) => t,
+                None => {
+                    if let (Some(s3_url), Some(storage_options)) =
+                        (&self.s3_url, &self.s3_storage_options)
+                    {
+                        let s3_url_parsed = parse_s3_url(s3_url)?;
+                        open_table_with_storage_options(s3_url_parsed, storage_options.clone())
+                            .await
+                            .map_err(Error::DeltaTable)?
+                    } else {
+                        let table_url =
+                            Url::from_directory_path(&self.base_path).map_err(|_| {
+                                Error::Other("Invalid path for Delta table".to_string())
+                            })?;
+                        open_table(table_url).await.map_err(Error::DeltaTable)?
+                    }
+                }
+            }
         };
 
-        // Write the batch using DeltaOps with schema merging enabled for evolution
         let row_count = batch.num_rows() as u64;
 
-        table
+        // write() consumes the table and returns the updated one
+        let new_table = table
             .write(vec![batch])
             .with_save_mode(SaveMode::Append)
             .with_schema_mode(SchemaMode::Merge)
             .await
             .map_err(Error::DeltaTable)?;
 
+        // Cache the returned table for next operation
+        {
+            let mut cache = self.cached_table.lock().await;
+            *cache = Some(new_table);
+        }
+
         info!("Successfully wrote {} rows to Delta Lake", row_count);
 
-        // Return a synthetic transaction ID (Delta Lake uses versions, not transaction IDs)
-        // We can use the current timestamp as a pseudo txn_id
         let txn_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1382,20 +1757,28 @@ impl DatabaseOps {
 
         info!("Querying Delta Lake with SQL: {}", sql);
 
-        // Open the Delta Lake table (S3 or local)
-        let table = if let (Some(s3_url), Some(storage_options)) =
-            (&self.s3_url, &self.s3_storage_options)
-        {
-            // S3 backend
-            let s3_url_parsed = parse_s3_url(s3_url)?;
-            open_table_with_storage_options(s3_url_parsed, storage_options.clone())
-                .await
-                .map_err(Error::DeltaTable)?
-        } else {
-            // Local backend
-            let table_url = Url::from_directory_path(&self.base_path)
-                .map_err(|_| Error::Other("Invalid path for Delta table".to_string()))?;
-            open_table(table_url).await.map_err(Error::DeltaTable)?
+        // Use cached table or open fresh
+        let table = {
+            let mut cache = self.cached_table.lock().await;
+            match cache.take() {
+                Some(t) => t,
+                None => {
+                    if let (Some(s3_url), Some(storage_options)) =
+                        (&self.s3_url, &self.s3_storage_options)
+                    {
+                        let s3_url_parsed = parse_s3_url(s3_url)?;
+                        open_table_with_storage_options(s3_url_parsed, storage_options.clone())
+                            .await
+                            .map_err(Error::DeltaTable)?
+                    } else {
+                        let table_url =
+                            Url::from_directory_path(&self.base_path).map_err(|_| {
+                                Error::Other("Invalid path for Delta table".to_string())
+                            })?;
+                        open_table(table_url).await.map_err(Error::DeltaTable)?
+                    }
+                }
+            }
         };
 
         // Create DataFusion context and register the table
@@ -1410,6 +1793,13 @@ impl DatabaseOps {
             deltalake::delta_datafusion::DeltaScanConfig::default(),
         )
         .map_err(|e| Error::InvalidOperation(format!("Failed to create table provider: {}", e)))?;
+
+        // Cache the table back for next operation
+        {
+            let mut cache = self.cached_table.lock().await;
+            *cache = Some(table);
+        }
+
         ctx.register_table("data", Arc::new(table_provider))
             .map_err(|e| Error::InvalidOperation(e.to_string()))?;
 
@@ -1467,6 +1857,9 @@ impl DatabaseOps {
             .with_predicate(where_clause)
             .await
             .map_err(Error::DeltaTable)?;
+
+        // Invalidate cached table so subsequent reads see the delete
+        self.invalidate_cached_table().await;
 
         info!(
             "Successfully deleted {} rows from Delta Lake",
@@ -2124,6 +2517,9 @@ impl DatabaseOps {
 
         match &result {
             Ok(_) => {
+                // Invalidate cached table — the merge builder will mutate Delta files,
+                // so any cached snapshot would be stale for subsequent queries.
+                self.invalidate_cached_table().await;
                 self.audit_log("MERGE", "builder created", true).await;
             }
             Err(e) => {

@@ -117,6 +117,20 @@ def main():
                 raise RuntimeError("Python S3 integration test failed")
 
 
+        def run_python_azure_integration():
+            repo_root = Path(__file__).resolve().parents[1]
+            script_path = repo_root / "scripts" / "test_python_azure.py"
+
+            print("\nRunning Python Azure integration test...")
+            result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True)
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(f"stderr: {result.stderr}")
+            if result.returncode != 0:
+                raise RuntimeError("Python Azure integration test failed")
+
+
 
         now_ms = int(time.time() * 1000)
         timestamp_rows = db.query_timestamp("SELECT COUNT(*) AS cnt FROM data", now_ms)
@@ -227,6 +241,13 @@ def main():
         print("✓ Python S3 integration test")
     except Exception as e:
         print(f"✗ Python S3 integration test failed: {e}")
+        sys.exit(1)
+
+    try:
+        run_python_azure_integration()
+        print("✓ Python Azure integration test")
+    except Exception as e:
+        print(f"✗ Python Azure integration test failed: {e}")
         sys.exit(1)
 
     # Test complex data types

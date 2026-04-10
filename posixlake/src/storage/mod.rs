@@ -1,6 +1,7 @@
 //! Storage abstraction layer for cross-platform file I/O
 //! Supports local filesystem, S3, and other ObjectStore backends
 
+pub mod azure;
 pub mod local;
 pub mod parquet;
 pub mod path;

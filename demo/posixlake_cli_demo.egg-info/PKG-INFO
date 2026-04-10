@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: posixlake-cli-demo
+Version: 0.1.0
+Summary: Recorded Windows + WSL posixlake CLI parity demo
+Requires-Python: >=3.13
+Requires-Dist: azure-cognitiveservices-speech>=1.43.0
+Requires-Dist: capture @ file:vendor/wheels/capture-0.1.0-cp313-cp313-win_arm64.whl
