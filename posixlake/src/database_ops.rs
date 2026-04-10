@@ -763,7 +763,7 @@ impl DatabaseOps {
 
     /// Create a Delta Lake database on Microsoft Fabric OneLake
     /// Uses Service Principal (client_id + client_secret + tenant_id) for Entra ID auth
-    /// Path format: abfss://<workspace-id>@onelake.dfs.fabric.microsoft.com/<lakehouse-id>/Tables/<table>
+    /// Path format: `abfss://<workspace-id>@onelake.dfs.fabric.microsoft.com/<lakehouse-id>/Tables/<table>`
     pub async fn create_with_onelake(
         onelake_path: &str,
         schema: SchemaRef,
@@ -2517,6 +2517,9 @@ impl DatabaseOps {
 
         match &result {
             Ok(_) => {
+                // Invalidate cached table — the merge builder will mutate Delta files,
+                // so any cached snapshot would be stale for subsequent queries.
+                self.invalidate_cached_table().await;
                 self.audit_log("MERGE", "builder created", true).await;
             }
             Err(e) => {
