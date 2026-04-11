@@ -1504,6 +1504,7 @@ impl DatabaseOps {
         .await;
         match &result {
             Ok(_) => {
+                self.invalidate_cached_table().await;
                 self.metrics.total_inserts.fetch_add(1, Ordering::Relaxed);
                 self.metrics
                     .total_transactions
@@ -1603,6 +1604,7 @@ impl DatabaseOps {
 
         match &result {
             Ok(_) => {
+                self.invalidate_cached_table().await;
                 self.audit_log("FLUSH_WRITE_BUFFER", "flushed write buffer", true)
                     .await;
             }
@@ -2546,6 +2548,7 @@ impl DatabaseOps {
 
         match &result {
             Ok(metrics) => {
+                self.invalidate_cached_table().await;
                 info!(
                     "OPTIMIZE completed: {} files added, {} files removed",
                     metrics.num_files_added, metrics.num_files_removed
@@ -2581,6 +2584,7 @@ impl DatabaseOps {
 
         match &result {
             Ok(metrics) => {
+                self.invalidate_cached_table().await;
                 info!(
                     "OPTIMIZE with filter completed: {} files added, {} files removed",
                     metrics.num_files_added, metrics.num_files_removed
@@ -2619,6 +2623,7 @@ impl DatabaseOps {
 
         match &result {
             Ok(metrics) => {
+                self.invalidate_cached_table().await;
                 info!(
                     "OPTIMIZE with target size completed: {} files added, {} files removed",
                     metrics.num_files_added, metrics.num_files_removed
@@ -2692,6 +2697,7 @@ impl DatabaseOps {
         .await;
         match &result {
             Ok(deleted_count) => {
+                self.invalidate_cached_table().await;
                 info!("VACUUM completed: {} files deleted", deleted_count);
                 self.audit_log(
                     "VACUUM",
@@ -2809,6 +2815,7 @@ impl DatabaseOps {
 
         match &result {
             Ok(metrics) => {
+                self.invalidate_cached_table().await;
                 info!(
                     "Z-ORDER completed: {} files added, {} files removed",
                     metrics.num_files_added, metrics.num_files_removed

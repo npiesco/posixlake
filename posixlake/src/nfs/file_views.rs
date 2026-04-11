@@ -746,58 +746,46 @@ impl CsvFileView {
         // Execute MERGE for INSERT/UPDATE if needed
         let mut metrics = crate::delta_lake::merge::MergeMetrics::default();
 
-        // Pure updates with no inserts/deletes: run in background to avoid NFS semaphore timeout.
-        // The cached table is not affected (update returns same row count).
+        // Pure updates with no inserts/deletes: execute synchronously so that
+        // subsequent reads see the updated data immediately.
         if !update_ids.is_empty() && insert_ids.is_empty() && delete_ids.is_empty() {
             let source_batch =
                 self.build_merge_source_batch(&new_batch, &insert_ids, &update_ids)?;
             if source_batch.num_rows() > 0 {
-                let db = self.db.clone();
                 let id_col = id_column_name.to_string();
-                let event_tx = self.event_tx.clone();
-                tokio::spawn(async move {
-                    let merge_result = async {
-                        let m = db
-                            .merge()
-                            .await?
-                            .with_source(source_batch, "source")
-                            .on(format!("target.{} = source.{}", id_col, id_col))
-                            .when_matched_update()
-                            .condition("source._op = 'UPDATE'")
-                            .set_all()
-                            .when_not_matched_insert()
-                            .condition("source._op = 'INSERT'")
-                            .values_all()
-                            .execute()
-                            .await?;
-                        Ok::<_, crate::error::Error>(m)
-                    };
-                    match merge_result.await {
-                        Ok(m) => {
-                            if let Some(tx) = &event_tx {
-                                let event = crate::nfs::NfsEvent {
-                                    event_type: "MERGE_COMPLETE".to_string(),
-                                    rows_inserted: m.rows_inserted,
-                                    rows_updated: m.rows_updated,
-                                    rows_deleted: 0,
-                                };
-                                let _ = tx.send(event);
-                            }
-                            eprintln!(
-                                "[EVENT] MERGE_COMPLETE inserts={} updates={} deletes=0",
-                                m.rows_inserted, m.rows_updated,
-                            );
-                        }
-                        Err(e) => error!("Background update merge failed: {}", e),
-                    }
-                    db.invalidate_cached_table().await;
-                });
-                info!("Pure update merge spawned in background");
-                return Ok(());
-            }
-        }
+                let m = self
+                    .db
+                    .merge()
+                    .await?
+                    .with_source(source_batch, "source")
+                    .on(format!("target.{} = source.{}", id_col, id_col))
+                    .when_matched_update()
+                    .condition("source._op = 'UPDATE'")
+                    .set_all()
+                    .when_not_matched_insert()
+                    .condition("source._op = 'INSERT'")
+                    .values_all()
+                    .execute()
+                    .await?;
 
-        if !insert_ids.is_empty() || !update_ids.is_empty() {
+                if let Some(tx) = &self.event_tx {
+                    let event = crate::nfs::NfsEvent {
+                        event_type: "MERGE_COMPLETE".to_string(),
+                        rows_inserted: m.rows_inserted,
+                        rows_updated: m.rows_updated,
+                        rows_deleted: 0,
+                    };
+                    let _ = tx.send(event);
+                }
+                eprintln!(
+                    "[EVENT] MERGE_COMPLETE inserts={} updates={} deletes=0",
+                    m.rows_inserted, m.rows_updated,
+                );
+
+                metrics = m;
+                info!("Pure update merge completed synchronously");
+            }
+        } else if !insert_ids.is_empty() || !update_ids.is_empty() {
             // Build source data with _op column for MERGE
             let source_batch =
                 self.build_merge_source_batch(&new_batch, &insert_ids, &update_ids)?;

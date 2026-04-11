@@ -763,13 +763,11 @@ impl NFSFileSystem for PosixLakeFilesystem {
                         nfsstat3::NFS3ERR_IO
                     })?;
 
-                // Update content cache with the write data itself — it represents the
-                // client's view of the file. For inserts, this is accurate after merge.
-                // For pure updates (async), the data rows are the same, just modified values.
+                // Invalidate NFS content cache after write — the write data
+                // is the client's raw input, not the post-merge state of the table.
+                // Next read will regenerate from Delta with fresh data.
                 if let Some(ref cache) = self.cache {
-                    let _ = cache
-                        .insert("csv:data".to_string(), write_data.clone())
-                        .await;
+                    let _ = cache.remove("csv:data").await;
                 }
 
                 // Use write data size as estimate — avoids slow OneLake round-trip for size
